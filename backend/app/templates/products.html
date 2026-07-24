@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Products{% endblock %}
+
+{% block content %}
+
+<h1>Products</h1>
+
+<p>Welcome to the Atlas Product Database.</p>
+
+<table class="table table-striped">
+
+    <thead>
+        <tr>
+            <th>ASIN</th>
+            <th>Product</th>
+            <th>Brand</th>
+            <th>Buy Price</th>
+            <th>Sell Price</th>
+            <th>Profit</th>
+            <th>ROI</th>
+        </tr>
+    </thead>
+
+    <tbody>
+
+        <tr>
+            <td>B012345678</td>
+            <td>Example Product</td>
+            <td>LEGO</td>
+            <td>£12.99</td>
+            <td>£24.99</td>
+            <td>£6.52</td>
+            <td>50%</td>
+        </tr>
+
+    </tbody>
+
+</table>
+
+{% endblock %}

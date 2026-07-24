@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>{% block title %}Atlas{% endblock %}</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+
+<style>
+
+body{
+    background:#f5f7fb;
+}
+
+.sidebar{
+    width:260px;
+    height:100vh;
+    position:fixed;
+    background:#111827;
+    color:white;
+}
+
+.logo{
+
+    font-size:34px;
+    font-weight:bold;
+    padding:30px;
+
+}
+
+.sidebar a{
+
+    display:block;
+    color:#d1d5db;
+    text-decoration:none;
+    padding:14px 30px;
+    font-size:17px;
+
+}
+
+.sidebar a:hover{
+
+    background:#1f2937;
+    color:white;
+
+}
+
+.main{
+
+    margin-left:260px;
+
+}
+
+.topbar{
+
+    background:white;
+    padding:20px 35px;
+    border-bottom:1px solid #e5e7eb;
+
+}
+
+.content{
+
+    padding:35px;
+
+}
+
+.metric{
+
+    border:none;
+    border-radius:15px;
+    box-shadow:0 4px 12px rgba(0,0,0,.08);
+
+}
+
+.metric h2{
+
+    font-size:40px;
+
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="sidebar">
+
+<div class="logo">
+
+ATLAS
+
+</div>
+
+<a href="/"><i class="bi bi-speedometer2"></i> Dashboard</a>
+
+<a href="#"><i class="bi bi-box"></i> Products</a>
+
+<a href="#"><i class="bi bi-tags"></i> Brands</a>
+
+<a href="#"><i class="bi bi-search"></i> Discovery</a>
+
+<a href="#"><i class="bi bi-currency-pound"></i> Finance</a>
+
+<a href="#"><i class="bi bi-gear"></i> Settings</a>
+
+</div>
+
+<div class="main">
+
+<div class="topbar">
+
+<h3>Atlas Amazon Sourcing Platform</h3>
+
+</div>
+
+<div class="content">
+
+{% block content %}
+{% endblock %}
+
+</div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js"></script>
+
+</body>
+
+</html>
