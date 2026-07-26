@@ -1,41 +1,62 @@
 {% extends "base.html" %}
 
-{% block title %}Products{% endblock %}
-
 {% block content %}
 
-<h1>Products</h1>
+<div class="container mt-4">
 
-<p>Welcome to the Atlas Product Database.</p>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Products</h2>
 
-<table class="table table-striped">
+        <a href="/products/add" class="btn btn-primary">
+            ➕ Add Product
+        </a>
+    </div>
 
-    <thead>
-        <tr>
-            <th>ASIN</th>
-            <th>Product</th>
-            <th>Brand</th>
-            <th>Buy Price</th>
-            <th>Sell Price</th>
-            <th>Profit</th>
-            <th>ROI</th>
-        </tr>
-    </thead>
+    {% if products %}
 
-    <tbody>
+    <table class="table table-striped table-hover">
 
-        <tr>
-            <td>B012345678</td>
-            <td>Example Product</td>
-            <td>LEGO</td>
-            <td>£12.99</td>
-            <td>£24.99</td>
-            <td>£6.52</td>
-            <td>50%</td>
-        </tr>
+        <thead>
+            <tr>
+                <th>ASIN</th>
+                <th>Product</th>
+                <th>Brand</th>
+                <th class="text-end">Buy (£)</th>
+                <th class="text-end">Sell (£)</th>
+                <th class="text-end">Profit (£)</th>
+                <th class="text-end">ROI %</th>
+            </tr>
+        </thead>
 
-    </tbody>
+        <tbody>
 
-</table>
+        {% for product in products %}
+
+            <tr>
+                <td>{{ product.asin }}</td>
+                <td>{{ product.title }}</td>
+                <td>{{ product.brand }}</td>
+                <td class="text-end">£{{ "%.2f"|format(product.buy_price) }}</td>
+                <td class="text-end">£{{ "%.2f"|format(product.sell_price) }}</td>
+                <td class="text-end">£{{ "%.2f"|format(product.profit) }}</td>
+                <td class="text-end">{{ "%.1f"|format(product.roi) }}%</td>
+            </tr>
+
+        {% endfor %}
+
+        </tbody>
+
+    </table>
+
+    {% else %}
+
+    <div class="alert alert-info">
+        <h4>No products found</h4>
+        <p>Click <strong>Add Product</strong> to create your first product.</p>
+    </div>
+
+    {% endif %}
+
+</div>
 
 {% endblock %}

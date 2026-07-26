@@ -1,7 +1,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from pathlib import Path
 
-DATABASE_URL = "sqlite:///backend/atlas.db"
+# Store the database in the backend folder
+BASE_DIR = Path(__file__).resolve().parents[2]
+DATABASE_URL = f"sqlite:///{BASE_DIR / 'atlas.db'}"
 
 engine = create_engine(
     DATABASE_URL,

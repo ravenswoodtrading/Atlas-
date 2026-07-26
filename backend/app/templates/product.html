@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="container mt-4">
+
+    <h2>{{ product.title }}</h2>
+
+    <table class="table table-bordered">
+        <tr>
+            <th>ASIN</th>
+            <td>{{ product.asin }}</td>
+        </tr>
+        <tr>
+            <th>Brand</th>
+            <td>{{ product.brand }}</td>
+        </tr>
+        <tr>
+            <th>Manufacturer</th>
+            <td>{{ product.manufacturer }}</td>
+        </tr>
+    </table>
+
+</div>
+
+{% endblock %}
