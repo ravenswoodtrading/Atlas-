@@ -13,6 +13,13 @@ EU_MARKETPLACES = ["DE", "FR", "ES", "IT"]
 # whatever else might use the account (e.g. another tab open).
 MIN_TOKEN_BUFFER = 5
 
+# How many ASINs to request per Keepa call. Keepa allows a single
+# request to push your token balance NEGATIVE if it doesn't have
+# enough for the whole batch, rather than refusing it upfront -- so
+# a large batch can overshoot badly. Chunking bounds the overshoot to
+# roughly one chunk's worth of tokens instead of the whole scan.
+CHUNK_SIZE = 10
+
 
 class BrandScanService:
 
@@ -20,33 +27,80 @@ class BrandScanService:
         self.finder = ProductFinder()
         self.product_service = ProductService()
 
+    def _fetch_in_chunks(self, asins, marketplace, cost_estimate):
+        """
+        Fetches `asins` from `marketplace` in CHUNK_SIZE pieces,
+        checking measured token budget before each chunk. Returns
+        (products, fetched_asins, ran_out: bool, updated_cost_estimate).
+
+        cost_estimate: current best guess at per-ASIN token cost for
+        this call shape, or None if not yet known. Updated after each
+        chunk from real measured spend, so later chunks (and later
+        marketplaces) use an increasingly accurate figure.
+        """
+        products = []
+        fetched_asins = []
+        ran_out = False
+
+        for i in range(0, len(asins), CHUNK_SIZE):
+            chunk = asins[i:i + CHUNK_SIZE]
+
+            tokens_now = self.product_service.api.tokens_left
+
+            if tokens_now is not None:
+                if cost_estimate is not None:
+                    estimated_cost = cost_estimate * len(chunk)
+                    if tokens_now < estimated_cost + MIN_TOKEN_BUFFER:
+                        ran_out = True
+                        break
+                elif tokens_now <= MIN_TOKEN_BUFFER:
+                    # No cost estimate yet, but already critically low --
+                    # don't risk even the first (measuring) chunk.
+                    ran_out = True
+                    break
+
+            tokens_before = self.product_service.api.tokens_left
+            chunk_products = self.product_service.get_products(chunk, marketplace)
+            tokens_after = self.product_service.api.tokens_left
+
+            products.extend(chunk_products)
+            fetched_asins.extend(chunk)
+
+            if tokens_before is not None and tokens_after is not None and chunk:
+                measured = max(tokens_before - tokens_after, 0) / len(chunk)
+                cost_estimate = measured
+
+        return products, fetched_asins, ran_out, cost_estimate
+
     def scan(self, brand: str, limit: int = 20):
         """
-        Full A2A pipeline for a brand, with token-budget awareness so
-        a scan never silently hangs waiting for Keepa tokens to
-        refill. Instead: measure the real token cost of the UK batch,
-        use that measured rate to decide -- BEFORE each EU
-        marketplace call -- whether there's enough budget left, and
-        skip (with a clear note in the response) rather than block.
+        Full A2A pipeline for a brand, with chunked token-budget
+        awareness so a scan never silently hangs OR blows through its
+        token budget in one oversized request. Measures real per-ASIN
+        cost as it goes and checks it before every chunk, not just
+        before every marketplace.
         """
 
         # Step 1 - Find ASINs
         asins = self.finder.find_brand(brand)
         asins = asins[:limit]
 
+        empty_response = {
+            "brand": brand, "count": 0, "opportunities": [],
+            "skipped_excluded": 0,
+            "marketplaces_skipped_low_tokens": [],
+            "marketplaces_partial_low_tokens": {},
+            "tokens_remaining": None,
+        }
+
         if not asins:
-            return {
-                "brand": brand, "count": 0, "opportunities": [],
-                "skipped_excluded": 0, "marketplaces_skipped_low_tokens": [],
-                "tokens_remaining": None,
-            }
+            return empty_response
 
         tokens_before_uk = self.product_service.api.tokens_left
 
         if tokens_before_uk is not None and tokens_before_uk <= MIN_TOKEN_BUFFER:
             return {
-                "brand": brand, "count": 0, "opportunities": [],
-                "skipped_excluded": 0, "marketplaces_skipped_low_tokens": [],
+                **empty_response,
                 "tokens_remaining": tokens_before_uk,
                 "error": (
                     f"Only {tokens_before_uk} Keepa tokens left -- not enough "
@@ -54,21 +108,12 @@ class BrandScanService:
                 ),
             }
 
-        # Step 2 - Load UK data first (this is the only lookup we pay
-        # for regardless of exclusions -- we need it to know category)
-        uk_products = self.product_service.get_products(asins, "UK")
-
-        tokens_after_uk = self.product_service.api.tokens_left
-
-        # Measure the REAL per-ASIN token cost from what we just spent,
-        # rather than guessing -- Keepa's cost per call depends on the
-        # options requested (history, offers, stats, etc.) which we
-        # don't want to hardcode assumptions about.
-        if tokens_before_uk is not None and tokens_after_uk is not None:
-            uk_cost = max(tokens_before_uk - tokens_after_uk, 0)
-            per_asin_cost_estimate = (uk_cost / len(asins)) if asins else 0
-        else:
-            per_asin_cost_estimate = None
+        # Step 2 - Load UK data first, in chunks (this is the only
+        # lookup we pay for regardless of exclusions -- we need it to
+        # know category). No cost estimate yet on the first call.
+        uk_products, fetched_uk_asins, uk_ran_out, cost_estimate = self._fetch_in_chunks(
+            asins, "UK", cost_estimate=None
+        )
 
         # Step 3 - Filter out excluded categories/ASINs/gated brands
         # BEFORE spending tokens on the 4 EU marketplaces.
@@ -88,30 +133,30 @@ class BrandScanService:
 
         included_asins = [p.get("asin") for p in included_uk_products]
 
-        # Step 4 - Pull EU data one marketplace at a time, checking
-        # measured token budget before each one.
+        # Step 4 - Pull EU data one marketplace at a time, in chunks,
+        # carrying the measured cost estimate forward each time.
         eu_lookups = {}
         marketplaces_skipped_low_tokens = []
+        marketplaces_partial_low_tokens = {}
 
         for marketplace in EU_MARKETPLACES:
             if not included_asins:
                 eu_lookups[marketplace] = {}
                 continue
 
-            tokens_now = self.product_service.api.tokens_left
+            products, fetched, ran_out, cost_estimate = self._fetch_in_chunks(
+                included_asins, marketplace, cost_estimate
+            )
 
-            if per_asin_cost_estimate is not None and tokens_now is not None:
-                estimated_cost = per_asin_cost_estimate * len(included_asins)
+            eu_lookups[marketplace] = {p.get("asin"): p for p in products}
 
-                if tokens_now < estimated_cost + MIN_TOKEN_BUFFER:
+            if ran_out:
+                if fetched:
+                    marketplaces_partial_low_tokens[marketplace] = {
+                        "fetched": len(fetched), "total": len(included_asins),
+                    }
+                else:
                     marketplaces_skipped_low_tokens.append(marketplace)
-                    eu_lookups[marketplace] = {}
-                    continue
-
-            eu_lookups[marketplace] = {
-                p.get("asin"): p
-                for p in self.product_service.get_products(included_asins, marketplace)
-            }
 
         opportunities = []
 
@@ -153,6 +198,7 @@ class BrandScanService:
             "count": len(opportunities),
             "skipped_excluded": skipped_excluded,
             "marketplaces_skipped_low_tokens": marketplaces_skipped_low_tokens,
+            "marketplaces_partial_low_tokens": marketplaces_partial_low_tokens,
             "tokens_remaining": self.product_service.api.tokens_left,
             "opportunities": opportunities,
         }
