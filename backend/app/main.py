@@ -6,19 +6,28 @@ from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 from app.services.category_survey_service import CategorySurveyService
 
-from app.routes import dashboard, keepa, scan, analyse, opportunities_view
+from app.database.base import Base
+from app.database.database import engine
+from app.database import models  # noqa: F401 -- registers ProductRecord with Base.metadata
+
+from app.routes import dashboard, keepa, scan, analyse, opportunities_view, products
 
 app = FastAPI(title="Atlas")
 
-# NOTE: routes/products.py and routes/add_product.py are NOT registered
-# yet -- their Product DB model doesn't match the atlas.db schema, so
-# they'll 500 on request. Out of scope until the persistence layer is
-# rebuilt; see /areas notes.
+# Creates any tables that don't exist yet (e.g. product_records) without
+# touching existing ones. The old 'products' table (incompatible legacy
+# schema) is left alone -- product_records is a separate table.
+Base.metadata.create_all(bind=engine)
+
+# NOTE: routes/add_product.py is still NOT registered -- it targets the
+# old incompatible 'products' table. Manual add-a-product isn't wired
+# up yet; only scan-based persistence via product_records is.
 app.include_router(dashboard.router)
 app.include_router(keepa.router)
 app.include_router(scan.router)
 app.include_router(analyse.router)
 app.include_router(opportunities_view.router)
+app.include_router(products.router)
 
 
 @app.get("/opportunities/{brand}")

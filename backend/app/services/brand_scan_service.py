@@ -5,6 +5,7 @@ from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
 from app.services.fee_engine import FeeEngine
 from app.services.opportunity_engine import OpportunityEngine
+from app.services.product_repository import ProductRepository
 from app.config.exclusions import is_excluded
 
 EU_MARKETPLACES = ["DE", "FR", "ES", "IT"]
@@ -185,9 +186,14 @@ class BrandScanService:
 
             report = OpportunityEngine.analyse(product)
 
+            product_dict = asdict(product)
+            report_dict = asdict(report)
+
+            ProductRepository.save_opportunity(product_dict, report_dict, brand)
+
             opportunities.append({
-                "product": asdict(product),
-                "report": asdict(report),
+                "product": product_dict,
+                "report": report_dict,
             })
 
         # Step 6 - Rank best opportunities first

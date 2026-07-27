@@ -1,62 +1,77 @@
 {% extends "base.html" %}
 
+{% block title %}Products - Atlas{% endblock %}
+
 {% block content %}
 
-<div class="container mt-4">
-
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2>Products</h2>
-
-        <a href="/products/add" class="btn btn-primary">
-            ➕ Add Product
-        </a>
-    </div>
-
-    {% if products %}
-
-    <table class="table table-striped table-hover">
-
-        <thead>
-            <tr>
-                <th>ASIN</th>
-                <th>Product</th>
-                <th>Brand</th>
-                <th class="text-end">Buy (£)</th>
-                <th class="text-end">Sell (£)</th>
-                <th class="text-end">Profit (£)</th>
-                <th class="text-end">ROI %</th>
-            </tr>
-        </thead>
-
-        <tbody>
-
-        {% for product in products %}
-
-            <tr>
-                <td>{{ product.asin }}</td>
-                <td>{{ product.title }}</td>
-                <td>{{ product.brand }}</td>
-                <td class="text-end">£{{ "%.2f"|format(product.buy_price) }}</td>
-                <td class="text-end">£{{ "%.2f"|format(product.sell_price) }}</td>
-                <td class="text-end">£{{ "%.2f"|format(product.profit) }}</td>
-                <td class="text-end">{{ "%.1f"|format(product.roi) }}%</td>
-            </tr>
-
-        {% endfor %}
-
-        </tbody>
-
-    </table>
-
-    {% else %}
-
-    <div class="alert alert-info">
-        <h4>No products found</h4>
-        <p>Click <strong>Add Product</strong> to create your first product.</p>
-    </div>
-
-    {% endif %}
-
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Products (latest scan per ASIN)</h4>
+    <a href="/discovery" class="btn btn-dark btn-sm">
+        <i class="bi bi-search"></i> Run a new scan
+    </a>
 </div>
+
+{% if products %}
+
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Found via</th>
+                    <th>Best Source</th>
+                    <th class="text-end">Source Cost</th>
+                    <th class="text-end">UK Price</th>
+                    <th class="text-end">Profit</th>
+                    <th class="text-end">ROI</th>
+                    <th>Score</th>
+                    <th>Recommendation</th>
+                    <th>Last Scanned</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in products %}
+                <tr>
+                    <td style="max-width:280px;">
+                        <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                    </td>
+                    <td>{{ p.brand_query }}</td>
+                    <td>{{ p.best_source_marketplace }}</td>
+                    <td class="text-end">&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
+                    <td class="text-end">&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
+                    <td class="text-end {{ 'text-success' if p.profit > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(p.profit) }}
+                    </td>
+                    <td class="text-end {{ 'text-success' if p.roi > 0 else 'text-danger' }}">
+                        {{ "%.1f"|format(p.roi) }}%
+                    </td>
+                    <td>{{ p.score }}</td>
+                    <td>
+                        {% if p.recommendation == "BUY" %}
+                            <span class="badge bg-success">BUY</span>
+                        {% elif p.recommendation == "REVIEW" %}
+                            <span class="badge bg-warning text-dark">REVIEW</span>
+                        {% else %}
+                            <span class="badge bg-secondary">IGNORE</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">{{ p.scanned_at.strftime("%Y-%m-%d %H:%M") if p.scanned_at else "" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% else %}
+
+<div class="alert alert-info">
+    <h5>No products saved yet</h5>
+    <p class="mb-0">Run a scan on the <a href="/discovery">Discovery</a> page -- every opportunity found gets saved here automatically.</p>
+</div>
+
+{% endif %}
 
 {% endblock %}
