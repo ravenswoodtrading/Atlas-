@@ -33,9 +33,9 @@ class ProductMapper:
         parser = KeepaParser(k)
 
         return Product(
-            asin=k.get("asin", ""),
-            title=k.get("title", ""),
-            brand=k.get("brand", ""),
+          asin=k.get("asin") or "",
+            title=k.get("title") or "",
+            brand=k.get("brand") or "",
             category=str(k.get("rootCategory", "")),
 
             buy_box_now=parser.buy_box_now(),
