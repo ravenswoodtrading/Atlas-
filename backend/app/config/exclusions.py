@@ -17,13 +17,12 @@ saves 80% of the tokens that ASIN would have cost.
 # Keepa rootCategory IDs you can never actually source from EU Amazon
 # (e.g. mains-powered/plug items -- different plug standards, voltage,
 # or certification requirements block cross-border resale).
-EXCLUDED_CATEGORIES = set()
-# Add category IDs like: EXCLUDED_CATEGORIES.add("123456789")  # e.g. TVs
-
-# Specific ASINs to always skip, regardless of category or brand.
 EXCLUDED_CATEGORIES = {
     "340831031",  # monitors -- confirmed dead end for A2A sourcing
 }
+
+# Specific ASINs to always skip, regardless of category or brand.
+EXCLUDED_ASINS = set()
 # Add ASINs like: EXCLUDED_ASINS.add("B0EXAMPLE1")
 
 # (brand, category) pairs where you're gated / can't get approval to

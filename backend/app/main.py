@@ -4,6 +4,7 @@ from fastapi.encoders import jsonable_encoder
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
+from app.services.category_survey_service import CategorySurveyService
 
 from app.routes import dashboard, keepa, scan, analyse
 
@@ -27,6 +28,18 @@ def opportunities_for_brand(brand: str, limit: int = 20):
     """
     scanner = BrandScanService()
     return scanner.scan(brand, limit=limit)
+
+
+@app.get("/categories/{brand}")
+def categories_for_brand(brand: str, limit: int = 100):
+    """
+    Cheap survey of what categories a brand's catalog spans, using
+    only UK lookups (1x token cost per ASIN, not 5x). Use this to
+    decide what to add to app/config/exclusions.py BEFORE running
+    full /opportunities scans.
+    """
+    survey = CategorySurveyService()
+    return survey.survey(brand, limit=limit)
 
 
 @app.get("/debug/{brand}")
