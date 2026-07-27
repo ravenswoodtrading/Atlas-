@@ -6,7 +6,7 @@ from app.services.product_mapper import ProductMapper
 from app.services.fee_engine import FeeEngine
 from app.services.opportunity_engine import OpportunityEngine
 from app.services.product_repository import ProductRepository
-from app.config.exclusions import is_excluded
+from app.config.exclusions import is_excluded, is_excluded_by_name
 
 EU_MARKETPLACES = ["DE", "FR", "ES", "IT"]
 
@@ -80,7 +80,7 @@ class BrandScanService:
 
         return products, fetched_asins, ran_out, cost_estimate
 
-    def scan(self, brand: str, limit: int = 20, force_rescan: bool = False):
+    def scan(self, brand: str, limit: int = 20, force_rescan: bool = False, asins: list = None):
         """
         Full A2A pipeline for a brand, with chunked token-budget
         awareness so a scan never silently hangs OR blows through its
@@ -94,10 +94,40 @@ class BrandScanService:
         same top-ranked products, and lets later scans naturally
         reach further into the catalog instead. Pass force_rescan=True
         to check everything regardless of when it was last scanned.
+
+        Pass an explicit `asins` list (e.g. from an uploaded file) to
+        scan exactly those ASINs instead of using Keepa's brand
+        finder. `brand` is still used as a label for the
+        recently-scanned cooldown and saved records either way.
         """
 
-        # Step 1 - Find ASINs
-        asins = self.finder.find_brand(brand)
+        # Step 1 - Find ASINs (or use the explicit list if provided)
+        if asins is not None:
+            asins = list(asins)
+        else:
+            asins = self.finder.find_brand(brand)
+
+        # Step 1b - Check imported static catalog data (known_products)
+        # for category/brand exclusions BEFORE spending ANY tokens --
+        # not just before the EU calls like the exclusions.py check
+        # further down, which needs a live UK lookup first to learn
+        # category. This only helps for ASINs that have been imported
+        # via import_known_products.py; anything not imported still
+        # needs the UK lookup to learn its category.
+        known_products = ProductRepository.get_known_products(asins)
+        skipped_known_excluded = 0
+        remaining_asins = []
+
+        for asin in asins:
+            known = known_products.get(asin)
+
+            if known and is_excluded_by_name(asin, known.brand, known.category_root):
+                skipped_known_excluded += 1
+                continue
+
+            remaining_asins.append(asin)
+
+        asins = remaining_asins
 
         skipped_recently_scanned = 0
 
@@ -114,7 +144,9 @@ class BrandScanService:
         empty_response = {
             "brand": brand, "count": 0, "opportunities": [],
             "skipped_excluded": 0,
+            "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
+            "skipped_unprofitable_ceiling": 0,
             "marketplaces_skipped_low_tokens": [],
             "marketplaces_partial_low_tokens": {},
             "tokens_remaining": None,
@@ -158,6 +190,28 @@ class BrandScanService:
 
             included_uk_products.append(uk_product)
 
+        # Step 3b - Ceiling check using UK data alone (no extra tokens
+        # -- this is pure computation on data we already have): if the
+        # best possible outcome (a FREE source, cost=£0) still wouldn't
+        # be profitable after fees, no real EU price ever could make
+        # it work either. Skip the EU lookups entirely for these.
+        ceiling_checked_products = []
+        skipped_unprofitable_ceiling = 0
+
+        for uk_product in included_uk_products:
+            quick_product = ProductMapper.from_keepa(uk_product)
+
+            fba_fee = quick_product.fba_fee if quick_product.fba_fee else FeeEngine.DEFAULT_FBA_FEE
+            referral_fee = quick_product.buy_box_now * FeeEngine.DEFAULT_REFERRAL_RATE
+            ceiling_profit = quick_product.buy_box_now - fba_fee - referral_fee
+
+            if ceiling_profit <= 0:
+                skipped_unprofitable_ceiling += 1
+                continue
+
+            ceiling_checked_products.append(uk_product)
+
+        included_uk_products = ceiling_checked_products
         included_asins = [p.get("asin") for p in included_uk_products]
 
         # Step 4 - Pull EU data one marketplace at a time, in chunks,
@@ -229,7 +283,9 @@ class BrandScanService:
             "brand": brand,
             "count": len(opportunities),
             "skipped_excluded": skipped_excluded,
+            "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
+            "skipped_unprofitable_ceiling": skipped_unprofitable_ceiling,
             "marketplaces_skipped_low_tokens": marketplaces_skipped_low_tokens,
             "marketplaces_partial_low_tokens": marketplaces_partial_low_tokens,
             "tokens_remaining": self.product_service.api.tokens_left,

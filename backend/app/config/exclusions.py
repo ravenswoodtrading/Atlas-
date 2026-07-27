@@ -34,6 +34,19 @@ GATED_BRAND_CATEGORIES = set()
 # Add pairs like: GATED_BRAND_CATEGORIES.add(("philips", "123456789"))
 
 
+# Human-readable category NAMES (as seen in a Keepa CSV export's
+# "Categories: Root" column, e.g. "Lighting") -- used when checking
+# against known_products (imported from a CSV), which has names
+# rather than Keepa's numeric rootCategory IDs. Matched case-
+# insensitively. Confirmed so far: "Lighting" matches the same
+# category as numeric ID 213077031 above.
+EXCLUDED_CATEGORY_NAMES = {
+    "lighting",
+}
+# Add more as you confirm them from CSV imports, e.g.:
+# EXCLUDED_CATEGORY_NAMES.add("surge protectors")
+
+
 def is_excluded(asin: str, brand: str, category: str) -> bool:
     if asin in EXCLUDED_ASINS:
         return True
@@ -42,6 +55,24 @@ def is_excluded(asin: str, brand: str, category: str) -> bool:
         return True
 
     if (brand.lower(), category) in GATED_BRAND_CATEGORIES:
+        return True
+
+    return False
+
+
+def is_excluded_by_name(asin: str, brand: str, category_name: str) -> bool:
+    """
+    Same idea as is_excluded(), but for the known_products table,
+    which stores human-readable category names from a CSV import
+    rather than Keepa's numeric rootCategory IDs.
+    """
+    if asin in EXCLUDED_ASINS:
+        return True
+
+    if category_name.lower() in EXCLUDED_CATEGORY_NAMES:
+        return True
+
+    if (brand.lower(), category_name.lower()) in GATED_BRAND_CATEGORIES:
         return True
 
     return False

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.database.database import SessionLocal
-from app.database.models import ProductRecord
+from app.database.models import ProductRecord, KnownProduct
 
 
 class ProductRepository:
@@ -102,6 +102,31 @@ class ProductRepository:
             )
 
             return {row[0] for row in rows}
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_known_products(asins: list) -> dict:
+        """
+        Batch lookup against known_products (imported from a CSV
+        export) -- returns {asin: KnownProduct} for whichever of the
+        given ASINs have been imported. Used to check category/brand
+        exclusions BEFORE spending any Keepa tokens at all.
+        """
+        if not asins:
+            return {}
+
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(KnownProduct)
+                .filter(KnownProduct.asin.in_(asins))
+                .all()
+            )
+
+            return {row.asin: row for row in rows}
 
         finally:
             db.close()

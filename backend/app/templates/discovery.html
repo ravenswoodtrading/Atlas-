@@ -29,7 +29,44 @@
     </form>
 </div>
 
+<div class="card metric p-4 mb-4">
+    <div class="text-muted small mb-2">Or upload a list of ASINs to scan directly (.txt or .csv -- one per line, or any column in a CSV export)</div>
+    <form method="post" action="/discovery/upload" enctype="multipart/form-data" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">File</label>
+            <input type="file" class="form-control" name="file" accept=".txt,.csv" required>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Label (optional)</label>
+            <input type="text" class="form-control" name="list_name" placeholder="e.g. supplier list July">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Max ASINs</label>
+            <input type="number" class="form-control" name="limit" value="200" min="1" max="2000">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Results</label>
+            <select class="form-select" name="profitable_only">
+                <option value="true" selected>Only profitable</option>
+                <option value="false">Show all</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-outline-dark w-100">
+                <i class="bi bi-upload"></i> Upload &amp; scan
+            </button>
+        </div>
+    </form>
+</div>
+
 {% if result %}
+
+    {% if asins_found_in_upload is defined %}
+        <div class="alert alert-light border">
+            <i class="bi bi-file-earmark-check"></i>
+            Found {{ asins_found_in_upload }} ASIN{{ "s" if asins_found_in_upload != 1 }} in the uploaded file.
+        </div>
+    {% endif %}
 
     {% if result.error %}
         <div class="alert alert-warning">

@@ -48,3 +48,39 @@ class ProductRecord(Base):
     scanned_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class KnownProduct(Base):
+    """
+    Static catalog metadata imported from a Keepa CSV export (e.g. a
+    Product Finder export downloaded manually) -- ASIN, title, brand,
+    category, hazmat/adult flags. This does NOT include price/rank
+    data, which changes constantly and would go stale; only fields
+    that stay true regardless of when you look.
+
+    The point: this lets category/brand exclusion checks happen
+    BEFORE spending a single Keepa token, for any ASIN that's been
+    imported this way -- not just after the UK lookup like before.
+    """
+    __tablename__ = "known_products"
+
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+
+    title: Mapped[str] = mapped_column(String, default="")
+    brand: Mapped[str] = mapped_column(String, default="")
+    manufacturer: Mapped[str] = mapped_column(String, default="")
+
+    category_root: Mapped[str] = mapped_column(String, default="")
+    category_sub: Mapped[str] = mapped_column(String, default="")
+    category_tree: Mapped[str] = mapped_column(String, default="")
+
+    model: Mapped[str] = mapped_column(String, default="")
+    ean: Mapped[str] = mapped_column(String, default="")
+    upc: Mapped[str] = mapped_column(String, default="")
+
+    is_hazmat: Mapped[bool] = mapped_column(default=False)
+    adult_product: Mapped[bool] = mapped_column(default=False)
+
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
