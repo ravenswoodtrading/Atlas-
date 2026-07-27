@@ -14,4 +14,11 @@ def get_keepa_client():
     if not api_key:
         raise RuntimeError("KEEPA_API_KEY not found")
 
-    return keepa.Keepa(api_key)
+    api = keepa.Keepa(api_key)
+
+    # tokens_left stays at its uninitialized 0 until we explicitly ask
+    # Keepa for the real account status -- without this, every fresh
+    # client silently reports 0 tokens regardless of real balance.
+    api.update_status()
+
+    return api
