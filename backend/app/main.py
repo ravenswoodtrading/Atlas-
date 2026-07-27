@@ -6,7 +6,7 @@ from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 from app.services.category_survey_service import CategorySurveyService
 
-from app.routes import dashboard, keepa, scan, analyse
+from app.routes import dashboard, keepa, scan, analyse, opportunities_view
 
 app = FastAPI(title="Atlas")
 
@@ -18,6 +18,7 @@ app.include_router(dashboard.router)
 app.include_router(keepa.router)
 app.include_router(scan.router)
 app.include_router(analyse.router)
+app.include_router(opportunities_view.router)
 
 
 @app.get("/opportunities/{brand}")

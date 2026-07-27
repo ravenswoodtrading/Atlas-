@@ -10,7 +10,7 @@ class ProductFinder:
 
         query = {
             "productType": ["0"],
-            "brand": [brand.lower()],
+            "brand": [brand.strip().lower()],
             "sort": [
                 ["current_SALES", "asc"],
                 ["monthlySold", "desc"]
