@@ -19,4 +19,11 @@ class ProductFinder:
             "page": 0
         }
 
-        return self.api.product_finder(query)
+        print("Calling Product Finder...")
+
+        products = self.api.product_finder(query)
+
+        print("Type:", type(products))
+        print("Count:", len(products))
+
+        return products

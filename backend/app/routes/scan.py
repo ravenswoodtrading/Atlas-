@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.services.product_finder import ProductFinder
+from app.services.brand_scan_service import BrandScanService
 
 router = APIRouter(
     prefix="/scan",
@@ -11,10 +11,6 @@ router = APIRouter(
 @router.get("/{brand}")
 def scan_brand(brand: str):
 
-    finder = ProductFinder()
+    service = BrandScanService()
 
-    products = finder.find_brand(brand)
-
-    return {
-        "count": len(products)
-    }
+    return service.scan(brand)
