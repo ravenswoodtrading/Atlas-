@@ -75,7 +75,7 @@ class BrandScanService:
         included_uk_products = []
         skipped_excluded = 0
 
-       for uk_product in uk_products:
+        for uk_product in uk_products:
             asin = uk_product.get("asin") or ""
             brand_name = uk_product.get("brand") or ""
             category = str(uk_product.get("rootCategory") or "")
