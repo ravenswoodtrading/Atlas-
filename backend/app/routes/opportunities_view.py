@@ -1,5 +1,7 @@
 import re
+import io
 
+import pandas as pd
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.templating import Jinja2Templates
 
@@ -36,6 +38,24 @@ def _extract_asins(text: str) -> list:
         asins.append(asin)
 
     return asins
+
+
+def _read_uploaded_text(filename: str, raw_bytes: bytes) -> str:
+    """
+    .xlsx/.xls are binary (zipped) formats, not plain text -- they
+    need a real spreadsheet reader, not just decoding the bytes.
+    Read every cell into one text blob (header=None so a genuine
+    ASIN in row 1 isn't mistaken for a column header and dropped) and
+    let the same ASIN regex pull out what it needs, same as CSV/txt.
+    """
+    name = (filename or "").lower()
+
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        df = pd.read_excel(io.BytesIO(raw_bytes), header=None, dtype=str)
+        values = df.values.flatten()
+        return "\n".join(str(v) for v in values if pd.notna(v))
+
+    return raw_bytes.decode("utf-8", errors="ignore")
 
 
 def _apply_profit_filter(result, profitable_only):
@@ -86,7 +106,27 @@ async def discovery_upload(
     force_rescan: bool = Form(False),
 ):
     raw_bytes = await file.read()
-    text = raw_bytes.decode("utf-8", errors="ignore")
+
+    try:
+        text = _read_uploaded_text(file.filename, raw_bytes)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="discovery.html",
+            context={
+                "request": request,
+                "brand": list_name or (file.filename or "uploaded_list"),
+                "limit": limit,
+                "profitable_only": profitable_only,
+                "force_rescan": force_rescan,
+                "hidden_count": 0,
+                "result": {
+                    "error": f"Couldn't read that file: {exc}. "
+                             f"Expected a .txt, .csv, or .xlsx file.",
+                    "count": 0, "opportunities": [],
+                },
+            }
+        )
 
     asins = _extract_asins(text)
 

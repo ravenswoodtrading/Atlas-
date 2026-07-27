@@ -30,11 +30,11 @@
 </div>
 
 <div class="card metric p-4 mb-4">
-    <div class="text-muted small mb-2">Or upload a list of ASINs to scan directly (.txt or .csv -- one per line, or any column in a CSV export)</div>
+    <<div class="text-muted small mb-2">Or upload a list of ASINs to scan directly (.txt, .csv, or .xlsx -- one per line/row, or any column)</div>
     <form method="post" action="/discovery/upload" enctype="multipart/form-data" class="row g-3 align-items-end">
         <div class="col-md-3">
             <label class="form-label">File</label>
-            <input type="file" class="form-control" name="file" accept=".txt,.csv" required>
+            <input type="file" class="form-control" name="file" accept=".txt,.csv,.xlsx,.xls" required>
         </div>
         <div class="col-md-3">
             <label class="form-label">Label (optional)</label>
