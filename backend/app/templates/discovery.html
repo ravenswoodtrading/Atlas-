@@ -84,7 +84,7 @@
         <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card metric p-3 text-center">
-                    <div class="text-muted small">Opportunities found</div>
+                    <div class="text-muted small">Total results</div>
                     <h2>{{ result.count }}</h2>
                 </div>
             </div>
@@ -120,15 +120,13 @@
             </div>
         {% endif %}
 
-        {% if hidden_count %}
-            <div class="alert alert-secondary">
-                <i class="bi bi-eye-slash"></i>
-                {{ hidden_count }} unprofitable result{{ "s" if hidden_count != 1 }} hidden.
-                {% if is_upload %}
-                    Re-upload the file with "Show all" selected to see them.
-                {% else %}
-                    <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only=false">Show all</a>
-                {% endif %}
+        {% if result.opportunities %}
+            <div class="form-check form-switch mb-3">
+                <input class="form-check-input" type="checkbox" id="showUnprofitableToggle" {{ "" if profitable_only else "checked" }}>
+                <label class="form-check-label" for="showUnprofitableToggle">
+                    Show unprofitable results too
+                    {% if hidden_count %}<span class="text-muted">({{ hidden_count }} hidden)</span>{% endif %}
+                </label>
             </div>
         {% endif %}
 
@@ -161,7 +159,7 @@
                         {% for o in result.opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
-                        <tr>
+                        <tr class="opportunity-row" {% if p.profit <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if p.profit > 0 else 'false' }}">
                             <td style="max-width:320px;">
                                 <div class="fw-semibold small">{{ p.title[:80] }}{% if p.title|length > 80 %}...{% endif %}</div>
                                 <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
@@ -235,6 +233,20 @@
         {% else %}
             <div class="alert alert-secondary">No viable opportunities found in this batch.</div>
         {% endif %}
+
+        <script>
+        (function() {
+            var toggle = document.getElementById('showUnprofitableToggle');
+            if (!toggle) return;
+
+            toggle.addEventListener('change', function() {
+                var rows = document.querySelectorAll('.opportunity-row[data-profitable="false"]');
+                rows.forEach(function(row) {
+                    row.style.display = toggle.checked ? '' : 'none';
+                });
+            });
+        })();
+        </script>
 
     {% endif %}
 
