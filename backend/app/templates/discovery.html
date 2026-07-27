@@ -79,6 +79,7 @@
                             <th>Score</th>
                             <th>Confidence</th>
                             <th>Recommendation</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -109,6 +110,46 @@
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
+                                    <i class="bi bi-info-circle"></i> Why?
+                                </button>
+                            </td>
+                        </tr>
+                        <tr class="collapse" id="why-{{ loop.index }}">
+                            <td colspan="10" class="bg-light">
+                                <div class="row py-2">
+                                    <div class="col-md-6">
+                                        <div class="small text-muted mb-2">
+                                            Trend: price {{ "%+.1f"|format(r.trend.price_change) }}% vs 90d avg,
+                                            offers {{ "%+.1f"|format(r.trend.offer_change) }}%,
+                                            sales rank {{ "%+.1f"|format(r.trend.rank_change) }}%
+                                        </div>
+                                        <h6 class="small fw-bold">Score factors ({{ r.score }}/100)</h6>
+                                        <ul class="list-unstyled small mb-0">
+                                        {% for f in r.score_breakdown %}
+                                            <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
+                                                <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-circle' }}"></i>
+                                                {{ f.label }}
+                                                {% if f.passed %}<strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
+                                            </li>
+                                        {% endfor %}
+                                        </ul>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <h6 class="small fw-bold">Confidence factors ({{ r.confidence }}/100)</h6>
+                                        <ul class="list-unstyled small mb-0">
+                                        {% for f in r.confidence_breakdown %}
+                                            <li class="{{ 'text-danger' if f.triggered else 'text-success' }}">
+                                                <i class="bi {{ 'bi-exclamation-triangle-fill' if f.triggered else 'bi-check-circle-fill' }}"></i>
+                                                {{ f.label }}
+                                                {% if f.triggered %}<strong>({{ f.points }})</strong>{% endif %}
+                                            </li>
+                                        {% endfor %}
+                                        </ul>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                         {% endfor %}

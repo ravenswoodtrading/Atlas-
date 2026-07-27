@@ -19,6 +19,8 @@ class OpportunityReport:
     recommendation: str
 
     trend: TrendAnalysis
+    score_breakdown: list
+    confidence_breakdown: list
 
 
 class OpportunityEngine:
@@ -31,9 +33,11 @@ class OpportunityEngine:
 
         # Calculate score
         score = ScoringEngine.score(product, trend)
+        score_breakdown = ScoringEngine.explain(product, trend)
 
         # Calculate confidence
         confidence = ConfidenceEngine.score(product, trend)
+        confidence_breakdown = ConfidenceEngine.explain(product, trend)
 
         # Recommendation
         if score >= 85 and confidence >= 80:
@@ -53,4 +57,6 @@ class OpportunityEngine:
             confidence=confidence,
             recommendation=recommendation,
             trend=trend,
+            score_breakdown=score_breakdown,
+            confidence_breakdown=confidence_breakdown,
         )

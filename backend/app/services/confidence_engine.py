@@ -1,25 +1,28 @@
+from dataclasses import dataclass
+
 from app.models.product import Product
 from app.services.trend_engine import TrendAnalysis
+
+
+@dataclass
+class ConfidenceFactor:
+    label: str
+    triggered: bool
+    points: int
 
 
 class ConfidenceEngine:
 
     @staticmethod
+    def explain(product: Product, trend: TrendAnalysis):
+        return [
+            ConfidenceFactor("Large price swing (over 15%)", abs(trend.price_change) > 15, -30),
+            ConfidenceFactor("Competition surging (offers up over 50%)", trend.offer_change > 50, -20),
+            ConfidenceFactor("Low sales velocity (under 10 rank drops in 30d)", product.sales_drops_30d < 10, -20),
+        ]
+
+    @staticmethod
     def score(product: Product, trend: TrendAnalysis) -> int:
-
-        confidence = 100
-
-        # Large price swings reduce confidence
-        if abs(trend.price_change) > 15:
-            confidence -= 30
-
-        # Rapid increase in competition
-        if trend.offer_change > 50:
-            confidence -= 20
-
-        # Low sales velocity
-        if product.sales_drops_30d < 10:
-            confidence -= 20
-
-        # Keep confidence between 0 and 100
-        return max(0, min(confidence, 100))
+        factors = ConfidenceEngine.explain(product, trend)
+        total = 100 + sum(f.points for f in factors if f.triggered)
+        return max(0, min(total, 100))
