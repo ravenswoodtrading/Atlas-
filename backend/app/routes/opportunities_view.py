@@ -92,6 +92,7 @@ def discovery(request: Request, brand: str = "", limit: int = 20,
             "force_rescan": force_rescan,
             "hidden_count": hidden_count,
             "result": result,
+            "is_upload": False,
         }
     )
 
@@ -125,6 +126,7 @@ async def discovery_upload(
                              f"Expected a .txt, .csv, or .xlsx file.",
                     "count": 0, "opportunities": [],
                 },
+                "is_upload": True,
             }
         )
 
@@ -158,5 +160,6 @@ async def discovery_upload(
             "hidden_count": hidden_count,
             "result": result,
             "asins_found_in_upload": len(asins),
+            "is_upload": True,
         }
     )

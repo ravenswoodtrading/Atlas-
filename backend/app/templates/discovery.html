@@ -30,7 +30,7 @@
 </div>
 
 <div class="card metric p-4 mb-4">
-    <<div class="text-muted small mb-2">Or upload a list of ASINs to scan directly (.txt, .csv, or .xlsx -- one per line/row, or any column)</div>
+    <div class="text-muted small mb-2">Or upload a list of ASINs to scan directly (.txt, .csv, or .xlsx -- one per line/row, or any column)</div>
     <form method="post" action="/discovery/upload" enctype="multipart/form-data" class="row g-3 align-items-end">
         <div class="col-md-3">
             <label class="form-label">File</label>
@@ -49,6 +49,13 @@
             <select class="form-select" name="profitable_only">
                 <option value="true" selected>Only profitable</option>
                 <option value="false">Show all</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">Rescan</label>
+            <select class="form-select" name="force_rescan">
+                <option value="false" selected>Skip recent (default)</option>
+                <option value="true">Force rescan all</option>
             </select>
         </div>
         <div class="col-md-2">
@@ -104,14 +111,24 @@
         {% if result.skipped_recently_scanned %}
             <div class="alert alert-secondary">
                 <i class="bi bi-clock-history"></i>
-                Skipped {{ result.skipped_recently_scanned }} product{{ "s" if result.skipped_recently_scanned != 1 }} already scanned in the last 24h (saves tokens). <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}&force_rescan=true">Force rescan everything</a>
+                Skipped {{ result.skipped_recently_scanned }} product{{ "s" if result.skipped_recently_scanned != 1 }} already scanned in the last 24h (saves tokens).
+                {% if is_upload %}
+                    Re-upload the file with "Force rescan" enabled to check them again.
+                {% else %}
+                    <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}&force_rescan=true">Force rescan everything</a>
+                {% endif %}
             </div>
         {% endif %}
 
         {% if hidden_count %}
             <div class="alert alert-secondary">
                 <i class="bi bi-eye-slash"></i>
-                {{ hidden_count }} unprofitable result{{ "s" if hidden_count != 1 }} hidden. <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only=false">Show all</a>
+                {{ hidden_count }} unprofitable result{{ "s" if hidden_count != 1 }} hidden.
+                {% if is_upload %}
+                    Re-upload the file with "Show all" selected to see them.
+                {% else %}
+                    <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only=false">Show all</a>
+                {% endif %}
             </div>
         {% endif %}
 
