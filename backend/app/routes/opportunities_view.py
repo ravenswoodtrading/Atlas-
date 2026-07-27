@@ -9,13 +9,14 @@ templates = Jinja2Templates(directory="app/templates")
 
 
 @router.get("/discovery")
-def discovery(request: Request, brand: str = "", limit: int = 20, profitable_only: bool = True):
+def discovery(request: Request, brand: str = "", limit: int = 20,
+              profitable_only: bool = True, force_rescan: bool = False):
     result = None
     hidden_count = 0
 
     if brand:
         scanner = BrandScanService()
-        result = scanner.scan(brand, limit=limit)
+        result = scanner.scan(brand, limit=limit, force_rescan=force_rescan)
 
         # Everything is still computed and saved to the database
         # regardless -- this only affects what's shown on this page,
@@ -35,6 +36,7 @@ def discovery(request: Request, brand: str = "", limit: int = 20, profitable_onl
             "brand": brand,
             "limit": limit,
             "profitable_only": profitable_only,
+            "force_rescan": force_rescan,
             "hidden_count": hidden_count,
             "result": result,
         }

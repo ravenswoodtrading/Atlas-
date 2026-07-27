@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from app.database.database import SessionLocal
 from app.database.models import ProductRecord
 
@@ -74,6 +76,32 @@ class ProductRepository:
                     break
 
             return latest
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recently_scanned_asins(brand_query: str, since_hours: int) -> set:
+        """
+        Returns the set of ASINs already scanned for this brand within
+        the last `since_hours` hours -- used to skip re-spending
+        tokens on products we already have fresh data for, and lets
+        repeated scans naturally reach deeper into the catalog instead
+        of hitting the same top-ranked ASINs every time.
+        """
+        db = SessionLocal()
+
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+
+            rows = (
+                db.query(ProductRecord.asin)
+                .filter(ProductRecord.brand_query == brand_query)
+                .filter(ProductRecord.scanned_at >= cutoff)
+                .all()
+            )
+
+            return {row[0] for row in rows}
 
         finally:
             db.close()

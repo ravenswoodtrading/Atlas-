@@ -64,6 +64,13 @@
             </div>
         </div>
 
+        {% if result.skipped_recently_scanned %}
+            <div class="alert alert-secondary">
+                <i class="bi bi-clock-history"></i>
+                Skipped {{ result.skipped_recently_scanned }} product{{ "s" if result.skipped_recently_scanned != 1 }} already scanned in the last 24h (saves tokens). <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}&force_rescan=true">Force rescan everything</a>
+            </div>
+        {% endif %}
+
         {% if hidden_count %}
             <div class="alert alert-secondary">
                 <i class="bi bi-eye-slash"></i>

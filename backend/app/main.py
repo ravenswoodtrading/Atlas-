@@ -31,13 +31,15 @@ app.include_router(products.router)
 
 
 @app.get("/opportunities/{brand}")
-def opportunities_for_brand(brand: str, limit: int = 20):
+def opportunities_for_brand(brand: str, limit: int = 20, force_rescan: bool = False):
     """
     Full A2A pipeline: find a brand's ASINs, price them across UK/DE/FR/ES/IT,
     apply fees, score with OpportunityEngine, and return ranked opportunities.
+    By default, ASINs scanned recently for this brand are skipped to
+    save tokens -- pass force_rescan=true to check everything anyway.
     """
     scanner = BrandScanService()
-    return scanner.scan(brand, limit=limit)
+    return scanner.scan(brand, limit=limit, force_rescan=force_rescan)
 
 
 @app.get("/categories/{brand}")

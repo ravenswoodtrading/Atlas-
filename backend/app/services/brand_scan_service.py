@@ -21,6 +21,13 @@ MIN_TOKEN_BUFFER = 5
 # roughly one chunk's worth of tokens instead of the whole scan.
 CHUNK_SIZE = 10
 
+# How long a scanned ASIN is considered "fresh enough" to skip
+# re-scanning by default. This is what stops repeated scans of the
+# same brand from re-spending tokens on the exact same top-ranked
+# products every time -- once they're on cooldown, the next scan
+# naturally falls through to the next tier down instead.
+RESCAN_COOLDOWN_HOURS = 24
+
 
 class BrandScanService:
 
@@ -73,22 +80,41 @@ class BrandScanService:
 
         return products, fetched_asins, ran_out, cost_estimate
 
-    def scan(self, brand: str, limit: int = 20):
+    def scan(self, brand: str, limit: int = 20, force_rescan: bool = False):
         """
         Full A2A pipeline for a brand, with chunked token-budget
         awareness so a scan never silently hangs OR blows through its
         token budget in one oversized request. Measures real per-ASIN
         cost as it goes and checks it before every chunk, not just
         before every marketplace.
+
+        By default, ASINs already scanned for this brand within
+        RESCAN_COOLDOWN_HOURS are skipped BEFORE any tokens are spent
+        -- this is what stops repeated scans from re-paying for the
+        same top-ranked products, and lets later scans naturally
+        reach further into the catalog instead. Pass force_rescan=True
+        to check everything regardless of when it was last scanned.
         """
 
         # Step 1 - Find ASINs
         asins = self.finder.find_brand(brand)
+
+        skipped_recently_scanned = 0
+
+        if not force_rescan:
+            recently_scanned = ProductRepository.get_recently_scanned_asins(
+                brand, RESCAN_COOLDOWN_HOURS
+            )
+            before_count = len(asins)
+            asins = [a for a in asins if a not in recently_scanned]
+            skipped_recently_scanned = before_count - len(asins)
+
         asins = asins[:limit]
 
         empty_response = {
             "brand": brand, "count": 0, "opportunities": [],
             "skipped_excluded": 0,
+            "skipped_recently_scanned": skipped_recently_scanned,
             "marketplaces_skipped_low_tokens": [],
             "marketplaces_partial_low_tokens": {},
             "tokens_remaining": None,
@@ -203,6 +229,7 @@ class BrandScanService:
             "brand": brand,
             "count": len(opportunities),
             "skipped_excluded": skipped_excluded,
+            "skipped_recently_scanned": skipped_recently_scanned,
             "marketplaces_skipped_low_tokens": marketplaces_skipped_low_tokens,
             "marketplaces_partial_low_tokens": marketplaces_partial_low_tokens,
             "tokens_remaining": self.product_service.api.tokens_left,
