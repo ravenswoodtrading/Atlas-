@@ -19,6 +19,8 @@ saves 80% of the tokens that ASIN would have cost.
 # or certification requirements block cross-border resale).
 EXCLUDED_CATEGORIES = {
     "340831031",  # monitors -- confirmed dead end for A2A sourcing
+    "213077031",  # lighting (bulbs, wake-up lamps, smart bulbs) -- mains-powered
+    "79903031",   # surge protectors / power strips / extension cables -- mains-powered
 }
 
 # Specific ASINs to always skip, regardless of category or brand.
