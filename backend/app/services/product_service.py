@@ -28,5 +28,6 @@ class ProductService:
             history=True,
             offers=20,
             buybox=True,
+            stats=90,
             progress_bar=False
         )
