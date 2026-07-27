@@ -23,10 +23,25 @@ class KeepaParser:
 
     @staticmethod
     def _last_value(series):
+        """
+        Keepa history series are pairs: [timestamp, value, timestamp,
+        value, ...]. Value always sits at an ODD index. Sometimes Keepa
+        returns a dangling extra timestamp at the end with no paired
+        value yet (an odd-length array) -- if we don't account for
+        that, we read a raw timestamp as if it were a price/rank and
+        corrupt it (this was the source of the ~76000-79000 "phantom
+        cost" bug: a 2026-era Keepa-minutes timestamp divided by 100).
+        """
         if not series:
             return 0
 
-        for i in range(len(series) - 1, 0, -2):
+        start = len(series) - 1
+        if start % 2 == 0:
+            # Odd-length array -- last element is a dangling timestamp,
+            # not a value. Step back one to land on the real last value.
+            start -= 1
+
+        for i in range(start, 0, -2):
             value = series[i]
             if value not in (-1, None):
                 return value
