@@ -1,6 +1,12 @@
+from dataclasses import asdict
+
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
+from app.services.fee_engine import FeeEngine
+from app.services.opportunity_engine import OpportunityEngine
+
+EU_MARKETPLACES = ["DE", "FR", "ES", "IT"]
 
 
 class BrandScanService:
@@ -9,44 +15,68 @@ class BrandScanService:
         self.finder = ProductFinder()
         self.product_service = ProductService()
 
-    def scan(self, brand: str):
+    def scan(self, brand: str, limit: int = 20):
+        """
+        Full A2A pipeline for a brand:
+        find ASINs -> pull UK + EU Keepa data -> map costs -> apply
+        fees -> score with OpportunityEngine -> rank by score.
+        """
 
         # Step 1 - Find ASINs
         asins = self.finder.find_brand(brand)
 
-        # Keep first 20 while we're developing
-        asins = asins[:20]
+        # Keep the list bounded -- Keepa calls (and tokens) scale with this
+        asins = asins[:limit]
 
-        # Step 2 - Load products from each marketplace
+        if not asins:
+            return {"brand": brand, "count": 0, "opportunities": []}
+
+        # Step 2 - Load UK data (selling side) and each EU marketplace (buying side)
         uk_products = self.product_service.get_products(asins, "UK")
-        de_products = self.product_service.get_products(asins, "DE")
-        fr_products = self.product_service.get_products(asins, "FR")
-        es_products = self.product_service.get_products(asins, "ES")
-        it_products = self.product_service.get_products(asins, "IT")
 
-        # Step 3 - Build lookup dictionaries
-        de_lookup = {p.get("asin"): p for p in de_products}
-        fr_lookup = {p.get("asin"): p for p in fr_products}
-        es_lookup = {p.get("asin"): p for p in es_products}
-        it_lookup = {p.get("asin"): p for p in it_products}
+        eu_lookups = {
+            marketplace: {
+                p.get("asin"): p
+                for p in self.product_service.get_products(asins, marketplace)
+            }
+            for marketplace in EU_MARKETPLACES
+        }
 
-        results = []
+        opportunities = []
 
-        # Step 4 - Build response
-        for uk in uk_products:
+        # Step 3 - Map, price, and score each ASIN
+        for uk_product in uk_products:
+            asin = uk_product.get("asin")
 
-            product = ProductMapper.from_keepa(uk)
+            eu_products = {
+                marketplace: lookup.get(asin)
+                for marketplace, lookup in eu_lookups.items()
+            }
 
-            results.append({
-                "product": product,
-                "de_found": uk.get("asin") in de_lookup,
-                "fr_found": uk.get("asin") in fr_lookup,
-                "es_found": uk.get("asin") in es_lookup,
-                "it_found": uk.get("asin") in it_lookup,
+            product = ProductMapper.from_keepa_multi(uk_product, eu_products)
+
+            # Skip anything with no EU source at all -- there's no A2A deal here
+            if not product.best_source_marketplace:
+                continue
+
+            fees = FeeEngine.calculate(product)
+            product.fba_fee = fees.fba_fee
+            product.referral_fee = fees.referral_fee
+            product.profit = fees.profit
+            product.roi = fees.roi
+
+            report = OpportunityEngine.analyse(product)
+
+            opportunities.append({
+                "product": asdict(product),
+                "report": asdict(report),
             })
+
+        # Step 4 - Rank best opportunities first
+        opportunities.sort(key=lambda o: o["report"]["score"], reverse=True)
 
         return {
             "brand": brand,
-            "count": len(results),
-            "products": results
+            "count": len(opportunities),
+            "opportunities": opportunities,
         }

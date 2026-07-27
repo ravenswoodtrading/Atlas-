@@ -5,13 +5,28 @@ from app.services.brand_scan_service import BrandScanService
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 
-app = FastAPI()
+from app.routes import dashboard, keepa, scan, analyse
+
+app = FastAPI(title="Atlas")
+
+# NOTE: routes/products.py and routes/add_product.py are NOT registered
+# yet -- their Product DB model doesn't match the atlas.db schema, so
+# they'll 500 on request. Out of scope until the persistence layer is
+# rebuilt; see /areas notes.
+app.include_router(dashboard.router)
+app.include_router(keepa.router)
+app.include_router(scan.router)
+app.include_router(analyse.router)
 
 
-@app.get("/scan/{brand}")
-def scan_brand(brand: str):
+@app.get("/opportunities/{brand}")
+def opportunities_for_brand(brand: str, limit: int = 20):
+    """
+    Full A2A pipeline: find a brand's ASINs, price them across UK/DE/FR/ES/IT,
+    apply fees, score with OpportunityEngine, and return ranked opportunities.
+    """
     scanner = BrandScanService()
-    return scanner.scan(brand)
+    return scanner.scan(brand, limit=limit)
 
 
 @app.get("/debug/{brand}")

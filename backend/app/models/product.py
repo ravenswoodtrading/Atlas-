@@ -35,5 +35,9 @@ class Product:
     profit: float = 0.0
     roi: float = 0.0
 
+    # Best A2A source found across DE/FR/IT/ES, cost already converted to GBP
+    best_source_marketplace: str = ""
+    best_source_cost_gbp: float = 0.0
+
     hazmat: bool = False
     adult: bool = False

@@ -9,7 +9,7 @@ router = APIRouter(
     tags=["Keepa"]
 )
 
-templates = Jinja2Templates(directory="backend/app/templates")
+templates = Jinja2Templates(directory="app/templates")
 
 
 @router.get("/test")
