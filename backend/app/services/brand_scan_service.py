@@ -111,6 +111,17 @@ class BrandScanService:
         else:
             asins = self.finder.find_brand(brand, limit=limit)
 
+        # Step 1a - Skip user-excluded ASINs (marked via the Exclude
+        # button on the results page) BEFORE spending any tokens --
+        # the cheapest possible check, just a set membership test.
+        user_excluded_asins = ProductRepository.get_excluded_asins()
+        skipped_user_excluded = 0
+
+        if user_excluded_asins:
+            before_count = len(asins)
+            asins = [a for a in asins if a not in user_excluded_asins]
+            skipped_user_excluded = before_count - len(asins)
+
         # Step 1b - Check imported static catalog data (known_products)
         # for category/brand exclusions BEFORE spending ANY tokens --
         # not just before the EU calls like the exclusions.py check
@@ -148,6 +159,7 @@ class BrandScanService:
         empty_response = {
             "brand": brand, "count": 0, "opportunities": [],
             "skipped_excluded": 0,
+            "skipped_user_excluded": skipped_user_excluded,
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
             "skipped_unprofitable_ceiling": 0,
@@ -314,6 +326,7 @@ class BrandScanService:
             "brand": brand,
             "count": len(opportunities),
             "skipped_excluded": skipped_excluded,
+            "skipped_user_excluded": skipped_user_excluded,
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
             "skipped_unprofitable_ceiling": skipped_unprofitable_ceiling,
