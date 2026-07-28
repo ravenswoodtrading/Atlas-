@@ -5,10 +5,23 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Products (latest scan per ASIN)</h4>
+    <h4 class="mb-0">Products (latest scan per ASIN) -- {{ total_count }} total</h4>
     <a href="/discovery" class="btn btn-dark btn-sm">
         <i class="bi bi-search"></i> Run a new scan
     </a>
+</div>
+
+<div class="card metric p-3 mb-4">
+    <form method="get" action="/products" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Results</label>
+            <select class="form-select" name="filter" onchange="this.form.submit()">
+                <option value="all" {{ "selected" if filter == "all" }}>All products</option>
+                <option value="profitable" {{ "selected" if filter == "profitable" }}>Profitable only</option>
+                <option value="unprofitable" {{ "selected" if filter == "unprofitable" }}>Unprofitable only</option>
+            </select>
+        </div>
+    </form>
 </div>
 
 {% if products %}
@@ -23,17 +36,19 @@
                     <th>Best Source</th>
                     <th class="text-end">Source Cost</th>
                     <th class="text-end">UK Price</th>
-                    <th class="text-end">Profit</th>
-                    <th class="text-end">ROI</th>
+                    <th class="text-end">Profit/ROI (today)</th>
+                    <th class="text-end">Profit/ROI (90d)</th>
+                    <th>Monthly Sales</th>
                     <th>Score</th>
                     <th>Recommendation</th>
                     <th>Last Scanned</th>
+                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for p in products %}
-                <tr>
-                    <td style="max-width:280px;">
+                <tr class="{{ 'table-success' if p.monthly_sales > 0 }}">
+                    <td style="max-width:260px;">
                         <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
                         <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
                     </td>
@@ -42,10 +57,17 @@
                     <td class="text-end">&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                     <td class="text-end">&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
                     <td class="text-end {{ 'text-success' if p.profit > 0 else 'text-danger' }}">
-                        &pound;{{ "%.2f"|format(p.profit) }}
+                        &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
                     </td>
-                    <td class="text-end {{ 'text-success' if p.roi > 0 else 'text-danger' }}">
-                        {{ "%.1f"|format(p.roi) }}%
+                    <td class="text-end {{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
+                    </td>
+                    <td>
+                        {% if p.monthly_sales > 0 %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ p.monthly_sales }}/mo</span>
+                        {% else %}
+                            <span class="badge bg-secondary">No confirmed sales</span>
+                        {% endif %}
                     </td>
                     <td>{{ p.score }}</td>
                     <td>
@@ -58,18 +80,102 @@
                         {% endif %}
                     </td>
                     <td class="small text-muted">{{ p.scanned_at.strftime("%Y-%m-%d %H:%M") if p.scanned_at else "" }}</td>
+                    <td style="min-width:110px;">
+                        <div class="d-flex flex-column gap-1">
+                            {% if p.parsed_report %}
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
+                                <i class="bi bi-info-circle"></i> Why?
+                            </button>
+                            {% endif %}
+                            <form method="post" action="/watch/add">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="title" value="{{ p.title }}">
+                                <input type="hidden" name="brand" value="{{ p.brand }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-outline-primary w-100" type="submit">
+                                    <i class="bi bi-star"></i> Watch
+                                </button>
+                            </form>
+                            <form method="post" action="/exclude/add">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="title" value="{{ p.title }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-outline-danger w-100" type="submit">
+                                    <i class="bi bi-x-circle"></i> Exclude
+                                </button>
+                            </form>
+                        </div>
+                    </td>
                 </tr>
+                {% if p.parsed_report %}
+                <tr class="collapse" id="why-{{ loop.index }}">
+                    <td colspan="12" class="bg-light">
+                        <div class="row py-2">
+                            {% if p.parsed_report.trend %}
+                            <div class="col-12 small text-muted mb-2">
+                                Trend (at scan time): price {{ "%+.1f"|format(p.parsed_report.trend.price_change) }}% vs 90d avg,
+                                offers {{ "%+.1f"|format(p.parsed_report.trend.offer_change) }}%,
+                                sales rank {{ "%+.1f"|format(p.parsed_report.trend.rank_change) }}%
+                            </div>
+                            {% endif %}
+                            <div class="col-md-6">
+                                <h6 class="small fw-bold">Score factors ({{ p.parsed_report.score }}/100)</h6>
+                                <ul class="list-unstyled small mb-0">
+                                {% for f in p.parsed_report.score_breakdown %}
+                                    <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
+                                        <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-circle' }}"></i>
+                                        {{ f.label }}
+                                        {% if f.passed %}<strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="small fw-bold">Confidence factors ({{ p.parsed_report.confidence }}/100)</h6>
+                                <ul class="list-unstyled small mb-0">
+                                {% for f in p.parsed_report.confidence_breakdown %}
+                                    <li class="{{ 'text-danger' if f.triggered else 'text-success' }}">
+                                        <i class="bi {{ 'bi-exclamation-triangle-fill' if f.triggered else 'bi-check-circle-fill' }}"></i>
+                                        {{ f.label }}
+                                        {% if f.triggered %}<strong>({{ f.points }})</strong>{% endif %}
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
     </div>
 </div>
 
+<nav class="mt-3">
+    <ul class="pagination">
+        <li class="page-item {{ 'disabled' if page <= 1 }}">
+            <a class="page-link" href="/products?page={{ page - 1 }}&filter={{ filter }}">Previous</a>
+        </li>
+        <li class="page-item disabled">
+            <span class="page-link">Page {{ page }} of {{ total_pages }}</span>
+        </li>
+        <li class="page-item {{ 'disabled' if page >= total_pages }}">
+            <a class="page-link" href="/products?page={{ page + 1 }}&filter={{ filter }}">Next</a>
+        </li>
+    </ul>
+</nav>
+
 {% else %}
 
 <div class="alert alert-info">
-    <h5>No products saved yet</h5>
-    <p class="mb-0">Run a scan on the <a href="/discovery">Discovery</a> page -- every opportunity found gets saved here automatically.</p>
+    <h5>No products found</h5>
+    <p class="mb-0">
+        {% if filter != "all" %}
+            No products match this filter. <a href="/products">Show all products</a>, or
+        {% endif %}
+        run a scan on the <a href="/discovery">Discovery</a> page -- every opportunity found gets saved here automatically.
+    </p>
 </div>
 
 {% endif %}
