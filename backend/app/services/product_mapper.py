@@ -33,7 +33,7 @@ class ProductMapper:
         parser = KeepaParser(k)
 
         return Product(
-          asin=k.get("asin") or "",
+            asin=k.get("asin") or "",
             title=k.get("title") or "",
             brand=k.get("brand") or "",
             category=str(k.get("rootCategory", "")),
@@ -47,6 +47,7 @@ class ProductMapper:
             sales_rank_now=parser.sales_rank_now(),
             sales_rank_90d=parser.sales_rank_90d(),
             sales_drops_30d=parser.sales_drops_30d(),
+            monthly_sales=parser.monthly_sales(),
 
             fba_fee=parser.fba_fee(),
 

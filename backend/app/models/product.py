@@ -20,6 +20,13 @@ class Product:
 
     sales_drops_30d: int = 0
 
+    # Keepa's confirmed monthly sales count (their "monthlySold" stat,
+    # based on actual Amazon sales data, not an estimate). 0 means
+    # Keepa has no confirmed sales data for this product -- not
+    # necessarily that it doesn't sell, just that Amazon hasn't
+    # published a figure for it.
+    monthly_sales: int = 0
+
     # Marketplace buy prices
     uk_cost: float = 0.0
     fr_cost: float = 0.0
