@@ -161,17 +161,18 @@
                             <th>UK Price (today)</th>
                             <th>Profit / ROI (today)</th>
                             <th>Profit / ROI (typical, 90d)</th>
+                            <th>Monthly Sales</th>
                             <th>Score</th>
                             <th>Confidence</th>
                             <th>Recommendation</th>
-                            <th></th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for o in result.opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
-                        <tr class="opportunity-row" {% if p.profit <= 0 and p.profit_90d <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if (p.profit > 0 or p.profit_90d > 0) else 'false' }}">
+                        <tr class="opportunity-row {{ 'table-success' if p.monthly_sales > 0 }}" {% if p.profit <= 0 and p.profit_90d <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if (p.profit > 0 or p.profit_90d > 0) else 'false' }}">
                             <td style="max-width:320px;">
                                 <div class="fw-semibold small">{{ p.title[:80] }}{% if p.title|length > 80 %}...{% endif %}</div>
                                 <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
@@ -185,6 +186,13 @@
                             <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
                                 &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
                             </td>
+                            <td>
+                                {% if p.monthly_sales > 0 %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ p.monthly_sales }}/mo</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">No confirmed sales</span>
+                                {% endif %}
+                            </td>
                             <td>{{ r.score }}</td>
                             <td>{{ r.confidence }}%</td>
                             <td>
@@ -196,14 +204,33 @@
                                     <span class="badge bg-secondary">IGNORE</span>
                                 {% endif %}
                             </td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
-                                    <i class="bi bi-info-circle"></i> Why?
-                                </button>
+                            <td style="min-width:110px;">
+                                <div class="d-flex flex-column gap-1">
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
+                                        <i class="bi bi-info-circle"></i> Why?
+                                    </button>
+                                    <form method="post" action="/watch/add">
+                                        <input type="hidden" name="asin" value="{{ p.asin }}">
+                                        <input type="hidden" name="title" value="{{ p.title }}">
+                                        <input type="hidden" name="brand" value="{{ p.brand }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <button class="btn btn-sm btn-outline-primary w-100" type="submit">
+                                            <i class="bi bi-star"></i> Watch
+                                        </button>
+                                    </form>
+                                    <form method="post" action="/exclude/add">
+                                        <input type="hidden" name="asin" value="{{ p.asin }}">
+                                        <input type="hidden" name="title" value="{{ p.title }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <button class="btn btn-sm btn-outline-danger w-100" type="submit">
+                                            <i class="bi bi-x-circle"></i> Exclude
+                                        </button>
+                                    </form>
+                                </div>
                             </td>
                         </tr>
                         <tr class="collapse" id="why-{{ loop.index }}">
-                            <td colspan="10" class="bg-light">
+                            <td colspan="11" class="bg-light">
                                 <div class="row py-2">
                                     <div class="col-md-6">
                                         <div class="small text-muted mb-2">
