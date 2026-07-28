@@ -10,7 +10,7 @@ from app.database.base import Base
 from app.database.database import engine
 from app.database import models  # noqa: F401 -- registers ProductRecord with Base.metadata
 
-from app.routes import dashboard, keepa, scan, analyse, opportunities_view, products
+from app.routes import dashboard, keepa, scan, analyse, opportunities_view, products, watchlist
 
 app = FastAPI(title="Atlas")
 
@@ -28,6 +28,7 @@ app.include_router(scan.router)
 app.include_router(analyse.router)
 app.include_router(opportunities_view.router)
 app.include_router(products.router)
+app.include_router(watchlist.router)
 
 
 @app.get("/opportunities/{brand}")

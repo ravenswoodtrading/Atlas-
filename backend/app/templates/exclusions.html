@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Exclusions - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Excluded Products ({{ exclusions|length }})</h4>
+    <a href="/discovery" class="btn btn-outline-dark btn-sm">
+        <i class="bi bi-search"></i> Back to Discovery
+    </a>
+</div>
+
+<p class="text-muted">These ASINs are skipped BEFORE any tokens are spent on future scans -- click "Exclude" next to any product on the Discovery or Products page to add one.</p>
+
+{% if not exclusions %}
+    <div class="alert alert-info">
+        No products excluded yet.
+    </div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>ASIN</th>
+                    <th>Title</th>
+                    <th>Excluded on</th>
+                    <th>Remove</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in exclusions %}
+                <tr>
+                    <td>{{ e.asin }}</td>
+                    <td>{{ e.title[:80] }}{% if e.title|length > 80 %}...{% endif %}</td>
+                    <td class="small text-muted">{{ e.excluded_at.strftime("%Y-%m-%d %H:%M") if e.excluded_at else "" }}</td>
+                    <td>
+                        <form method="post" action="/exclude/remove">
+                            <input type="hidden" name="asin" value="{{ e.asin }}">
+                            <input type="hidden" name="return_to" value="/exclusions">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
