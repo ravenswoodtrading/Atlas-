@@ -35,7 +35,7 @@ class BrandScanService:
         self.finder = ProductFinder()
         self.product_service = ProductService()
 
-    def _fetch_in_chunks(self, asins, marketplace, cost_estimate):
+    def _fetch_in_chunks(self, asins, marketplace, cost_estimate, full=True):
         """
         Fetches `asins` from `marketplace` in CHUNK_SIZE pieces,
         checking measured token budget before each chunk. Returns
@@ -45,6 +45,10 @@ class BrandScanService:
         this call shape, or None if not yet known. Updated after each
         chunk from real measured spend, so later chunks (and later
         marketplaces) use an increasingly accurate figure.
+
+        full=False requests a slimmed-down query (see
+        ProductService.get_products) -- used for EU marketplaces,
+        where only the current price is ever read.
         """
         products = []
         fetched_asins = []
@@ -68,7 +72,7 @@ class BrandScanService:
                     break
 
             tokens_before = self.product_service.api.tokens_left
-            chunk_products = self.product_service.get_products(chunk, marketplace)
+            chunk_products = self.product_service.get_products(chunk, marketplace, full=full)
             tokens_after = self.product_service.api.tokens_left
 
             products.extend(chunk_products)
@@ -105,7 +109,7 @@ class BrandScanService:
         if asins is not None:
             asins = list(asins)
         else:
-            asins = self.finder.find_brand(brand)
+            asins = self.finder.find_brand(brand, limit=limit)
 
         # Step 1b - Check imported static catalog data (known_products)
         # for category/brand exclusions BEFORE spending ANY tokens --
@@ -220,13 +224,20 @@ class BrandScanService:
         marketplaces_skipped_low_tokens = []
         marketplaces_partial_low_tokens = {}
 
+        # EU calls use a slimmed-down request (full=False) -- reset the
+        # cost estimate so it's measured fresh for that cheaper shape,
+        # rather than inheriting the UK full-request estimate (which
+        # would overestimate EU cost and could cause an overly
+        # cautious skip).
+        eu_cost_estimate = None
+
         for marketplace in EU_MARKETPLACES:
             if not included_asins:
                 eu_lookups[marketplace] = {}
                 continue
 
-            products, fetched, ran_out, cost_estimate = self._fetch_in_chunks(
-                included_asins, marketplace, cost_estimate
+            products, fetched, ran_out, eu_cost_estimate = self._fetch_in_chunks(
+                included_asins, marketplace, eu_cost_estimate, full=False
             )
 
             eu_lookups[marketplace] = {p.get("asin"): p for p in products}
