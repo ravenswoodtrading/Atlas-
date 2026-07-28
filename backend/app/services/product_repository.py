@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta, timezone
+import json
 
 from app.database.database import SessionLocal
-from app.database.models import ProductRecord, KnownProduct
+from app.database.models import ProductRecord, KnownProduct, WatchedProduct, ExcludedProduct
 
 
 class ProductRepository:
@@ -31,9 +32,13 @@ class ProductRepository:
                 referral_fee=product_dict.get("referral_fee") or 0.0,
                 profit=product_dict.get("profit") or 0.0,
                 roi=product_dict.get("roi") or 0.0,
+                profit_90d=product_dict.get("profit_90d") or 0.0,
+                roi_90d=product_dict.get("roi_90d") or 0.0,
                 score=report_dict.get("score") or 0,
                 confidence=report_dict.get("confidence") or 0,
                 recommendation=report_dict.get("recommendation") or "",
+                monthly_sales=product_dict.get("monthly_sales") or 0,
+                report_json=json.dumps(report_dict),
             )
             db.add(record)
             db.commit()
@@ -47,35 +52,45 @@ class ProductRepository:
             db.close()
 
     @staticmethod
-    def list_latest(limit: int = 200):
+    def list_latest(page: int = 1, page_size: int = 25, profitable_only: bool = None):
         """
-        Returns the most recently scanned record per ASIN (not every
-        historical row) -- most recently scanned first.
+        Returns (records_for_this_page, total_count) using the most
+        recent scan record per ASIN (not every historical row).
+
+        profitable_only: None shows everything, True shows only
+        products profitable today or at their 90-day typical price,
+        False shows only the ones that aren't either way.
         """
         db = SessionLocal()
 
         try:
-            recent = (
+            all_records = (
                 db.query(ProductRecord)
                 .order_by(ProductRecord.scanned_at.desc())
-                .limit(limit * 5)  # generous overfetch before de-duplicating
                 .all()
             )
 
             seen = set()
             latest = []
 
-            for record in recent:
+            for record in all_records:
                 if record.asin in seen:
                     continue
 
                 seen.add(record.asin)
                 latest.append(record)
 
-                if len(latest) >= limit:
-                    break
+            if profitable_only is True:
+                latest = [r for r in latest if r.profit > 0 or r.profit_90d > 0]
+            elif profitable_only is False:
+                latest = [r for r in latest if r.profit <= 0 and r.profit_90d <= 0]
 
-            return latest
+            total_count = len(latest)
+
+            start = max(page - 1, 0) * page_size
+            end = start + page_size
+
+            return latest[start:end], total_count
 
         finally:
             db.close()
@@ -107,6 +122,42 @@ class ProductRepository:
             db.close()
 
     @staticmethod
+    def get_summary_stats():
+        """
+        Counts across the latest scan record per ASIN (not raw row
+        count) -- so re-scanning the same ASIN over time doesn't
+        inflate the numbers.
+        """
+        db = SessionLocal()
+
+        try:
+            recent = (
+                db.query(ProductRecord)
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            seen = set()
+            latest = []
+
+            for record in recent:
+                if record.asin in seen:
+                    continue
+
+                seen.add(record.asin)
+                latest.append(record)
+
+            return {
+                "total_scanned": len(latest),
+                "total_profitable": sum(1 for r in latest if r.profit > 0),
+                "total_buy": sum(1 for r in latest if r.recommendation == "BUY"),
+                "total_review": sum(1 for r in latest if r.recommendation == "REVIEW"),
+            }
+
+        finally:
+            db.close()
+
+    @staticmethod
     def get_known_products(asins: list) -> dict:
         """
         Batch lookup against known_products (imported from a CSV
@@ -127,6 +178,135 @@ class ProductRepository:
             )
 
             return {row.asin: row for row in rows}
+
+        finally:
+            db.close()
+
+    # ---- Watchlist ----
+
+    @staticmethod
+    def add_watch(asin: str, title: str = "", brand: str = "", note: str = ""):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(WatchedProduct, asin)
+
+            if existing:
+                if title:
+                    existing.title = title
+                if brand:
+                    existing.brand = brand
+                if note:
+                    existing.note = note
+            else:
+                db.add(WatchedProduct(asin=asin, title=title, brand=brand, note=note))
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_watch(asin: str):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(WatchedProduct, asin)
+
+            if existing:
+                db.delete(existing)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_watched():
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(WatchedProduct)
+                .order_by(WatchedProduct.watched_at.desc())
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_watched_asins() -> set:
+        db = SessionLocal()
+
+        try:
+            rows = db.query(WatchedProduct.asin).all()
+            return {row[0] for row in rows}
+
+        finally:
+            db.close()
+
+    # ---- User exclusions (separate from the static exclusions.py file --
+    # this is DB-backed so it can be controlled from the page itself) ----
+
+    @staticmethod
+    def add_exclusion(asin: str, title: str = "", reason: str = ""):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(ExcludedProduct, asin)
+
+            if existing:
+                if title:
+                    existing.title = title
+                if reason:
+                    existing.reason = reason
+            else:
+                db.add(ExcludedProduct(asin=asin, title=title, reason=reason))
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_exclusion(asin: str):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(ExcludedProduct, asin)
+
+            if existing:
+                db.delete(existing)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_exclusions():
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(ExcludedProduct)
+                .order_by(ExcludedProduct.excluded_at.desc())
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_excluded_asins() -> set:
+        """
+        Used as a zero-token pre-check before spending any tokens on a
+        scan, same idea as the known_products category check.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(ExcludedProduct.asin).all()
+            return {row[0] for row in rows}
 
         finally:
             db.close()

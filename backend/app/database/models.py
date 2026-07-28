@@ -41,9 +41,27 @@ class ProductRecord(Base):
     profit: Mapped[float] = mapped_column(Float, default=0.0)
     roi: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # Same as profit/roi but using the 90-day typical UK price instead
+    # of today's -- catches opportunities where today's price is a
+    # temporary discount. See ScoringEngine/FeeEngine for how these
+    # are used together with profit/roi.
+    profit_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    roi_90d: Mapped[float] = mapped_column(Float, default=0.0)
+
     score: Mapped[int] = mapped_column(Integer, default=0)
     confidence: Mapped[int] = mapped_column(Integer, default=0)
     recommendation: Mapped[str] = mapped_column(String, default="")
+
+    # Full report (trend + score_breakdown + confidence_breakdown) as
+    # JSON text -- lets the Products page show exactly why a score was
+    # given, as it was AT SCAN TIME, without needing to re-run scoring
+    # logic later (which could drift if the scoring rules change).
+    report_json: Mapped[str] = mapped_column(String, default="")
+
+    # Keepa's confirmed monthly sales count (real Amazon sales data,
+    # not an estimate). 0 means Keepa has no confirmed figure, not
+    # necessarily that the product doesn't sell.
+    monthly_sales: Mapped[int] = mapped_column(Integer, default=0)
 
     scanned_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -82,5 +100,44 @@ class KnownProduct(Base):
     adult_product: Mapped[bool] = mapped_column(default=False)
 
     imported_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class WatchedProduct(Base):
+    """
+    A product the user has explicitly marked as interesting, to track
+    over time. Independent of any particular scan/brand -- watched
+    products can be re-checked anytime via the Watchlist page, which
+    reuses the same ASIN-scan pipeline as file uploads.
+    """
+    __tablename__ = "watched_products"
+
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+
+    title: Mapped[str] = mapped_column(String, default="")
+    brand: Mapped[str] = mapped_column(String, default="")
+    note: Mapped[str] = mapped_column(String, default="")
+
+    watched_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ExcludedProduct(Base):
+    """
+    A specific ASIN the user has explicitly marked as not interesting,
+    checked BEFORE spending any tokens on future scans -- same idea as
+    the static exclusions.py file, but user-controlled from the page
+    itself rather than requiring a code edit.
+    """
+    __tablename__ = "excluded_products"
+
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+
+    title: Mapped[str] = mapped_column(String, default="")
+    reason: Mapped[str] = mapped_column(String, default="")
+
+    excluded_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
