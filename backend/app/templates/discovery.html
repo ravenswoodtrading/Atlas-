@@ -82,25 +82,37 @@
     {% else %}
 
         <div class="row mb-4">
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <div class="card metric p-3 text-center">
                     <div class="text-muted small">Total results</div>
                     <h2>{{ result.count }}</h2>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <div class="card metric p-3 text-center">
                     <div class="text-muted small">Excluded (category/brand/ASIN)</div>
                     <h2>{{ result.skipped_excluded }}</h2>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Dead listings skipped</div>
+                    <h2>{{ result.skipped_dead_listing }}</h2>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Unprofitable (never viable)</div>
+                    <h2>{{ result.skipped_unprofitable_ceiling }}</h2>
+                </div>
+            </div>
+            <div class="col-md-2">
                 <div class="card metric p-3 text-center">
                     <div class="text-muted small">Keepa tokens remaining</div>
                     <h2>{{ result.tokens_remaining if result.tokens_remaining is not none else "?" }}</h2>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <div class="card metric p-3 text-center">
                     <div class="text-muted small">Marketplaces skipped (low tokens)</div>
                     <h2>{{ result.marketplaces_skipped_low_tokens | length }}</h2>
@@ -146,9 +158,9 @@
                             <th>Product</th>
                             <th>Best Source</th>
                             <th>Source Cost</th>
-                            <th>UK Price</th>
-                            <th>Profit</th>
-                            <th>ROI</th>
+                            <th>UK Price (today)</th>
+                            <th>Profit / ROI (today)</th>
+                            <th>Profit / ROI (typical, 90d)</th>
                             <th>Score</th>
                             <th>Confidence</th>
                             <th>Recommendation</th>
@@ -159,7 +171,7 @@
                         {% for o in result.opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
-                        <tr class="opportunity-row" {% if p.profit <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if p.profit > 0 else 'false' }}">
+                        <tr class="opportunity-row" {% if p.profit <= 0 and p.profit_90d <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if (p.profit > 0 or p.profit_90d > 0) else 'false' }}">
                             <td style="max-width:320px;">
                                 <div class="fw-semibold small">{{ p.title[:80] }}{% if p.title|length > 80 %}...{% endif %}</div>
                                 <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
@@ -168,10 +180,10 @@
                             <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                             <td>&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
                             <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}">
-                                &pound;{{ "%.2f"|format(p.profit) }}
+                                &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
                             </td>
-                            <td class="{{ 'text-success' if p.roi > 0 else 'text-danger' }}">
-                                {{ "%.1f"|format(p.roi) }}%
+                            <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
+                                &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
                             </td>
                             <td>{{ r.score }}</td>
                             <td>{{ r.confidence }}%</td>

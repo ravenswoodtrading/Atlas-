@@ -70,7 +70,10 @@ def _apply_profit_filter(result, profitable_only):
     hidden_count = 0
 
     if result and not result.get("error"):
-        hidden_count = sum(1 for o in result["opportunities"] if o["product"]["profit"] <= 0)
+        hidden_count = sum(
+            1 for o in result["opportunities"]
+            if o["product"]["profit"] <= 0 and o["product"]["profit_90d"] <= 0
+        )
 
     return result, hidden_count
 

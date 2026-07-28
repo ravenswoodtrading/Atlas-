@@ -151,6 +151,7 @@ class BrandScanService:
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
             "skipped_unprofitable_ceiling": 0,
+            "skipped_dead_listing": 0,
             "marketplaces_skipped_low_tokens": [],
             "marketplaces_partial_low_tokens": {},
             "tokens_remaining": None,
@@ -194,20 +195,37 @@ class BrandScanService:
 
             included_uk_products.append(uk_product)
 
-        # Step 3b - Ceiling check using UK data alone (no extra tokens
-        # -- this is pure computation on data we already have): if the
-        # best possible outcome (a FREE source, cost=£0) still wouldn't
-        # be profitable after fees, no real EU price ever could make
-        # it work either. Skip the EU lookups entirely for these.
+        # Step 3b - Dead-listing and ceiling checks using UK data alone
+        # (no extra tokens -- pure computation on data we already
+        # have). Skip the EU lookups entirely for these.
         ceiling_checked_products = []
         skipped_unprofitable_ceiling = 0
+        skipped_dead_listing = 0
 
         for uk_product in included_uk_products:
             quick_product = ProductMapper.from_keepa(uk_product)
 
+            # Dead listing: zero sales rank drops AND zero current
+            # offers together mean this genuinely never sells and
+            # nobody's even listing it right now. This is NOT the same
+            # as a temporarily out-of-stock item that normally sells
+            # well -- that would still show sales_drops_30d > 0 from
+            # its sales history before going out of stock, and stays
+            # in as a legitimate opportunity.
+            if quick_product.sales_drops_30d == 0 and quick_product.offers_now == 0:
+                skipped_dead_listing += 1
+                continue
+
             fba_fee = quick_product.fba_fee if quick_product.fba_fee else FeeEngine.DEFAULT_FBA_FEE
-            referral_fee = quick_product.buy_box_now * FeeEngine.DEFAULT_REFERRAL_RATE
-            ceiling_profit = quick_product.buy_box_now - fba_fee - referral_fee
+
+            # Use whichever price is higher -- today's or the 90-day
+            # typical. A temporary Amazon-driven discount on today's
+            # price shouldn't disqualify a product that's normally
+            # profitable at its typical price, before we've even
+            # checked what it costs to source.
+            best_price_for_ceiling = max(quick_product.buy_box_now, quick_product.buy_box_90d)
+            referral_fee = best_price_for_ceiling * FeeEngine.DEFAULT_REFERRAL_RATE
+            ceiling_profit = best_price_for_ceiling - fba_fee - referral_fee
 
             if ceiling_profit <= 0:
                 skipped_unprofitable_ceiling += 1
@@ -274,6 +292,8 @@ class BrandScanService:
             product.referral_fee = fees.referral_fee
             product.profit = fees.profit
             product.roi = fees.roi
+            product.profit_90d = fees.profit_90d
+            product.roi_90d = fees.roi_90d
 
             report = OpportunityEngine.analyse(product)
 
@@ -297,6 +317,7 @@ class BrandScanService:
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
             "skipped_unprofitable_ceiling": skipped_unprofitable_ceiling,
+            "skipped_dead_listing": skipped_dead_listing,
             "marketplaces_skipped_low_tokens": marketplaces_skipped_low_tokens,
             "marketplaces_partial_low_tokens": marketplaces_partial_low_tokens,
             "tokens_remaining": self.product_service.api.tokens_left,

@@ -31,9 +31,19 @@ class Product:
     fba_fee: float = 0.0
     referral_fee: float = 0.0
 
-    # Calculated values
+    # Calculated values (based on today's UK price)
     profit: float = 0.0
     roi: float = 0.0
+
+    # Same calculation but using the 90-day average UK price instead of
+    # today's -- catches opportunities where today's price is
+    # temporarily discounted (e.g. by Amazon itself) but the product
+    # is normally profitable. Never hidden/discounted just because
+    # today's number looks worse -- see is_excluded ceiling check and
+    # the Discovery page's profitable filter, both of which use
+    # whichever of profit/profit_90d is better.
+    profit_90d: float = 0.0
+    roi_90d: float = 0.0
 
     # Best A2A source found across DE/FR/IT/ES, cost already converted to GBP
     best_source_marketplace: str = ""

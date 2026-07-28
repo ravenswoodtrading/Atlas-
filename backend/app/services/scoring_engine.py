@@ -15,13 +15,20 @@ class ScoringEngine:
 
     @staticmethod
     def explain(product: Product, trend: TrendAnalysis):
+        # Use whichever is better -- today's price or the 90-day
+        # typical price. A temporary Amazon-driven discount on today's
+        # price shouldn't sink the score for a product that's normally
+        # a good opportunity at its typical price.
+        effective_roi = max(product.roi, product.roi_90d)
+        effective_profit = max(product.profit, product.profit_90d)
+
         factors = [
             ScoreFactor("Demand improving (sales rank better than 90d ago)", trend.demand_improving, 15),
             ScoreFactor("High sales velocity (30+ rank drops in 30d)", product.sales_drops_30d >= 30, 15),
             ScoreFactor("Competition easing (fewer offers than 90d ago)", trend.competition_improving, 20),
             ScoreFactor("Price stable (within 10% of 90d average)", trend.price_stable, 20),
-            ScoreFactor("Strong ROI (35% or higher)", product.roi >= 35, 20),
-            ScoreFactor("Solid profit (GBP 8 or more)", product.profit >= 8, 20),
+            ScoreFactor("Strong ROI (35% or higher, best of current/typical)", effective_roi >= 35, 20),
+            ScoreFactor("Solid profit (GBP 8+, best of current/typical)", effective_profit >= 8, 20),
         ]
 
         if product.hazmat:
