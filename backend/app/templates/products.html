@@ -32,6 +32,7 @@
             <thead>
                 <tr>
                     <th>Product</th>
+                    <th>Actions</th>
                     <th>Found via</th>
                     <th>Best Source</th>
                     <th class="text-end">Source Cost</th>
@@ -42,15 +43,64 @@
                     <th>Score</th>
                     <th>Recommendation</th>
                     <th>Last Scanned</th>
-                    <th>Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for p in products %}
                 <tr class="{{ 'table-success' if p.monthly_sales > 0 }}">
-                    <td style="max-width:260px;">
-                        <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
+                    <td style="max-width:220px;">
+                        <div class="fw-semibold small">
+                            {{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}
+                            {% if p.asin in watched_asins %}<span class="badge bg-primary"><i class="bi bi-star-fill"></i> Watched</span>{% endif %}
+                            {% if p.asin in excluded_asins %}<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Excluded</span>{% endif %}
+                        </div>
                         <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                    </td>
+                    <td style="min-width:110px;">
+                        <div class="d-flex flex-column gap-1">
+                            {% if p.parsed_report %}
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
+                                <i class="bi bi-info-circle"></i> Why?
+                            </button>
+                            {% endif %}
+                            {% if p.asin in watched_asins %}
+                            <form method="post" action="/watch/remove">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-primary w-100" type="submit">
+                                    <i class="bi bi-star-fill"></i> Unwatch
+                                </button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="/watch/add">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="title" value="{{ p.title }}">
+                                <input type="hidden" name="brand" value="{{ p.brand }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-outline-primary w-100" type="submit">
+                                    <i class="bi bi-star"></i> Watch
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% if p.asin in excluded_asins %}
+                            <form method="post" action="/exclude/remove">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-danger w-100" type="submit">
+                                    <i class="bi bi-x-circle-fill"></i> Unexclude
+                                </button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="/exclude/add">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="title" value="{{ p.title }}">
+                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <button class="btn btn-sm btn-outline-danger w-100" type="submit">
+                                    <i class="bi bi-x-circle"></i> Exclude
+                                </button>
+                            </form>
+                            {% endif %}
+                        </div>
                     </td>
                     <td>{{ p.brand_query }}</td>
                     <td>{{ p.best_source_marketplace }}</td>
@@ -80,32 +130,6 @@
                         {% endif %}
                     </td>
                     <td class="small text-muted">{{ p.scanned_at.strftime("%Y-%m-%d %H:%M") if p.scanned_at else "" }}</td>
-                    <td style="min-width:110px;">
-                        <div class="d-flex flex-column gap-1">
-                            {% if p.parsed_report %}
-                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
-                                <i class="bi bi-info-circle"></i> Why?
-                            </button>
-                            {% endif %}
-                            <form method="post" action="/watch/add">
-                                <input type="hidden" name="asin" value="{{ p.asin }}">
-                                <input type="hidden" name="title" value="{{ p.title }}">
-                                <input type="hidden" name="brand" value="{{ p.brand }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
-                                <button class="btn btn-sm btn-outline-primary w-100" type="submit">
-                                    <i class="bi bi-star"></i> Watch
-                                </button>
-                            </form>
-                            <form method="post" action="/exclude/add">
-                                <input type="hidden" name="asin" value="{{ p.asin }}">
-                                <input type="hidden" name="title" value="{{ p.title }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
-                                <button class="btn btn-sm btn-outline-danger w-100" type="submit">
-                                    <i class="bi bi-x-circle"></i> Exclude
-                                </button>
-                            </form>
-                        </div>
-                    </td>
                 </tr>
                 {% if p.parsed_report %}
                 <tr class="collapse" id="why-{{ loop.index }}">

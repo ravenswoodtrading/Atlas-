@@ -48,5 +48,7 @@ def products(request: Request, page: int = 1, filter: str = "all"):
             "total_pages": total_pages,
             "total_count": total_count,
             "filter": filter,
+            "watched_asins": ProductRepository.get_watched_asins(),
+            "excluded_asins": ProductRepository.get_excluded_asins(),
         }
     )

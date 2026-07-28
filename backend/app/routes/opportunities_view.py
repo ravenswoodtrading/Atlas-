@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, UploadFile, File, Form
 from fastapi.templating import Jinja2Templates
 
 from app.services.brand_scan_service import BrandScanService
+from app.services.product_repository import ProductRepository
 
 router = APIRouter()
 
@@ -101,6 +102,8 @@ def discovery(request: Request, brand: str = "", limit: int = 20,
             "hidden_count": hidden_count,
             "result": result,
             "is_upload": False,
+            "watched_asins": ProductRepository.get_watched_asins(),
+            "excluded_asins": ProductRepository.get_excluded_asins(),
         }
     )
 
@@ -135,6 +138,8 @@ async def discovery_upload(
                     "count": 0, "opportunities": [],
                 },
                 "is_upload": True,
+                "watched_asins": ProductRepository.get_watched_asins(),
+                "excluded_asins": ProductRepository.get_excluded_asins(),
             }
         )
 
@@ -169,5 +174,7 @@ async def discovery_upload(
             "result": result,
             "asins_found_in_upload": len(asins),
             "is_upload": True,
+            "watched_asins": ProductRepository.get_watched_asins(),
+            "excluded_asins": ProductRepository.get_excluded_asins(),
         }
     )
