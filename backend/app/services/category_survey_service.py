@@ -18,8 +18,7 @@ class CategorySurveyService:
         self.product_service = ProductService()
 
     def survey(self, brand: str, limit: int = 100):
-        asins = self.finder.find_brand(brand)
-        asins = asins[:limit]
+        asins = self.finder.find_brand(brand, limit=limit)
 
         if not asins:
             return {"brand": brand, "asins_scanned": 0, "categories": []}

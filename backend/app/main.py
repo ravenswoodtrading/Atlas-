@@ -63,7 +63,7 @@ def debug_brand(brand: str):
     finder = ProductFinder()
     service = ProductService()
 
-    asins = finder.find_brand(brand)
+    asins = finder.find_brand(brand, limit=1)
 
     if not asins:
         return {"error": "No products found"}
