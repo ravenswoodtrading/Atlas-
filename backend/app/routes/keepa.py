@@ -1,40 +1,63 @@
-import os
-from pathlib import Path
+from fastapi import APIRouter, Request
+from fastapi.templating import Jinja2Templates
+import traceback
 
-import keepa
-from dotenv import load_dotenv
+from app.keepa.client import get_keepa_client
 
-env_path = Path(__file__).resolve().parents[3] / ".env"
-load_dotenv(env_path)
+router = APIRouter(
+    prefix="/keepa",
+    tags=["Keepa"]
+)
 
-# Cached singleton -- avoids creating a brand new Keepa client (and
-# firing a fresh update_status() API call) on every single request.
-# BrandScanService creates a new ProductFinder/ProductService on every
-# scan, and each used to call get_keepa_client() from scratch --
-# meaning every scan was sending 2 extra status-check requests to
-# Keepa beyond the actual data calls. Reusing one client cuts that
-# down to a single status check per app run, not one per request.
-_cached_api = None
+templates = Jinja2Templates(directory="app/templates")
 
 
-def get_keepa_client():
-    global _cached_api
+@router.get("/test")
+def test_keepa():
+    try:
+        api = get_keepa_client()
 
-    if _cached_api is not None:
-        return _cached_api
+        return {
+            "status": "connected",
+            "tokens_left": api.tokens_left
+        }
 
-    api_key = os.getenv("KEEPA_API_KEY")
+    except Exception:
+        traceback.print_exc()
+        raise
 
-    if not api_key:
-        raise RuntimeError("KEEPA_API_KEY not found")
 
-    _cached_api = keepa.Keepa(api_key)
+@router.get("/product/{asin}")
+def get_product(request: Request, asin: str):
+    try:
+        api = get_keepa_client()
 
-    # tokens_left stays at its uninitialized 0 until we explicitly ask
-    # Keepa for the real account status -- without this, a fresh
-    # client silently reports 0 tokens regardless of real balance.
-    # Only needed ONCE here, since regular query()/product_finder()
-    # calls already update tokens_left themselves from each response.
-    _cached_api.update_status()
+        products = api.query(asin, domain="GB")
 
-    return _cached_api
+        if not products:
+            return {
+                "error": "Product not found"
+            }
+
+        product = products[0]
+
+        # Build a simple view model instead of passing the whole Keepa object
+        view_model = {
+            "asin": product.get("asin"),
+            "title": product.get("title"),
+            "brand": product.get("brand"),
+            "manufacturer": product.get("manufacturer"),
+        }
+
+        return templates.TemplateResponse(
+            request=request,
+            name="product.html",
+            context={
+                "product": view_model
+            }
+        )
+
+    except Exception:
+        traceback.print_exc()
+        raise
+    

@@ -10,21 +10,19 @@ class ProductFinder:
         """
         Finds ASINs for a brand via Keepa's Product Finder.
 
-        `limit` controls how many results are requested (perPage) --
-        previously this always requested 100 regardless of what the
-        caller actually needed, wasting tokens on a typical small
-        scan. Capped at 100 (Keepa's per-page max).
+        IMPORTANT: always requests perPage=100, Keepa's max, REGARDLESS
+        of `limit` -- confirmed via direct testing that Keepa's Product
+        Finder rejects smaller values (e.g. perPage=20 returns
+        REQUEST_REJECTED) while perPage=100 succeeds, with an otherwise
+        byte-for-byte identical request. This was a real bug introduced
+        by an earlier "only request what we need" optimization -- it
+        broke the endpoint rather than saving tokens. `limit` is now
+        applied by trimming the returned list afterward instead.
 
         wait=False is passed so a low token balance returns/raises
         quickly instead of the keepa library silently blocking for
-        however long a refill takes (this was previously the one
-        Keepa call in the whole pipeline NOT covered by our
-        token-budget checks -- everything else in BrandScanService
-        checks tokens before calling, but this ran unconditionally
-        before that check ever happened).
+        however long a refill takes.
         """
-
-        per_page = max(1, min(limit, 100))
 
         query = {
             "productType": ["0"],
@@ -33,7 +31,7 @@ class ProductFinder:
                 ["current_SALES", "asc"],
                 ["monthlySold", "desc"]
             ],
-            "perPage": per_page,
+            "perPage": 100,
             "page": 0
         }
 
@@ -53,4 +51,4 @@ class ProductFinder:
         print("Type:", type(products))
         print("Count:", len(products))
 
-        return products
+        return products[:max(1, limit)]
