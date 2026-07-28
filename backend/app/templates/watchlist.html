@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Watchlist - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Watchlist ({{ watched|length }} product{{ "s" if watched|length != 1 }})</h4>
+    <div>
+        <a href="/watchlist?force_rescan=true" class="btn btn-dark btn-sm">
+            <i class="bi bi-arrow-clockwise"></i> Force rescan all
+        </a>
+        <a href="/discovery" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-search"></i> Back to Discovery
+        </a>
+    </div>
+</div>
+
+{% if not watched %}
+    <div class="alert alert-info">
+        <h5>Nothing on your watchlist yet</h5>
+        <p class="mb-0">Click "Watch" next to any product on the <a href="/discovery">Discovery</a> or <a href="/products">Products</a> page to track it here.</p>
+    </div>
+{% elif result %}
+
+    {% if result.error %}
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i> {{ result.error }}
+        </div>
+    {% else %}
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Watched products checked</div>
+                    <h2>{{ result.count }}</h2>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Keepa tokens remaining</div>
+                    <h2>{{ result.tokens_remaining if result.tokens_remaining is not none else "?" }}</h2>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Skipped (already scanned recently)</div>
+                    <h2>{{ result.skipped_recently_scanned }}</h2>
+                </div>
+            </div>
+        </div>
+
+        {% if result.opportunities %}
+        <div class="card metric p-3">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead>
+                        <tr>
+                            <th>Product</th>
+                            <th>Best Source</th>
+                            <th>Source Cost</th>
+                            <th>UK Price (today)</th>
+                            <th>Profit / ROI (today)</th>
+                            <th>Profit / ROI (typical, 90d)</th>
+                            <th>Monthly Sales</th>
+                            <th>Score</th>
+                            <th>Recommendation</th>
+                            <th>Remove</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for o in result.opportunities %}
+                        {% set p = o.product %}
+                        {% set r = o.report %}
+                        <tr class="{{ 'table-success' if p.monthly_sales > 0 }}">
+                            <td style="max-width:280px;">
+                                <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
+                                <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                            </td>
+                            <td>{{ p.best_source_marketplace }}</td>
+                            <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
+                            <td>&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
+                            <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}">
+                                &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
+                            </td>
+                            <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
+                                &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
+                            </td>
+                            <td>
+                                {% if p.monthly_sales > 0 %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ p.monthly_sales }}/mo</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">No confirmed sales</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ r.score }}</td>
+                            <td>
+                                {% if r.recommendation == "BUY" %}
+                                    <span class="badge bg-success">BUY</span>
+                                {% elif r.recommendation == "REVIEW" %}
+                                    <span class="badge bg-warning text-dark">REVIEW</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">IGNORE</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <form method="post" action="/watch/remove">
+                                    <input type="hidden" name="asin" value="{{ p.asin }}">
+                                    <input type="hidden" name="return_to" value="/watchlist">
+                                    <button class="btn btn-sm btn-outline-danger" type="submit">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+    {% endif %}
+
+{% endif %}
+
+{% endblock %}
