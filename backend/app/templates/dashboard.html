@@ -1,19 +1,51 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Atlas Product Analysis</title>
-</head>
-<body>
+{% extends "base.html" %}
 
-<h1>Atlas</h1>
+{% block title %}Dashboard - Atlas{% endblock %}
 
-<h2>{{ product.title }}</h2>
+{% block content %}
 
-<table border="1" cellpadding="8">
-    <tr><td><b>ASIN</b></td><td>{{ product.asin }}</td></tr>
-    <tr><td><b>Brand</b></td><td>{{ product.brand }}</td></tr>
-    <tr><td><b>Manufacturer</b></td><td>{{ product.manufacturer }}</td></tr>
-</table>
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Products scanned</div>
+            <h2>{{ stats.total_scanned }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Profitable opportunities</div>
+            <h2 class="text-success">{{ stats.total_profitable }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Marked BUY</div>
+            <h2 class="text-success">{{ stats.total_buy }}</h2>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Marked REVIEW</div>
+            <h2 class="text-warning">{{ stats.total_review }}</h2>
+        </div>
+    </div>
+</div>
 
-</body>
-</html>
+{% if stats.total_scanned == 0 %}
+    <div class="alert alert-info">
+        <h5>No products scanned yet</h5>
+        <p class="mb-0">Head to <a href="/discovery">Discovery</a> to run your first brand search or ASIN upload -- results will show up here automatically.</p>
+    </div>
+{% else %}
+    <div class="card metric p-4">
+        <p class="mb-2">These counts are based on the most recent scan of each product -- re-scanning something doesn't count it twice.</p>
+        <a href="/products" class="btn btn-dark btn-sm">
+            <i class="bi bi-box"></i> View all scanned products
+        </a>
+        <a href="/discovery" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-search"></i> Run a new scan
+        </a>
+    </div>
+{% endif %}
+
+{% endblock %}
