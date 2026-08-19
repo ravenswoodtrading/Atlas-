@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}OA Lookup - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">OA Lookup</h4>
+    {% if searches_left is not none %}
+    <span class="text-muted small">SerpApi searches remaining this month: <strong>{{ searches_left }}</strong></span>
+    {% endif %}
+</div>
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Results are candidates, not confirmed matches -- title-based search can return the wrong pack size or variant of the same product. Check the thumbnail/title/link before acting on anything here.
+</div>
+
+<div class="card metric p-4 mb-4">
+    <form method="get" action="/oa-lookup" class="row g-3 align-items-end">
+        <div class="col-md-8">
+            <label class="form-label">ASIN</label>
+            <input type="text" class="form-control" name="asin" value="{{ asin }}" placeholder="e.g. B0BSCLTYJT" required>
+        </div>
+        <div class="col-md-4">
+            <button type="submit" class="btn btn-dark w-100">
+                <i class="bi bi-search"></i> Look up
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if not_found %}
+<div class="alert alert-warning">
+    Keepa has no data for {{ asin }} -- check the ASIN is correct.
+</div>
+{% endif %}
+
+{% if product %}
+<div class="card metric p-3 mb-4">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="fw-semibold">{{ product.title }}</div>
+            <div class="text-muted small mt-1">
+                {{ product.asin }}
+                &middot; EAN: {{ product.ean or "unknown" }}
+                &middot; {{ category_name or "Uncategorised" }}
+            </div>
+        </div>
+        <div class="col-md-4 text-md-end">
+            <div class="text-muted small">Current UK price</div>
+            <div class="fs-4">&pound;{{ "%.2f"|format(product.buy_box_now) }}</div>
+        </div>
+    </div>
+
+    <form method="get" action="/oa-lookup" class="row g-3 align-items-end mt-2">
+        <input type="hidden" name="asin" value="{{ product.asin }}">
+        <div class="col-md-9">
+            <label class="form-label">Search query <span class="text-muted">(edit before searching -- the suggested query is a rough starting point, not a guaranteed match)</span></label>
+            <input type="text" class="form-control" name="query" value="{{ query }}">
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-dark w-100">
+                <i class="bi bi-shop"></i> Search UK retailers
+            </button>
+        </div>
+    </form>
+</div>
+{% endif %}
+
+{% if candidates is not none %}
+    {% if not candidates %}
+    <div class="alert alert-info">
+        No results for that query -- try editing it above (e.g. drop extra words, or add a pack size/variant detail).
+    </div>
+    {% else %}
+    <div class="card metric p-3">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Listing</th>
+                        <th>Retailer</th>
+                        <th>Price</th>
+                        <th>Profit / ROI (today)</th>
+                        <th>Profit / ROI (typical, 90d)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in candidates %}
+                    <tr>
+                        <td style="width:60px;">
+                            {% if c.thumbnail %}<img src="{{ c.thumbnail }}" style="width:48px;height:48px;object-fit:contain;" alt="">{% endif %}
+                        </td>
+                        <td style="max-width:280px;">
+                            <div class="small">{{ c.title[:80] }}{% if c.title|length > 80 %}...{% endif %}</div>
+                            {% if c.product_link %}<a href="{{ c.product_link }}" target="_blank" rel="noopener" class="small">View on Google Shopping <i class="bi bi-box-arrow-up-right"></i></a>{% endif %}
+                        </td>
+                        <td>{{ c.source }}</td>
+                        <td>&pound;{{ "%.2f"|format(c.extracted_price) }}</td>
+                        <td class="{{ 'text-success' if c.profit > 0 else 'text-danger' }}">
+                            &pound;{{ "%.2f"|format(c.profit) }} ({{ "%.1f"|format(c.roi) }}%)
+                        </td>
+                        <td class="{{ 'text-success' if c.profit_90d > 0 else 'text-danger' }}">
+                            &pound;{{ "%.2f"|format(c.profit_90d) }} ({{ "%.1f"|format(c.roi_90d) }}%)
+                        </td>
+                        <td>
+                            <form method="post" action="/watch/add">
+                                <input type="hidden" name="asin" value="{{ product.asin }}">
+                                <input type="hidden" name="title" value="{{ product.title }}">
+                                <input type="hidden" name="brand" value="{{ product.brand }}">
+                                <input type="hidden" name="note" value="OA candidate: {{ c.source }} @ &pound;{{ '%.2f'|format(c.extracted_price) }} -- would be ~{{ '%.0f'|format([c.roi, c.roi_90d]|max) }}% ROI. Verify match before buying: {{ c.product_link }}">
+                                <input type="hidden" name="return_to" value="/oa-lookup?asin={{ product.asin }}&query={{ query|urlencode }}">
+                                <button class="btn btn-sm btn-outline-primary" type="submit" title="Save to Watchlist">
+                                    <i class="bi bi-star"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+{% endif %}
+
+{% endblock %}
