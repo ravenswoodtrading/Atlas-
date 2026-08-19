@@ -5,3 +5,8 @@ venv/
 .venv/
 data/*.db
 logs/*.log
+backend/atlas.db
+backend/atlas.db-shm
+backend/atlas.db-wal
+backend/atlas_server.log
+backend/cloudflare_tunnel.log
