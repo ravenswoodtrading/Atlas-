@@ -1,0 +1,59 @@
+{#
+Shared "what is this page" help component -- two macros, meant to be
+used together on every page:
+
+  {% from "_help.html" import help_button, help_modal %}
+
+  <h4>Discovery {{ help_button("discovery") }}</h4>
+  ...
+  {% call help_modal("discovery", "Discovery") %}
+    <p>Plain-language explanation of what this page does...</p>
+    <p>Every hardcoded number that shapes what shows up here...</p>
+  {% endcall %}
+
+`id` just needs to be unique on the page it's used on (normally the
+page's own slug is enough, e.g. "discovery", "categories") -- it only
+has to avoid colliding with another modal on the SAME page, not
+app-wide. help_button() and help_modal() must be called with the same
+id so the button opens the right modal.
+
+This is a Bootstrap 5 modal (bootstrap.bundle.min.js is already loaded
+in base.html on every page) -- no extra JS needed per page.
+
+Built 2026-08-19 as part of the new-user help/info rollout -- see
+claude/atlas-new-user-review-2026-08-19.md for the full page-by-page
+content this is meant to carry, and the shared /help glossary page
+(app/templates/help.html) for the jargon (A2A/OA/gated/etc) that's
+deliberately NOT repeated inline in every modal -- link to /help
+instead so a definition only has to be maintained in one place.
+#}
+
+{% macro help_button(id) %}
+<button type="button"
+        class="btn btn-sm btn-outline-secondary rounded-circle d-inline-flex align-items-center justify-content-center ms-1"
+        style="width:26px;height:26px;padding:0;vertical-align:middle;"
+        data-bs-toggle="modal" data-bs-target="#help-{{ id }}"
+        title="What is this page?">
+    <i class="bi bi-question-lg" style="font-size:0.8rem;"></i>
+</button>
+{% endmacro %}
+
+{% macro help_modal(id, title) %}
+<div class="modal fade" id="help-{{ id }}" tabindex="-1" aria-labelledby="help-{{ id }}-label" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="help-{{ id }}-label"><i class="bi bi-question-circle"></i> {{ title }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body help-modal-body">
+        {{ caller() }}
+      </div>
+      <div class="modal-footer justify-content-between">
+        <a href="/help" class="small text-muted text-decoration-none"><i class="bi bi-book"></i> Full glossary of Atlas terms</a>
+        <button type="button" class="btn btn-sm btn-dark" data-bs-dismiss="modal">Got it</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endmacro %}

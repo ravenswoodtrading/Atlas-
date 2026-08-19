@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Help & Glossary - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Help &amp; Glossary</h4>
+</div>
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i>
+    The same handful of terms show up across every page in Atlas -- this is the one place they're all defined.
+    Most pages also have their own "?" button next to the page title with page-specific detail (what's hardcoded,
+    what the numbers on that particular page mean); this page is the shared vocabulary underneath all of them.
+</div>
+
+<div class="card metric p-4 mb-4">
+    <h5 id="a2a">A2A <span class="text-muted small fw-normal">(Amazon-to-Amazon)</span></h5>
+    <p class="text-muted">
+        Buy a product on a cheaper EU Amazon marketplace (Germany, France, Spain, or Italy), sell it on Amazon UK.
+        The core sourcing model most of Atlas is built around -- Discovery, Products, Watchlist, and the Scan Queue
+        all look for this spread by comparing a UK sale price against the cheapest of the 4 EU buy prices.
+    </p>
+
+    <h5 id="oa">OA <span class="text-muted small fw-normal">(Online Arbitrage)</span></h5>
+    <p class="text-muted">
+        Buy from a non-Amazon UK retailer, sell on Amazon UK. Unlike A2A, Atlas can't automatically discover an OA
+        source from Keepa data alone -- see <a href="/oa-lookup">OA Lookup</a> (manual, one ASIN at a time) and
+        <a href="/oa-discovery">OA Source Discovery</a> (automated batch search) for the two tools built for this.
+    </p>
+
+    <h5 id="gated">Gated</h5>
+    <p class="text-muted">
+        A brand Atlas currently can't get Amazon's approval to sell, regardless of how good the numbers look.
+        A gated product is still fully priced and tracked (see <a href="/gated-opportunities">Gated Opportunities</a>
+        for the case it makes toward pursuing ungating) -- it's just blocked from the Review Queue, Discord
+        notifications, and being auto-watched, since you can't act on it yet. Manage which brands are gated from
+        <a href="/exclusions">Exclusions</a>.
+    </p>
+
+    <h5 id="excluded-vs-gated">Excluded vs. Gated</h5>
+    <p class="text-muted">
+        Easy to conflate, genuinely different: <strong>Excluded</strong> means dropped permanently, never shown to
+        you again anywhere, before Atlas even spends a token looking. <strong>Gated</strong> means still fully
+        scored and tracked (so you can see whether it's worth chasing ungating) -- just blocked from the places
+        that assume you can act on something right now.
+    </p>
+
+    <h5 id="score-confidence">Score vs. Confidence</h5>
+    <p class="text-muted">
+        Two separate 0-100 numbers shown side by side. <strong>Score</strong> answers "how good is this opportunity"
+        (based on ROI, profit, sales velocity, competition, price stability). <strong>Confidence</strong> answers
+        "how much should you trust that score" -- it starts at 100 and gets docked for things that make the
+        underlying data less reliable: a big recent price swing, a sudden surge in competing offers, or thin sales
+        evidence. A high score with low confidence is a real opportunity on paper that's riskier to trust than the
+        score alone suggests.
+    </p>
+
+    <h5 id="margin-roi">Margin vs. ROI</h5>
+    <p class="text-muted">
+        <strong>Margin</strong> = profit &divide; the price you sold it for. <strong>ROI</strong> = profit &divide;
+        what you paid for it. Both are shown together everywhere in Atlas and routinely differ a lot -- a product
+        can have a great ROI (you paid very little for it) while still having a thin margin (the sale price itself
+        isn't much higher than what everything -- fees, VAT, the item -- actually cost), which matters because a
+        thin margin means less room for error if the price drops, an item gets returned, or a fee estimate is
+        slightly off.
+    </p>
+
+    <h5 id="today-90d-peak">"Today" vs "90d" vs "Peak"</h5>
+    <p class="text-muted">
+        Every profit/ROI figure in Atlas comes in up to three flavours. <strong>Today</strong> uses the live current
+        UK price. <strong>90d</strong> uses the typical price over the last 90 days -- protects against a temporary
+        discount making a normally-good product look bad (or a temporary spike making a bad one look good).
+        <strong>Peak</strong> uses the highest price seen in the last 90 days -- only used for the riskier
+        "PEAK (risky)" recommendation tier, since it only pays off if you can actually source and sell while the
+        price happens to be at that high point, not on a normal day.
+    </p>
+
+    <h5 id="sourcing-tags">Sourcing tags <span class="text-muted small fw-normal">(EU A2A / UK A2A / Wholesale (likely) / OA / unclear)</span></h5>
+    <p class="text-muted">
+        Shown on the <a href="/competitors">Competitors</a> page and Review Queue for competitor-detected listings.
+        These are Atlas's best GUESS at how a competitor sourced something, inferred entirely from price history
+        patterns -- never a confirmed fact, since Keepa has no visibility into anyone's actual purchase history.
+        "Wholesale (likely)" and "OA / unclear" in particular are structural inferences (small stable seller count,
+        recurring brand, multipack wording, or simply "nothing else explained it") rather than direct price
+        evidence the way the two A2A tags are.
+    </p>
+
+    <h5 id="match-tiers">Match confidence tiers</h5>
+    <p class="text-muted">
+        Used on <a href="/oa-discovery">OA Source Discovery</a> and <a href="/oa-lookup">OA Lookup</a> to rank how
+        sure Atlas is that a found retailer listing is really the same product, strongest to weakest:
+        <strong>EAN</strong> match &gt; <strong>Brand+MPN</strong> &gt; <strong>MPN</strong> alone &gt;
+        <strong>Brand+Title</strong> text match &gt; <strong>Title-only</strong>. Title-only is never treated as a
+        confirmed match under any circumstances -- always verify it yourself before acting on it.
+    </p>
+
+    <h5 id="star-buy">"Star buy"</h5>
+    <p class="text-muted">
+        Atlas's own bar for "worth a look": confirmed sales evidence (a real monthly-sold figure, or enough
+        Keepa sales-rank drops to count as evidence) AND better than 25% ROI, today or on the 90-day-typical price.
+        This is the exact rule (<code>ProductRepository.is_notable</code>) behind the Dashboard's star-buy alert,
+        the green row-highlight on Discovery/Products/Watchlist/Review Queue/Replen, and what feeds the Review Queue
+        from a normal scan.
+    </p>
+
+    <h5 id="ceiling">"Ceiling" / "never viable"</h5>
+    <p class="text-muted">
+        A product is checked against Amazon's own UK fees (FBA fee + referral fee) BEFORE Atlas ever looks for an
+        EU or UK source price. If the UK sale price alone can't cover Amazon's cut, no purchase price -- however
+        low -- could ever make it profitable, so it's dropped immediately as "unprofitable (never viable)" to avoid
+        wasting a token checking 4 EU marketplaces for nothing.
+    </p>
+
+    <h5 id="va-sas">VA / SAS</h5>
+    <p class="text-muted">
+        Appears as a badge next to a profit/ROI figure on the Leads pages. It marks a figure that came from your own
+        Virtual Assistant's row data (verified against your own sales tooling), not a Keepa estimate -- Atlas treats
+        it as ground truth rather than recomputing or second-guessing it.
+    </p>
+</div>
+
+{% endblock %}
