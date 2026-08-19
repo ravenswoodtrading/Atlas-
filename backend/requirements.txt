@@ -3,6 +3,9 @@ uvicorn
 jinja2
 sqlalchemy
 python-dotenv
+requests
 keepa
 pandas
 openpyxl
+python-dateutil
+anthropic
