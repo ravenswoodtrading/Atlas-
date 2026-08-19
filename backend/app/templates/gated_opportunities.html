@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Gated Brand Opportunities - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Gated Brand Opportunities ({{ opportunities|length }})</h4>
+    <div>
+        <a href="/exclusions" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-x-circle"></i> Manage Gated Brands
+        </a>
+        <a href="/competitors" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-binoculars"></i> Competitors
+        </a>
+    </div>
+</div>
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Real, scored A2A opportunities Atlas found for brands currently on your <a href="/exclusions">Gated Brands</a> list -- Atlas never deliberately searches for MORE of a gated brand, so everything here was found incidentally, most commonly via <a href="/competitors">Competitor Watch</a> spotting a rival selling it. None of these count toward the Review Queue, Discord alerts, or the Dashboard's BUY/CONSIDER counters -- they're not actionable right now. Use this list to build the case for which brands are worth pursuing ungating on.
+</div>
+
+{% if not opportunities %}
+<div class="alert alert-info">
+    <h5>No gated-brand opportunities tracked yet</h5>
+    <p class="mb-0">Once a gated brand's ASIN turns up in a scan (typically via Competitor Watch), a genuinely profitable one will show up here instead of being thrown away.</p>
+</div>
+{% else %}
+
+{% if summary %}
+<div class="card metric p-3 mb-3">
+    <h6 class="small fw-bold mb-2">By brand</h6>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Opportunities found</th>
+                    <th>Best ROI</th>
+                    <th>Avg ROI</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for b in summary %}
+                <tr>
+                    <td class="fw-semibold">{{ b.brand }}</td>
+                    <td>{{ b.count }}</td>
+                    <td class="text-success">{{ "%.1f"|format(b.best_roi) }}%</td>
+                    <td>{{ "%.1f"|format(b.avg_roi) }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Best Market</th>
+                    <th>Source Cost</th>
+                    <th>Profit / ROI (today)</th>
+                    <th>Profit / ROI (typical, 90d)</th>
+                    <th>Monthly Sales</th>
+                    <th>Score</th>
+                    <th>Scanned</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for record in opportunities %}
+                <tr>
+                    <td style="max-width:280px;">
+                        <div class="fw-semibold small">{{ record.title[:70] }}{% if record.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">
+                            {{ record.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ record.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            &middot; {{ record.brand }}
+                        </div>
+                    </td>
+                    <td class="fw-semibold">{{ record.best_source_marketplace }}</td>
+                    <td>&pound;{{ "%.2f"|format(record.best_source_cost_gbp) }}</td>
+                    <td class="{{ 'text-success' if record.profit > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(record.profit) }} ({{ "%.1f"|format(record.roi) }}% ROI)
+                    </td>
+                    <td class="{{ 'text-success' if record.profit_90d > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(record.profit_90d) }} ({{ "%.1f"|format(record.roi_90d) }}% ROI)
+                    </td>
+                    <td>
+                        {% if record.monthly_sales > 0 %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ record.monthly_sales }}/mo</span>
+                        {% else %}
+                            <span class="badge bg-secondary">No confirmed sales</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ record.score }}</td>
+                    <td class="small text-muted">{{ record.scanned_at.strftime("%Y-%m-%d") if record.scanned_at else "" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

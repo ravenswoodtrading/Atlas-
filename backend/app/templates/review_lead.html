@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% block title %}Lead Queue - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Lead Queue ({{ rows|length }} lead{{ "s" if rows|length != 1 }} awaiting review)</h4>
+    <a href="/review/history" class="btn btn-outline-dark btn-sm"><i class="bi bi-clock-history"></i> Reviewed history</a>
+</div>
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> ASINs checked via <a href="/verdict">Verdict Checker</a> or submitted by a VA through the Google Sheet, each with a Claude-generated BUY/WATCH/AVOID verdict. Approve/reject to move it to <a href="/review/history">Reviewed history</a> -- or use <strong>Amazon OOS</strong> if it's just out of stock right now, which also adds it to your <a href="/watchlist">Watchlist</a> so you'll catch it when it restocks.
+</div>
+
+{% if not rows %}
+<div class="alert alert-info">
+    <h5>Nothing waiting on review</h5>
+    <p class="mb-0">Leads land here once analyzed -- check an ASIN via <a href="/verdict">Verdict Checker</a>, or wait for the next VA sheet submission.</p>
+</div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>UK Price</th>
+                    <th>Sales evidence</th>
+                    <th>Verdict</th>
+                    <th>Source</th>
+                    <th>Profit / ROI</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                {% set lead = row.lead %}
+                {% set m = row.metrics %}
+                <tr>
+                    <td style="max-width:260px;">
+                        {% if m.title %}
+                        <div class="fw-semibold small">{{ m.title }}</div>
+                        <div class="text-muted small">
+                            {{ lead.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if m.brand %} &middot; {{ m.brand }}{% endif %}
+                        </div>
+                        {% else %}
+                        <div class="fw-semibold small text-muted">{{ lead.asin }}</div>
+                        <div class="text-muted small">
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if lead.verdict is none %}No title data -- analysis failed{% else %}No title data{% endif %}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ m.category_name or "-" }}</td>
+                    <td class="small">
+                        {% if m.buy_box_now %}&pound;{{ "%.2f"|format(m.buy_box_now) }}{% else %}-{% endif %}
+                    </td>
+                    <td class="small">
+                        {% if m.monthly_sales %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ m.monthly_sales }}/mo</span>
+                        {% elif m.sales_drops_30d %}
+                        <span class="badge bg-secondary">{{ m.sales_drops_30d }} rank drops/30d</span>
+                        {% elif m.offers_now %}
+                        <span class="badge bg-secondary">{{ m.offers_now }} offer(s), no confirmed sales</span>
+                        {% else %}
+                        <span class="text-muted small">No data</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if lead.verdict == "BUY" %}
+                            <span class="badge bg-success">BUY</span>
+                        {% elif lead.verdict == "WATCH" %}
+                            <span class="badge bg-warning text-dark">WATCH</span>
+                        {% elif lead.verdict == "AVOID" %}
+                            <span class="badge bg-danger">AVOID</span>
+                        {% else %}
+                            <span class="badge bg-secondary" title="{{ lead.rationale or 'No reason recorded' }}">Analysis failed</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if lead.source == "sheet" %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-file-earmark-spreadsheet"></i> Sheet</span>
+                        {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-clipboard-check"></i> Manual</span>
+                        {% endif %}
+                        {% if lead.sourcing_type %}
+                        <div class="text-muted small mt-1">{{ lead.sourcing_type }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if lead.va_roi is not none %}
+                            <span class="badge bg-light text-dark border">VA/SAS</span>
+                            &pound;{{ "%.2f"|format(lead.va_profit) if lead.va_profit is not none else "?" }} ({{ "%.1f"|format(lead.va_roi) }}%)
+                        {% elif m.keepa_estimate_profit %}
+                            <span class="badge bg-light text-dark border">Keepa estimate</span>
+                            &pound;{{ "%.2f"|format(m.keepa_estimate_profit) }} ({{ "%.1f"|format(m.keepa_estimate_roi) }}%)
+                        {% else %}
+                            <span class="text-muted small">No cost supplied</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex flex-column gap-1" style="min-width:130px;">
+                            <a href="https://www.amazon.co.uk/dp/{{ lead.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open listing</a>
+                            <a href="/review/{{ lead.id }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-info-circle"></i> Details
+                            </a>
+                            <div class="d-flex gap-1">
+                                <form method="post" action="/review/decide" class="flex-fill">
+                                    <input type="hidden" name="lead_id" value="{{ lead.id }}">
+                                    <input type="hidden" name="decision" value="approved">
+                                    <input type="hidden" name="return_to" value="/review">
+                                    <button class="btn btn-sm btn-outline-success w-100" type="submit" title="Approve">
+                                        <i class="bi bi-hand-thumbs-up"></i>
+                                    </button>
+                                </form>
+                                <form method="post" action="/review/decide" class="flex-fill">
+                                    <input type="hidden" name="lead_id" value="{{ lead.id }}">
+                                    <input type="hidden" name="decision" value="rejected">
+                                    <input type="hidden" name="return_to" value="/review">
+                                    <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Reject">
+                                        <i class="bi bi-hand-thumbs-down"></i>
+                                    </button>
+                                </form>
+                            </div>
+                            <form method="post" action="/review/decide">
+                                <input type="hidden" name="lead_id" value="{{ lead.id }}">
+                                <input type="hidden" name="decision" value="oos">
+                                <input type="hidden" name="return_to" value="/review">
+                                <button class="btn btn-sm btn-outline-warning w-100" type="submit" title="Amazon is out of stock right now -- not actionable this instant, but watch for it to restock">
+                                    <i class="bi bi-box-seam"></i> Amazon OOS
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

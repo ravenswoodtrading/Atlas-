@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+
+{% block title %}Review Queue - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Review Queue ({{ leads|length }} lead{{ "s" if leads|length != 1 }})</h4>
+    <div>
+        <a href="/products/today" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-calendar2-check"></i> Today's Scans
+        </a>
+        <a href="/competitors" class="btn btn-outline-dark btn-sm">
+            <i class="bi bi-binoculars"></i> Competitors
+        </a>
+    </div>
+</div>
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Everything here is a "star buy" (confirmed sales + 25%+ ROI), a BUY recommendation, or a riskier "PEAK (risky)" lead (only profitable at a recent price peak) -- not yet reviewed, from a normal scan OR a competitor detection that's currently buyable. Reviewing something here clears it from Today's/Historical Scans and the Competitors page too, wherever else it shows up. If it's just out of stock on Amazon right now, use <strong>Amazon OOS</strong> instead of dismissing it -- that adds it to your <a href="/watchlist">Watchlist</a> so you'll catch it when it restocks.
+</div>
+
+{% if not leads %}
+<div class="alert alert-info">
+    <h5>Nothing waiting on review</h5>
+    <p class="mb-0">Star buys, BUY recommendations, and riskier peak-price leads (from scans or buyable competitor finds) will show up here as they're found.</p>
+</div>
+{% else %}
+<div class="card metric p-3 mb-3">
+    <form method="get" action="/review-queue" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Sort by</label>
+            <select class="form-select" name="sort" onchange="this.form.submit()">
+                <option value="when_desc" {{ "selected" if sort == "when_desc" }}>Newest first</option>
+                <option value="when_asc" {{ "selected" if sort == "when_asc" }}>Oldest first</option>
+                <option value="score_desc" {{ "selected" if sort == "score_desc" }}>Highest score</option>
+                <option value="score_asc" {{ "selected" if sort == "score_asc" }}>Lowest score</option>
+            </select>
+        </div>
+    </form>
+</div>
+<div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+    <div class="form-check mb-0">
+        <input class="form-check-input" type="checkbox" id="select-all-leads">
+        <label class="form-check-label small" for="select-all-leads">Select all</label>
+    </div>
+    <span class="text-muted small" id="selected-count">0 selected</span>
+    <div class="ms-auto d-flex gap-1">
+        <button type="button" class="btn btn-sm btn-outline-success bulk-action-btn" id="bulk-up-btn" onclick="bulkReview('up')" disabled>
+            <i class="bi bi-hand-thumbs-up"></i> Mark reviewed
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-danger bulk-action-btn" id="bulk-down-btn" onclick="bulkReview('down')" disabled>
+            <i class="bi bi-hand-thumbs-down"></i> Dismiss
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-dark bulk-action-btn" id="bulk-exclude-btn" onclick="bulkExclude()" disabled>
+            <i class="bi bi-slash-circle"></i> Exclude selected
+        </button>
+    </div>
+</div>
+<form id="bulk-form" method="post" style="display:none;"></form>
+<div class="alert alert-secondary py-1 px-3 small mb-2 d-none" id="scroll-hint">
+    <i class="bi bi-arrow-left-right"></i> This table is wider than your window -- scroll it sideways (or collapse the menu using the <i class="bi bi-list"></i> button top-left) to reach the Watch/Exclude buttons on the right.
+</div>
+<div class="card metric p-3">
+    <div class="table-responsive" id="review-table-wrapper">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" class="form-check-input" id="select-all-leads-th"></th>
+                    <th>Product</th>
+                    <th>Source</th>
+                    <th>Best Market</th>
+                    <th>Source Cost</th>
+                    <th>Profit / ROI (today)</th>
+                    <th>Profit / ROI (typical, 90d)</th>
+                    <th>Monthly Sales</th>
+                    <th>Score</th>
+                    <th>Recommendation</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lead in leads %}
+                <tr class="{{ 'table-success' if (lead.monthly_sales > 0 and (lead.roi > 25 or lead.roi_90d > 25)) }}">
+                    <td>
+                        <input type="checkbox" class="form-check-input lead-checkbox" value="{{ lead.asin }}::{{ lead.listing_id }}">
+                    </td>
+                    <td style="max-width:280px;">
+                        <div class="fw-semibold small">{{ lead.title[:70] }}{% if lead.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">
+                            {{ lead.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            &middot; {{ lead.brand }}
+                        </div>
+                    </td>
+                    <td>
+                        {% if lead.source == "competitor" %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-binoculars"></i> {{ lead.seller.nickname or lead.seller.seller_id }}</span>
+                            {% if lead.currently_buyable %}<div class="mt-1"><span class="badge bg-success"><i class="bi bi-lightning-fill"></i> Buyable now</span></div>{% endif %}
+                        {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-search"></i> Scan</span>
+                        {% endif %}
+                    </td>
+                    <td class="fw-semibold">{{ lead.best_source_marketplace }}</td>
+                    <td>&pound;{{ "%.2f"|format(lead.best_source_cost_gbp) }}</td>
+                    <td class="{{ 'text-success' if lead.profit > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(lead.profit) }} ({{ "%.1f"|format(lead.roi) }}% ROI{% if lead.parsed_report.margin %} / {{ "%.1f"|format(lead.parsed_report.margin) }}% margin{% endif %})
+                    </td>
+                    <td class="{{ 'text-success' if lead.profit_90d > 0 else 'text-danger' }}">
+                        &pound;{{ "%.2f"|format(lead.profit_90d) }} ({{ "%.1f"|format(lead.roi_90d) }}% ROI{% if lead.parsed_report.margin_90d %} / {{ "%.1f"|format(lead.parsed_report.margin_90d) }}% margin{% endif %})
+                    </td>
+                    <td>
+                        {% if lead.monthly_sales > 0 %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ lead.monthly_sales }}/mo</span>
+                        {% else %}
+                            <span class="badge bg-secondary">No confirmed sales</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ lead.score }}</td>
+                    <td>
+                        {% if lead.recommendation == "BUY" %}
+                            <span class="badge bg-success">BUY</span>
+                        {% elif lead.recommendation == "CONSIDER" %}
+                            <span class="badge bg-warning text-dark">CONSIDER</span>
+                        {% elif lead.recommendation == "PEAK_WINDOW" %}
+                            <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
+                                <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                            </span>
+                        {% else %}
+                            <span class="badge bg-secondary">IGNORE</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex flex-column gap-1" style="min-width:150px;">
+                            {% if lead.parsed_report or lead.reasoning %}
+                            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
+                                <i class="bi bi-info-circle"></i> Why?
+                            </button>
+                            {% endif %}
+                            <div class="d-flex gap-1">
+                                <form method="post" action="/review/set" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                    <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
+                                    <input type="hidden" name="verdict" value="up">
+                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-success w-100" type="submit" title="Good opportunity">
+                                        <i class="bi bi-hand-thumbs-up"></i>
+                                    </button>
+                                </form>
+                                <form method="post" action="/review/set" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                    <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
+                                    <input type="hidden" name="verdict" value="down">
+                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
+                                        <i class="bi bi-hand-thumbs-down"></i>
+                                    </button>
+                                </form>
+                            </div>
+                            <form method="post" action="/review/set">
+                                <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
+                                <input type="hidden" name="verdict" value="oos">
+                                <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                <button class="btn btn-sm btn-outline-warning w-100" type="submit" title="Amazon is out of stock right now -- not actionable this instant, but watch for it to restock">
+                                    <i class="bi bi-box-seam"></i> Amazon OOS
+                                </button>
+                            </form>
+                            <div class="d-flex gap-1">
+                                {% if lead.asin in watched_asins %}
+                                <form method="post" action="/watch/remove" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <button class="btn btn-sm btn-primary w-100" type="submit" title="Remove from Watchlist">
+                                        <i class="bi bi-star-fill"></i> Unwatch
+                                    </button>
+                                </form>
+                                {% else %}
+                                <form method="post" action="/watch/add" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                    <input type="hidden" name="title" value="{{ lead.title }}">
+                                    <input type="hidden" name="brand" value="{{ lead.brand }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-primary w-100" type="submit" title="Add to Watchlist">
+                                        <i class="bi bi-star"></i> Watch
+                                    </button>
+                                </form>
+                                {% endif %}
+                                <form method="post" action="/exclude/add" class="flex-fill"
+                                      onsubmit="return confirm('Exclude {{ lead.asin }}? This also skips it in every future scan.');">
+                                    <input type="hidden" name="asin" value="{{ lead.asin }}">
+                                    <input type="hidden" name="title" value="{{ lead.title }}">
+                                    <input type="hidden" name="reason" value="Excluded from Review Queue">
+                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-dark w-100" type="submit" title="Never show this ASIN again">
+                                        <i class="bi bi-slash-circle"></i> Exclude
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% if lead.parsed_report or lead.reasoning %}
+                <tr class="collapse" id="why-{{ loop.index }}">
+                    <td colspan="11" class="bg-light">
+                        {% if lead.recommendation == "PEAK_WINDOW" and lead.parsed_report.peak_profit %}
+                        <div class="alert py-2 px-3 small mb-2" style="background:#fdf3e0;border-color:#f3ddab;color:#96660a;">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Not profitable today or at the 90-day average. At the recent 90-day peak price (&pound;{{ "%.2f"|format(lead.parsed_report.peak_price) }}),
+                            estimated profit/ROI would be &pound;{{ "%.2f"|format(lead.parsed_report.peak_profit) }} ({{ "%.1f"|format(lead.parsed_report.peak_roi) }}%) --
+                            only real if you can source and sell while the price is actually up there.
+                        </div>
+                        {% endif %}
+                        <div class="row py-2">
+                            {% if lead.reasoning %}
+                            <div class="col-md-6">
+                                <h6 class="small fw-bold">Sourcing reasoning ({{ lead.sourcing_tag }})</h6>
+                                <ul class="list-unstyled small mb-0">
+                                {% for key, value in lead.reasoning.items() %}
+                                    <li><span class="text-muted">{{ key }}:</span> {{ value }}</li>
+                                {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                            {% if lead.parsed_report.score_breakdown %}
+                            <div class="col-md-6">
+                                <h6 class="small fw-bold">Score factors ({{ lead.parsed_report.score }}/100)</h6>
+                                <ul class="list-unstyled small mb-0">
+                                {% for f in lead.parsed_report.score_breakdown %}
+                                    <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
+                                        <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-x-circle' }}"></i>
+                                        {{ f.label }}
+                                        {% if f.passed %}<strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<script>
+(function () {
+    const checkboxes = () => Array.from(document.querySelectorAll('.lead-checkbox'));
+    const selectAllTop = document.getElementById('select-all-leads');
+    const selectAllHead = document.getElementById('select-all-leads-th');
+    const countLabel = document.getElementById('selected-count');
+    const bulkButtons = Array.from(document.querySelectorAll('.bulk-action-btn'));
+
+    function updateToolbar() {
+        const checked = checkboxes().filter((cb) => cb.checked);
+        if (countLabel) {
+            countLabel.textContent = checked.length + ' selected';
+        }
+        bulkButtons.forEach((btn) => { btn.disabled = checked.length === 0; });
+    }
+
+    function setAll(checked) {
+        checkboxes().forEach((cb) => { cb.checked = checked; });
+        if (selectAllTop) selectAllTop.checked = checked;
+        if (selectAllHead) selectAllHead.checked = checked;
+        updateToolbar();
+    }
+
+    if (selectAllTop) {
+        selectAllTop.addEventListener('change', () => setAll(selectAllTop.checked));
+    }
+    if (selectAllHead) {
+        selectAllHead.addEventListener('change', () => setAll(selectAllHead.checked));
+    }
+
+    document.addEventListener('change', (e) => {
+        if (e.target.classList && e.target.classList.contains('lead-checkbox')) {
+            updateToolbar();
+        }
+    });
+
+    function submitBulk(action, extraFields) {
+        const selected = checkboxes().filter((cb) => cb.checked).map((cb) => cb.value);
+        if (!selected.length) return;
+
+        const form = document.getElementById('bulk-form');
+        form.innerHTML = '';
+        form.action = action;
+
+        selected.forEach((value) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'selected';
+            input.value = value;
+            form.appendChild(input);
+        });
+
+        Object.entries(extraFields || {}).forEach(([name, value]) => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = name;
+            input.value = value;
+            form.appendChild(input);
+        });
+
+        const returnTo = document.createElement('input');
+        returnTo.type = 'hidden';
+        returnTo.name = 'return_to';
+        returnTo.value = '/review-queue?sort={{ sort }}';
+        form.appendChild(returnTo);
+
+        form.submit();
+    }
+
+    window.bulkReview = function (verdict) {
+        submitBulk('/review/set-bulk', { verdict: verdict });
+    };
+
+    window.bulkExclude = function () {
+        const selected = checkboxes().filter((cb) => cb.checked).map((cb) => cb.value);
+        if (!selected.length) return;
+        if (!confirm('Exclude ' + selected.length + ' selected ASIN(s)? This also skips them in every future scan.')) return;
+        submitBulk('/exclude/add-bulk', { reason: 'Bulk excluded from review queue' });
+    };
+})();
+
+(function () {
+    // Only nags when the table genuinely doesn't fit (scrollWidth >
+    // clientWidth) -- re-checked on resize/sidebar-toggle since
+    // collapsing the menu can un-overflow it. Disappears for good
+    // once the user actually scrolls the table, so it doesn't keep
+    // nagging after they've already found it once this visit.
+    const wrapper = document.getElementById('review-table-wrapper');
+    const hint = document.getElementById('scroll-hint');
+    if (!wrapper || !hint) return;
+
+    function checkOverflow() {
+        hint.classList.toggle('d-none', wrapper.scrollWidth <= wrapper.clientWidth);
+    }
+
+    checkOverflow();
+    window.addEventListener('resize', checkOverflow);
+
+    // Sidebar collapse/expand changes available width without firing
+    // a resize event -- re-check shortly after, once the CSS
+    // transition (see base.html's .main margin-left transition) has
+    // finished.
+    const toggle = document.getElementById('sidebar-toggle');
+    if (toggle) {
+        toggle.addEventListener('click', function () { setTimeout(checkOverflow, 200); });
+    }
+
+    wrapper.addEventListener('scroll', function () {
+        hint.classList.add('d-none');
+    }, { once: true });
+})();
+</script>
+
+{% endblock %}

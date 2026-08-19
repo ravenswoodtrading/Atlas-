@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Verdict Checker - Atlas{% endblock %}
+
+{% block content %}
+
+<h4 class="mb-4">Verdict Checker</h4>
+
+<div class="card metric p-4 mb-4">
+    <form method="get" action="/verdict" class="row g-3 align-items-end">
+        <div class="col-md-6">
+            <label class="form-label">ASIN</label>
+            <input type="text" class="form-control" name="asin" value="{{ asin }}" placeholder="e.g. B0BSCLTYJT" required>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label">Cost price <span class="text-muted">(optional -- for a rough Keepa-estimate ROI)</span></label>
+            <input type="text" class="form-control" name="cost_price" value="{{ cost_price }}" placeholder="e.g. 12.50">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark w-100">
+                <i class="bi bi-clipboard-check"></i> Check
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if error %}
+<div class="alert alert-warning">{{ error }}</div>
+{% endif %}
+
+{% include "_verdict_metrics.html" %}
+
+{% endblock %}

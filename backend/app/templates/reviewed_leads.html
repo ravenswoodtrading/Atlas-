@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% block title %}Reviewed Leads - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Reviewed Leads ({{ total_count }})</h4>
+    <a href="/review" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Lead Queue</a>
+</div>
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i> Every lead you've approved, rejected, or flagged as Amazon OOS from the <a href="/review">Lead Queue</a>, newest decision first -- so you can look back on what you decided and why. OOS leads are also sitting on your <a href="/watchlist">Watchlist</a>, watching for restock.
+</div>
+
+<div class="mb-3">
+    <a href="/review/history" class="badge {{ 'bg-dark' if not decision else 'bg-light text-dark border' }} text-decoration-none">
+        All <span class="badge bg-light text-dark border ms-1">{{ total_count }}</span>
+    </a>
+    <a href="/review/history?decision=approved" class="badge {{ 'bg-success' if decision == 'approved' else 'bg-light text-dark border' }} text-decoration-none">
+        <i class="bi bi-hand-thumbs-up"></i> Approved <span class="badge bg-light text-dark border ms-1">{{ approved_count }}</span>
+    </a>
+    <a href="/review/history?decision=rejected" class="badge {{ 'bg-danger' if decision == 'rejected' else 'bg-light text-dark border' }} text-decoration-none">
+        <i class="bi bi-hand-thumbs-down"></i> Rejected <span class="badge bg-light text-dark border ms-1">{{ rejected_count }}</span>
+    </a>
+    <a href="/review/history?decision=oos" class="badge {{ 'bg-warning text-dark' if decision == 'oos' else 'bg-light text-dark border' }} text-decoration-none">
+        <i class="bi bi-box-seam"></i> Watching (OOS) <span class="badge bg-light text-dark border ms-1">{{ oos_count }}</span>
+    </a>
+</div>
+
+{% if not rows %}
+<div class="alert alert-info">
+    <h5>Nothing reviewed yet</h5>
+    <p class="mb-0">Approve or reject leads from the <a href="/review">Lead Queue</a> and they'll show up here.</p>
+</div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>UK Price</th>
+                    <th>Verdict</th>
+                    <th>Decision</th>
+                    <th>Reviewed</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                {% set lead = row.lead %}
+                {% set m = row.metrics %}
+                <tr>
+                    <td style="max-width:260px;">
+                        {% if m.title %}
+                        <div class="fw-semibold small">{{ m.title }}</div>
+                        <div class="text-muted small">
+                            {{ lead.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if m.brand %} &middot; {{ m.brand }}{% endif %}
+                        </div>
+                        {% else %}
+                        <div class="fw-semibold small text-muted">{{ lead.asin }}</div>
+                        <div class="text-muted small">
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            No title data
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ m.category_name or "-" }}</td>
+                    <td class="small">
+                        {% if m.buy_box_now %}&pound;{{ "%.2f"|format(m.buy_box_now) }}{% else %}-{% endif %}
+                    </td>
+                    <td>
+                        {% if lead.verdict == "BUY" %}
+                            <span class="badge bg-success">BUY</span>
+                        {% elif lead.verdict == "WATCH" %}
+                            <span class="badge bg-warning text-dark">WATCH</span>
+                        {% elif lead.verdict == "AVOID" %}
+                            <span class="badge bg-danger">AVOID</span>
+                        {% else %}
+                            <span class="badge bg-secondary" title="{{ lead.rationale or 'No reason recorded' }}">Analysis failed</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if lead.decision == "approved" %}
+                        <span class="badge bg-success"><i class="bi bi-hand-thumbs-up"></i> Approved</span>
+                        {% elif lead.decision == "oos" %}
+                        <span class="badge bg-warning text-dark" title="Added to your Watchlist -- see /watchlist"><i class="bi bi-box-seam"></i> Watching (OOS)</span>
+                        {% else %}
+                        <span class="badge bg-danger"><i class="bi bi-hand-thumbs-down"></i> Rejected</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">
+                        {% if lead.reviewed_at %}{{ lead.reviewed_at.strftime("%d %b %Y %H:%M") }}{% else %}-{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex flex-column gap-1" style="min-width:130px;">
+                            <a href="https://www.amazon.co.uk/dp/{{ lead.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open listing</a>
+                            <a href="/review/{{ lead.id }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-info-circle"></i> Details
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

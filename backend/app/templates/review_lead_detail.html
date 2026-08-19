@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Lead {{ lead.asin if lead else "" }} - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Lead detail</h4>
+    <a href="/review" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Lead Queue</a>
+</div>
+
+{% if not lead %}
+<div class="alert alert-warning">Lead not found.</div>
+{% else %}
+
+{% set verdict = lead.verdict %}
+{% set rationale = lead.rationale %}
+{% set va_ground_truth = lead.va_roi is not none %}
+{% set va_profit = lead.va_profit %}
+{% set va_roi = lead.va_roi %}
+
+{% include "_verdict_metrics.html" %}
+
+{% if lead.raw_sheet_data %}
+<div class="card metric p-3 mt-3">
+    <h6 class="fw-bold small">Raw sheet submission</h6>
+    <pre class="small mb-0">{{ lead.raw_sheet_data }}</pre>
+</div>
+{% endif %}
+
+<div class="d-flex gap-2 mt-3">
+    <form method="post" action="/review/decide">
+        <input type="hidden" name="lead_id" value="{{ lead.id }}">
+        <input type="hidden" name="decision" value="approved">
+        <input type="hidden" name="return_to" value="/review/{{ lead.id }}">
+        <button class="btn btn-success" type="submit"><i class="bi bi-hand-thumbs-up"></i> Approve</button>
+    </form>
+    <form method="post" action="/review/decide">
+        <input type="hidden" name="lead_id" value="{{ lead.id }}">
+        <input type="hidden" name="decision" value="rejected">
+        <input type="hidden" name="return_to" value="/review/{{ lead.id }}">
+        <button class="btn btn-danger" type="submit"><i class="bi bi-hand-thumbs-down"></i> Reject</button>
+    </form>
+</div>
+
+{% endif %}
+
+{% endblock %}

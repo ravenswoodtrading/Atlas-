@@ -1,0 +1,316 @@
+{% if verdict %}
+<style>
+.vr-card{border:1px solid rgba(0,0,0,.08);border-radius:12px;background:#fff;padding:1.1rem 1.25rem;}
+.vr-banner{border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:12px;border:1px solid transparent;}
+.vr-banner-buy{background:#e8f7ee;border-color:#bfe8cf;}
+.vr-banner-watch{background:#fdf3e0;border-color:#f3ddab;}
+.vr-banner-avoid{background:#fbe9e9;border-color:#f1c6c6;}
+.vr-banner-word{font-size:1.5rem;font-weight:500;}
+.vr-banner-buy .vr-banner-word{color:#1e7a41;}
+.vr-banner-watch .vr-banner-word{color:#96660a;}
+.vr-banner-avoid .vr-banner-word{color:#a12f2f;}
+.vr-banner-title{font-weight:500;font-size:1.05rem;margin-top:.35rem;}
+.vr-banner-sub{color:#6c7580;font-size:.85rem;margin-top:.15rem;}
+.vr-asin{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#6c7580;font-size:.85rem;}
+.vr-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;}
+.vr-metric-label{color:#6c7580;font-size:.78rem;font-weight:500;}
+.vr-metric-value{font-size:1.3rem;margin-top:.25rem;}
+.vr-profit-card{border-radius:12px;padding:1.1rem 1.25rem;border:1px solid transparent;}
+.vr-profit-positive{background:#e8f7ee;border-color:#bfe8cf;}
+.vr-profit-negative{background:#fbe9e9;border-color:#f1c6c6;}
+.vr-profit-unknown{background:#f3f4f6;border-color:#e2e4e8;}
+.vr-profit-positive .vr-metric-value{color:#1e7a41;font-weight:500;}
+.vr-profit-negative .vr-metric-value{color:#a12f2f;font-weight:500;}
+.vr-reasoning-list{list-style:none;padding:0;margin:.5rem 0 0;}
+.vr-reasoning-list li{display:flex;align-items:flex-start;gap:.55rem;padding:.5rem 0;border-top:1px solid rgba(0,0,0,.06);font-size:.92rem;}
+.vr-reasoning-list li:first-child{border-top:none;}
+.vr-reasoning-list li i{margin-top:.2rem;font-size:.8rem;flex-shrink:0;}
+.vr-reasoning-list li span{flex:1;}
+.vr-reason-support i{color:#1e7a41;}
+.vr-reason-risk i{color:#96660a;}
+.vr-reason-neutral i{color:#a7aeb8;}
+.vr-figure{font-weight:600;color:#2c313a;}
+.vr-reasoning-card{border-left-width:4px;border-left-style:solid;}
+.vr-reasoning-card-buy{border-left-color:#3fa066;}
+.vr-reasoning-card-watch{border-left-color:#c98f1f;}
+.vr-reasoning-card-avoid{border-left-color:#c15a5a;}
+.vr-section-title{display:flex;align-items:center;gap:.4rem;font-weight:500;font-size:.92rem;margin-bottom:.75rem;}
+.vr-section-title i{color:#6c7580;}
+.vr-detail-line{display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-top:1px solid rgba(0,0,0,.06);font-size:.88rem;}
+.vr-detail-line:first-child{border-top:none;}
+.vr-detail-line>span:last-child{font-weight:500;}
+.vr-detail-label{color:#6c7580;font-weight:400;}
+.vr-pill{display:inline-flex;align-items:center;gap:.3rem;border-radius:8px;padding:.15rem .55rem;font-size:.78rem;font-weight:500;}
+.vr-pill-safe{background:#e8f7ee;color:#1e7a41;}
+.vr-pill-risk{background:#fbe9e9;color:#a12f2f;}
+.vr-progress-track{background:#eef0f3;border-radius:8px;height:6px;width:100px;overflow:hidden;}
+.vr-progress-fill{background:#6c7580;height:100%;border-radius:8px;}
+.vr-trend-rising{color:#96660a;}
+.vr-trend-falling{color:#1e7a41;}
+.vr-trend-saturating{color:#a12f2f;}
+.vr-trend-stable{color:#6c7580;}
+.vr-price-now{font-size:1.6rem;font-weight:500;}
+.vr-price-delta{font-size:.85rem;font-weight:500;margin-left:.4rem;}
+.vr-price-delta-up{color:#1e7a41;}
+.vr-price-delta-down{color:#a12f2f;}
+.vr-stat-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:.85rem 0;}
+.vr-stat-col{text-align:center;background:#f8f9fb;border-radius:8px;padding:.5rem .25rem;}
+.vr-stat-col-label{color:#6c7580;font-size:.7rem;}
+.vr-stat-col-value{font-size:.92rem;margin-top:.15rem;}
+.vr-footer-line{border-top:1px solid rgba(0,0,0,.08);margin-top:.75rem;padding-top:.6rem;color:#6c7580;font-size:.82rem;}
+@media (max-width: 767px){.vr-row{grid-template-columns:repeat(2,1fr);}}
+</style>
+
+{% set verdict_class = "vr-banner-buy" if verdict == "BUY" else ("vr-banner-watch" if verdict == "WATCH" else "vr-banner-avoid") %}
+{% set verdict_icon = "bi-hand-thumbs-up" if verdict == "BUY" else ("bi-eye" if verdict == "WATCH" else "bi-x-circle") %}
+
+<div class="vr-banner {{ verdict_class }}">
+    <div class="d-flex justify-content-between align-items-start">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi {{ verdict_icon }} vr-banner-word"></i>
+            <span class="vr-banner-word">{{ verdict }}</span>
+        </div>
+        <div class="vr-asin">
+            {{ metrics.asin }}
+            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ metrics.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+        </div>
+    </div>
+    <div class="vr-banner-title">{{ metrics.title }}</div>
+    <div class="vr-banner-sub">{{ metrics.brand }} &middot; {{ metrics.category_name or "Uncategorised" }}{% if metrics.ean %} &middot; EAN {{ metrics.ean }}{% endif %}</div>
+</div>
+
+{% set has_profit_figure = (va_ground_truth and va_profit is not none) or metrics.keepa_estimate_profit is not none %}
+{% set profit_value = va_profit if (va_ground_truth and va_profit is not none) else metrics.keepa_estimate_profit %}
+{% set roi_value = va_roi if (va_ground_truth and va_roi is not none) else metrics.keepa_estimate_roi %}
+{% set profit_class = "vr-profit-unknown" if not has_profit_figure else ("vr-profit-positive" if profit_value > 0 else "vr-profit-negative") %}
+
+{% set show_peak = (not va_ground_truth) and metrics.keepa_estimate_roi_peak is not none and metrics.keepa_estimate_roi_peak > (roi_value if roi_value is not none else -999999) %}
+
+<div class="vr-row">
+    <div class="vr-card">
+        <div class="vr-metric-label">Current UK price</div>
+        <div class="vr-metric-value">&pound;{{ "%.2f"|format(metrics.buy_box_now) }}</div>
+    </div>
+    <div class="vr-profit-card {{ profit_class }}">
+        <div class="vr-metric-label">Profit / ROI {{ "(VA/SAS)" if va_ground_truth else "(Keepa estimate)" }}</div>
+        {% if has_profit_figure %}
+        <div class="vr-metric-value">&pound;{{ "%.2f"|format(profit_value) }} ({{ "%.1f"|format(roi_value) }}%)</div>
+        {% if (not va_ground_truth) and metrics.keepa_estimate_margin is not none %}
+        <div class="small" style="color:#6c7580;">margin {{ "%.1f"|format(metrics.keepa_estimate_margin) }}% of sale price</div>
+        {% endif %}
+        {% else %}
+        <div class="vr-metric-value" style="font-size:1rem;color:#6c7580;">No cost supplied</div>
+        {% endif %}
+    </div>
+    <div class="vr-card">
+        <div class="vr-metric-label">Monthly sales</div>
+        <div class="vr-metric-value">{% if metrics.monthly_sales %}{{ metrics.monthly_sales }}/mo{% else %}<span style="font-size:1rem;color:#6c7580;">No confirmed sales</span>{% endif %}</div>
+    </div>
+    <div class="vr-card">
+        <div class="vr-metric-label">Rating</div>
+        <div class="vr-metric-value">{{ metrics.rating or "--" }} <span style="font-size:.8rem;color:#6c7580;">({{ metrics.review_count }})</span></div>
+    </div>
+</div>
+
+{% if (not va_ground_truth) and metrics.viable_days_90d and metrics.viable_days_90d.priced_days %}
+<div class="vr-card mb-3">
+    <div class="vr-section-title"><i class="bi bi-calendar-range"></i> Days at a viable price (last 90 days, not the average)</div>
+    <div class="small" style="color:#6c7580;margin-bottom:.5rem;">
+        Rebuilt day-by-day from the actual price history -- catches a product that's genuinely a good buy on most days even when a few outlier days would pull a plain average off in either direction.
+    </div>
+    <div class="d-flex gap-4 flex-wrap">
+        <div>
+            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_target_roi }} / {{ metrics.viable_days_90d.priced_days }}</div>
+            <div class="small" style="color:#6c7580;">days at 25%+ ROI (strong)</div>
+        </div>
+        <div>
+            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_min_roi }} / {{ metrics.viable_days_90d.priced_days }}</div>
+            <div class="small" style="color:#6c7580;">days at 10%+ ROI (bare minimum)</div>
+        </div>
+    </div>
+    {% if metrics.viable_days_90d.priced_days < 90 %}
+    <div class="small mt-2" style="color:#6c7580;">{{ 90 - metrics.viable_days_90d.priced_days }} of the last 90 days had no buy-box price at all (e.g. out of stock) and aren't counted above.</div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if show_peak %}
+<div class="vr-card mb-3" style="background:#fdf3e0;border-color:#f3ddab;">
+    <div class="vr-section-title" style="color:#96660a;"><i class="bi bi-exclamation-triangle"></i> Peak-price potential (riskier)</div>
+    <div class="small" style="color:#6c7580;margin-bottom:.5rem;">
+        Not profitable at today's price or the 90-day average -- but this product's price swings, and at its recent
+        90-day high (&pound;{{ "%.2f"|format(metrics.price_max_90d) }}) it would be:
+    </div>
+    <div class="vr-metric-value" style="color:#96660a;">
+        &pound;{{ "%.2f"|format(metrics.keepa_estimate_profit_peak) }} ({{ "%.1f"|format(metrics.keepa_estimate_roi_peak) }}%)
+    </div>
+    <div class="small mt-1" style="color:#6c7580;">
+        Only real if you can get stock in while Amazon's price is actually up there -- check the price history chart below before buying.
+    </div>
+</div>
+{% endif %}
+
+{% if metrics.fee_breakdown %}
+<div class="vr-card mb-3">
+    <div class="vr-section-title"><i class="bi bi-receipt"></i> Fee breakdown used in this estimate</div>
+    <div class="vr-detail-line">
+        <span class="vr-detail-label">Referral fee</span>
+        <span>&pound;{{ "%.2f"|format(metrics.fee_breakdown.referral_fee) }} ({{ "%.1f"|format(metrics.fee_breakdown.referral_rate_used * 100) }}% effective rate on {{ metrics.category_name or "Uncategorised" }})</span>
+    </div>
+    <div class="vr-detail-line">
+        <span class="vr-detail-label">FBA fee</span>
+        <span>&pound;{{ "%.2f"|format(metrics.fee_breakdown.fba_fee) }}</span>
+    </div>
+    <div class="vr-detail-line">
+        <span class="vr-detail-label">Prep fee</span>
+        <span>&pound;{{ "%.2f"|format(metrics.fee_breakdown.prep_fee) }}</span>
+    </div>
+    <div class="vr-detail-line">
+        <span class="vr-detail-label">UK VAT rate applied</span>
+        <span>{{ "%.0f"|format(metrics.fee_breakdown.uk_vat_rate_used * 100) }}%</span>
+    </div>
+    <div class="small mt-2" style="color:#6c7580;">
+        If this doesn't match another tool's numbers, check the category above is right first -- referral rate is category-dependent and Keepa's category isn't always what Amazon actually bills against.
+    </div>
+</div>
+{% endif %}
+
+{% set reasoning_card_class = "vr-reasoning-card-buy" if verdict == "BUY" else ("vr-reasoning-card-watch" if verdict == "WATCH" else "vr-reasoning-card-avoid") %}
+<div class="vr-card vr-reasoning-card {{ reasoning_card_class }} mb-3">
+    <div class="vr-section-title"><i class="bi bi-list-check"></i> Why {{ verdict }}</div>
+    <ul class="vr-reasoning-list">
+        {% for line in rationale.split("\n") %}
+            {% set raw = line.strip() %}
+            {% if raw.startswith("+") %}
+                {% set marker, point = "support", raw[1:].strip() %}
+            {% elif raw.startswith("!") %}
+                {% set marker, point = "risk", raw[1:].strip() %}
+            {% else %}
+                {% set marker, point = "neutral", raw.lstrip("-*").strip() %}
+            {% endif %}
+            {% if point %}
+            <li class="vr-reason-{{ marker }}">
+                <i class="bi {{ 'bi-check-circle-fill' if marker == 'support' else ('bi-exclamation-triangle-fill' if marker == 'risk' else 'bi-dot') }}"></i>
+                <span>{{ point | highlight_figures }}</span>
+            </li>
+            {% endif %}
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="row g-3">
+    <div class="col-md-6">
+        <div class="vr-card h-100">
+            <div class="vr-section-title"><i class="bi bi-people"></i> Demand &amp; competition</div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Offers now</span>
+                <span>
+                    {{ metrics.offers_now }} <span style="color:#6c7580;">(90d avg {{ metrics.offers_90d_avg }})</span>
+                    {% if metrics.offer_trend == "rising" %}<i class="bi bi-graph-up-arrow vr-trend-rising" title="Rising"></i>
+                    {% elif metrics.offer_trend == "falling" %}<i class="bi bi-graph-down-arrow vr-trend-falling" title="Falling"></i>
+                    {% elif metrics.offer_trend == "saturating" %}<i class="bi bi-exclamation-triangle vr-trend-saturating" title="Saturating"></i>
+                    {% else %}<i class="bi bi-dash-lg vr-trend-stable" title="Stable"></i>
+                    {% endif %}
+                </span>
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">FBA offer present</span>
+                {% if metrics.offer_count_fba is not none %}
+                    {% if metrics.offer_count_fba > 0 %}<span class="vr-pill vr-pill-risk"><i class="bi bi-dot"></i>Yes -- {{ metrics.offer_count_fba }}</span>{% else %}<span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>No</span>{% endif %}
+                {% elif metrics.offers_fba_present %}<span class="vr-pill vr-pill-risk"><i class="bi bi-dot"></i>Yes</span>{% else %}<span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>No</span>{% endif %}
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Amazon on listing</span>
+                {% if metrics.is_amazon_on_listing %}
+                    {% if metrics.amazon_buy_box_percentage >= 50 %}
+                    <span class="vr-pill vr-pill-risk" title="Amazon being present isn't itself a problem -- a high buy-box share is what makes it hard to compete for the buy box"><i class="bi bi-dot"></i>Yes -- holds {{ "%.0f"|format(metrics.amazon_buy_box_percentage) }}% of the buy box</span>
+                    {% elif metrics.amazon_buy_box_percentage > 0 %}
+                    <span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>Yes -- only {{ "%.0f"|format(metrics.amazon_buy_box_percentage) }}% of the buy box</span>
+                    {% else %}
+                    <span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>Yes -- not currently winning the buy box</span>
+                    {% endif %}
+                {% else %}
+                <span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>No</span>
+                {% endif %}
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Out of stock</span>
+                {% if metrics.is_out_of_stock %}<span class="vr-pill vr-pill-risk"><i class="bi bi-dot"></i>Yes</span>{% else %}<span class="vr-pill vr-pill-safe"><i class="bi bi-dot"></i>No</span>{% endif %}
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Buy box concentration</span>
+                <span class="d-flex align-items-center gap-2">
+                    <span class="vr-progress-track"><span class="vr-progress-fill" style="width:{{ metrics.buy_box_percentage }}%;"></span></span>
+                    {{ metrics.buy_box_percentage }}% <span style="color:#6c7580;font-size:.78rem;">(top seller, not necessarily Amazon -- see above)</span>
+                </span>
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Sales rank drops (30d)</span>
+                <span>{{ metrics.sales_drops_30d }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="vr-card h-100">
+            <div class="vr-section-title"><i class="bi bi-graph-up"></i> Price history</div>
+
+            {% set delta_pct = ((metrics.buy_box_now - metrics.price_avg_30d) / metrics.price_avg_30d * 100) if metrics.price_avg_30d else 0 %}
+            <div class="d-flex align-items-baseline mb-2">
+                <span class="vr-price-now">&pound;{{ "%.2f"|format(metrics.buy_box_now) }}</span>
+                {% if delta_pct > 1 %}
+                <span class="vr-price-delta vr-price-delta-up"><i class="bi bi-arrow-up-short"></i>{{ "%.1f"|format(delta_pct) }}% vs 30d avg</span>
+                {% elif delta_pct < -1 %}
+                <span class="vr-price-delta vr-price-delta-down"><i class="bi bi-arrow-down-short"></i>{{ "%.1f"|format(delta_pct|abs) }}% vs 30d avg</span>
+                {% else %}
+                <span class="vr-price-delta" style="color:#6c7580;">flat vs 30d avg</span>
+                {% endif %}
+            </div>
+
+            {% set pts = [metrics.price_avg_180d, metrics.price_avg_90d, metrics.price_avg_30d, metrics.buy_box_now] %}
+            {% set pmin = pts|min %}
+            {% set pmax = pts|max %}
+            {% set prange = (pmax - pmin) if (pmax - pmin) > 0 else 1 %}
+            {% set y0 = 26 - ((pts[0] - pmin) / prange * 22) %}
+            {% set y1 = 26 - ((pts[1] - pmin) / prange * 22) %}
+            {% set y2 = 26 - ((pts[2] - pmin) / prange * 22) %}
+            {% set y3 = 26 - ((pts[3] - pmin) / prange * 22) %}
+            <svg viewBox="0 0 100 30" preserveAspectRatio="none" style="width:100%;height:44px;margin-bottom:.5rem;">
+                <polyline points="2,{{ '%.1f'|format(y0) }} 34,{{ '%.1f'|format(y1) }} 66,{{ '%.1f'|format(y2) }} 98,{{ '%.1f'|format(y3) }}"
+                          fill="none" stroke="#8b95a3" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                <circle cx="98" cy="{{ '%.1f'|format(y3) }}" r="2.5" fill="{{ '#1e7a41' if delta_pct <= -1 else ('#a12f2f' if delta_pct > 1 else '#8b95a3') }}" />
+            </svg>
+
+            <div class="vr-stat-cols">
+                <div class="vr-stat-col">
+                    <div class="vr-stat-col-label">30d avg</div>
+                    <div class="vr-stat-col-value">&pound;{{ "%.2f"|format(metrics.price_avg_30d) }}</div>
+                </div>
+                <div class="vr-stat-col">
+                    <div class="vr-stat-col-label">90d avg</div>
+                    <div class="vr-stat-col-value">&pound;{{ "%.2f"|format(metrics.price_avg_90d) }}</div>
+                </div>
+                <div class="vr-stat-col">
+                    <div class="vr-stat-col-label">180d avg</div>
+                    <div class="vr-stat-col-value">&pound;{{ "%.2f"|format(metrics.price_avg_180d) }}</div>
+                </div>
+            </div>
+
+            <div class="vr-detail-line">
+                <span class="vr-detail-label">Price drops (30 / 90 / 180d)</span>
+                <span>{{ metrics.price_drop_count_30d }} / {{ metrics.price_drop_count_90d }} / {{ metrics.price_drop_count_180d }}</span>
+            </div>
+
+            <div class="vr-footer-line">
+                Lowest ever &pound;{{ "%.2f"|format(metrics.price_min_ever) }} &middot; Lowest 90d &pound;{{ "%.2f"|format(metrics.price_min_90d) }} &middot; Highest ever &pound;{{ "%.2f"|format(metrics.price_max) }} &middot; Highest 90d &pound;{{ "%.2f"|format(metrics.price_max_90d) }}
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
