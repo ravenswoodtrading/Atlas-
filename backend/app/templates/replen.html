@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Replen - Atlas{% endblock %}
+
+{% block content %}
+
+{% if message %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Replen List ({{ items|length }})</h4>
+    <form method="post" action="/replen/check-now" id="checkNowForm">
+        <button class="btn btn-dark btn-sm" type="submit" id="checkNowBtn">
+            <i class="bi bi-arrow-repeat"></i> Check current prices now
+        </button>
+    </form>
+</div>
+
+<script>
+(function() {
+    var form = document.getElementById('checkNowForm');
+    var btn = document.getElementById('checkNowBtn');
+
+    form.addEventListener('submit', function() {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking -- this can take a while for a large list, please wait...';
+    });
+})();
+</script>
+
+<p class="text-muted">
+    ASINs proven to sell well before -- either imported from a join of your purchase history and Seller Toolkit's
+    actual sales data, or added manually. <code>Achieved ROI</code> is real, historical proof it's a genuine past
+    winner. <code>Current ROI</code> (from "Check current prices now") is what actually decides whether it's worth
+    buying again today.
+</p>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-5">
+        <div class="card metric p-4 h-100">
+            <h6>Add an ASIN manually</h6>
+            <form method="post" action="/replen/add" class="row g-2 align-items-end">
+                <div class="col-7">
+                    <label class="form-label small">ASIN</label>
+                    <input type="text" class="form-control" name="asin" placeholder="B0EXAMPLE1" required>
+                </div>
+                <div class="col-5">
+                    <button type="submit" class="btn btn-outline-dark w-100">
+                        <i class="bi bi-plus-lg"></i> Add
+                    </button>
+                </div>
+                <div class="col-12">
+                    <label class="form-label small">Notes (optional)</label>
+                    <input type="text" class="form-control" name="notes" placeholder="e.g. why it's worth watching">
+                </div>
+            </form>
+        </div>
+    </div>
+    <div class="col-md-7">
+        <div class="card metric p-4 h-100">
+            <h6>Import from purchase history + Seller Toolkit</h6>
+            <form method="post" action="/replen/import" enctype="multipart/form-data" class="row g-2 align-items-end">
+                <div class="col-md-6">
+                    <label class="form-label small">Purchase history (buy sheet CSV)</label>
+                    <input type="file" class="form-control form-control-sm" name="buy_sheet" accept=".csv" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label small">Seller Toolkit sales export (.txt)</label>
+                    <input type="file" class="form-control form-control-sm" name="stk_sales" accept=".txt,.csv" required>
+                </div>
+                <div class="col-md-8">
+                    <label class="form-label small">Minimum achieved ROI to import</label>
+                    <input type="number" class="form-control form-control-sm" name="min_achieved_roi" value="15" min="0" max="100" step="1">
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-outline-dark w-100">
+                        <i class="bi bi-upload"></i> Import
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% if items %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Originally sourced from</th>
+                    <th class="text-end">Achieved ROI</th>
+                    <th class="text-end">Achieved units</th>
+                    <th class="text-end">Current ROI</th>
+                    <th class="text-end">Current profit</th>
+                    <th>Current best source</th>
+                    <th>Last checked</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr class="{{ 'table-success' if item.current_roi and item.current_roi > 25 }}">
+                    <td style="max-width:240px;">
+                        <div class="fw-semibold small">{{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">
+                            {{ item.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            &middot; {{ item.brand }}
+                        </div>
+                        {% if item.notes %}<div class="text-muted small fst-italic">{{ item.notes }}</div>{% endif %}
+                    </td>
+                    <td class="small text-muted">{{ item.source_store or "Manual" }}</td>
+                    <td class="text-end">
+                        {% if item.achieved_roi is not none %}
+                            {{ "%.0f"|format(item.achieved_roi) }}%
+                        {% else %}
+                            <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">{{ item.achieved_units if item.achieved_units is not none else "--" }}</td>
+                    <td class="text-end {{ 'text-success' if item.current_roi and item.current_roi > 0 else ('text-danger' if item.current_roi is not none) }}">
+                        {% if item.current_roi is not none %}
+                            {{ "%.0f"|format(item.current_roi) }}%
+                        {% else %}
+                            <span class="text-muted">Not checked</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        {% if item.current_profit is not none %}
+                            &pound;{{ "%.2f"|format(item.current_profit) }}
+                        {% else %}
+                            <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ item.current_source_marketplace or "--" }}</td>
+                    <td class="small text-muted">{{ item.last_checked_at.strftime("%Y-%m-%d %H:%M") if item.last_checked_at else "Never" }}</td>
+                    <td>
+                        <form method="post" action="/replen/remove">
+                            <input type="hidden" name="item_id" value="{{ item.id }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    Nothing on the replen list yet -- add an ASIN manually or import from your purchase history above.
+</div>
+{% endif %}
+
+{% endblock %}

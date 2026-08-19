@@ -65,6 +65,7 @@
                             <th>Monthly Sales</th>
                             <th>Score</th>
                             <th>Recommendation</th>
+                            <th>Reviewed?</th>
                             <th>Remove</th>
                         </tr>
                     </thead>
@@ -72,10 +73,27 @@
                         {% for o in result.opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
-                        <tr class="{{ 'table-success' if p.monthly_sales > 0 }}">
+                        <tr class="{{ 'table-success' if (p.monthly_sales > 0 and (p.roi > 25 or p.roi_90d > 25)) }}">
                             <td style="max-width:280px;">
-                                <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
-                                <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                                {% set note = notes.get(p.asin, "") %}
+                                <div class="fw-semibold small">
+                                    {{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}
+                                    {% if note.startswith("Auto-added:") %}
+                                    <span class="badge bg-info text-dark" title="{{ note }}"><i class="bi bi-magic"></i> Auto</span>
+                                    {% endif %}
+                                    {% if note.startswith("Amazon OOS at review") %}
+                                        {% if p.offers_now > 0 or p.buy_box_now > 0 %}
+                                        <span class="badge bg-success" title="Amazon had no offers/price when you flagged this -- it does now"><i class="bi bi-bell-fill"></i> Back in stock!</span>
+                                        {% else %}
+                                        <span class="badge bg-light text-dark border" title="{{ note }}"><i class="bi bi-hourglass-split"></i> Still OOS</span>
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
+                                <div class="text-muted small">
+                                    {{ p.asin }}
+                                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ p.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                                    &middot; {{ p.brand }}
+                                </div>
                             </td>
                             <td>{{ p.best_source_marketplace }}</td>
                             <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
@@ -92,16 +110,46 @@
                                 {% else %}
                                     <span class="badge bg-secondary">No confirmed sales</span>
                                 {% endif %}
+                                {% if p.monthly_sales_as_of %}
+                                    <div class="text-muted" style="font-size:0.7rem;" title="Keepa's last confirmed 'bought in past month' figure -- may be older than today if Amazon hasn't republished it recently.">
+                                        as of {{ p.monthly_sales_as_of.strftime("%b %Y") }}
+                                    </div>
+                                {% endif %}
                             </td>
                             <td>{{ r.score }}</td>
                             <td>
                                 {% if r.recommendation == "BUY" %}
                                     <span class="badge bg-success">BUY</span>
-                                {% elif r.recommendation == "REVIEW" %}
-                                    <span class="badge bg-warning text-dark">REVIEW</span>
+                                {% elif r.recommendation == "CONSIDER" %}
+                                    <span class="badge bg-warning text-dark">CONSIDER</span>
+                                {% elif r.recommendation == "PEAK_WINDOW" %}
+                                    <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
+                                        <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                                    </span>
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
                                 {% endif %}
+                            </td>
+                            <td>
+                                {% set current_review = reviews.get(p.asin) %}
+                                <div class="d-flex gap-1">
+                                    <form method="post" action="/review/set">
+                                        <input type="hidden" name="asin" value="{{ p.asin }}">
+                                        <input type="hidden" name="verdict" value="{{ '' if current_review == 'up' else 'up' }}">
+                                        <input type="hidden" name="return_to" value="/watchlist">
+                                        <button class="btn btn-sm {{ 'btn-success' if current_review == 'up' else 'btn-outline-secondary' }}" type="submit" title="Good opportunity">
+                                            <i class="bi bi-hand-thumbs-up{{ '-fill' if current_review == 'up' else '' }}"></i>
+                                        </button>
+                                    </form>
+                                    <form method="post" action="/review/set">
+                                        <input type="hidden" name="asin" value="{{ p.asin }}">
+                                        <input type="hidden" name="verdict" value="{{ '' if current_review == 'down' else 'down' }}">
+                                        <input type="hidden" name="return_to" value="/watchlist">
+                                        <button class="btn btn-sm {{ 'btn-danger' if current_review == 'down' else 'btn-outline-secondary' }}" type="submit" title="Not worth it">
+                                            <i class="bi bi-hand-thumbs-down{{ '-fill' if current_review == 'down' else '' }}"></i>
+                                        </button>
+                                    </form>
+                                </div>
                             </td>
                             <td>
                                 <form method="post" action="/watch/remove">
