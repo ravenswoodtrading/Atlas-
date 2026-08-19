@@ -1,24 +1,54 @@
 {% extends "base.html" %}
 
-{% block title %}Products - Atlas{% endblock %}
+{% block title %}{{ "Today's Scans" if view == "today" else "Historical Scans" }} - Atlas{% endblock %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Products (latest scan per ASIN) -- {{ total_count }} total</h4>
+    <div>
+        <h4 class="mb-1">{{ "Today's Scans" if view == "today" else "Historical Scans" }} (latest scan per ASIN) -- {{ total_count }} total</h4>
+        {% if view == "today" %}
+            <a href="/products" class="small"><i class="bi bi-clock-history"></i> View historical scans instead</a>
+        {% else %}
+            <a href="/products/today" class="small"><i class="bi bi-calendar2-check"></i> View today's scans instead</a>
+        {% endif %}
+    </div>
     <a href="/discovery" class="btn btn-dark btn-sm">
         <i class="bi bi-search"></i> Run a new scan
     </a>
 </div>
 
 <div class="card metric p-3 mb-4">
-    <form method="get" action="/products" class="row g-3 align-items-end">
+    <form method="get" action="{{ base_path }}" class="row g-3 align-items-end">
         <div class="col-md-3">
             <label class="form-label">Results</label>
             <select class="form-select" name="filter" onchange="this.form.submit()">
                 <option value="all" {{ "selected" if filter == "all" }}>All products</option>
                 <option value="profitable" {{ "selected" if filter == "profitable" }}>Profitable only</option>
                 <option value="unprofitable" {{ "selected" if filter == "unprofitable" }}>Unprofitable only</option>
+                <option value="unreviewed_notable" {{ "selected" if filter == "unreviewed_notable" }}>Unreviewed star buys &amp; BUYs</option>
+                <option value="unreviewed_consider" {{ "selected" if filter == "unreviewed_consider" }}>Unreviewed CONSIDER</option>
+                <option value="unreviewed" {{ "selected" if filter == "unreviewed" }}>Unreviewed (all)</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Brand</label>
+            <select class="form-select" name="brand" onchange="this.form.submit()">
+                <option value="" {{ "selected" if not brand }}>All brands</option>
+                {% for b in available_brands %}
+                    <option value="{{ b }}" {{ "selected" if brand == b }}>{{ b }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Sort by</label>
+            <select class="form-select" name="sort" onchange="this.form.submit()">
+                <option value="scanned_desc" {{ "selected" if sort == "scanned_desc" }}>Most recently scanned</option>
+                <option value="score_desc" {{ "selected" if sort == "score_desc" }}>Highest score</option>
+                <option value="profit_desc" {{ "selected" if sort == "profit_desc" }}>Highest profit</option>
+                <option value="roi_desc" {{ "selected" if sort == "roi_desc" }}>Highest ROI</option>
+                <option value="monthly_sales_desc" {{ "selected" if sort == "monthly_sales_desc" }}>Most monthly sales</option>
+                <option value="cost_asc" {{ "selected" if sort == "cost_asc" }}>Cheapest source cost</option>
             </select>
         </div>
     </form>
@@ -47,14 +77,20 @@
             </thead>
             <tbody>
                 {% for p in products %}
-                <tr class="{{ 'table-success' if p.monthly_sales > 0 }}">
+                <tr class="{{ 'table-success' if (p.monthly_sales > 0 and (p.roi > 25 or p.roi_90d > 25)) }}">
                     <td style="max-width:220px;">
                         <div class="fw-semibold small">
                             {{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}
                             {% if p.asin in watched_asins %}<span class="badge bg-primary"><i class="bi bi-star-fill"></i> Watched</span>{% endif %}
                             {% if p.asin in excluded_asins %}<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Excluded</span>{% endif %}
+                            {% if p.review == 'up' %}<span class="badge bg-success"><i class="bi bi-hand-thumbs-up-fill"></i> Reviewed</span>{% endif %}
+                            {% if p.review == 'down' %}<span class="badge bg-secondary"><i class="bi bi-hand-thumbs-down-fill"></i> Reviewed</span>{% endif %}
                         </div>
-                        <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                        <div class="text-muted small">
+                            {{ p.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ p.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            &middot; {{ p.brand }}
+                        </div>
                     </td>
                     <td style="min-width:110px;">
                         <div class="d-flex flex-column gap-1">
@@ -63,10 +99,28 @@
                                 <i class="bi bi-info-circle"></i> Why?
                             </button>
                             {% endif %}
+                            <div class="d-flex gap-1">
+                                <form method="post" action="/review/set" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ p.asin }}">
+                                    <input type="hidden" name="verdict" value="{{ '' if p.review == 'up' else 'up' }}">
+                                    <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
+                                    <button class="btn btn-sm {{ 'btn-success' if p.review == 'up' else 'btn-outline-secondary' }} w-100" type="submit" title="Good opportunity">
+                                        <i class="bi bi-hand-thumbs-up{{ '-fill' if p.review == 'up' else '' }}"></i>
+                                    </button>
+                                </form>
+                                <form method="post" action="/review/set" class="flex-fill">
+                                    <input type="hidden" name="asin" value="{{ p.asin }}">
+                                    <input type="hidden" name="verdict" value="{{ '' if p.review == 'down' else 'down' }}">
+                                    <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
+                                    <button class="btn btn-sm {{ 'btn-danger' if p.review == 'down' else 'btn-outline-secondary' }} w-100" type="submit" title="Not worth it">
+                                        <i class="bi bi-hand-thumbs-down{{ '-fill' if p.review == 'down' else '' }}"></i>
+                                    </button>
+                                </form>
+                            </div>
                             {% if p.asin in watched_asins %}
                             <form method="post" action="/watch/remove">
                                 <input type="hidden" name="asin" value="{{ p.asin }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
                                 <button class="btn btn-sm btn-primary w-100" type="submit">
                                     <i class="bi bi-star-fill"></i> Unwatch
                                 </button>
@@ -76,7 +130,7 @@
                                 <input type="hidden" name="asin" value="{{ p.asin }}">
                                 <input type="hidden" name="title" value="{{ p.title }}">
                                 <input type="hidden" name="brand" value="{{ p.brand }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
                                 <button class="btn btn-sm btn-outline-primary w-100" type="submit">
                                     <i class="bi bi-star"></i> Watch
                                 </button>
@@ -85,7 +139,7 @@
                             {% if p.asin in excluded_asins %}
                             <form method="post" action="/exclude/remove">
                                 <input type="hidden" name="asin" value="{{ p.asin }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
                                 <button class="btn btn-sm btn-danger w-100" type="submit">
                                     <i class="bi bi-x-circle-fill"></i> Unexclude
                                 </button>
@@ -94,7 +148,7 @@
                             <form method="post" action="/exclude/add">
                                 <input type="hidden" name="asin" value="{{ p.asin }}">
                                 <input type="hidden" name="title" value="{{ p.title }}">
-                                <input type="hidden" name="return_to" value="/products?page={{ page }}&filter={{ filter }}">
+                                <input type="hidden" name="return_to" value="{{ base_path }}?page={{ page }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">
                                 <button class="btn btn-sm btn-outline-danger w-100" type="submit">
                                     <i class="bi bi-x-circle"></i> Exclude
                                 </button>
@@ -106,10 +160,10 @@
                     <td>{{ p.best_source_marketplace }}</td>
                     <td class="text-end">&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                     <td class="text-end">&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
-                    <td class="text-end {{ 'text-success' if p.profit > 0 else 'text-danger' }}">
+                    <td class="text-end {{ 'text-success' if p.profit > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
                         &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
                     </td>
-                    <td class="text-end {{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
+                    <td class="text-end {{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
                         &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
                     </td>
                     <td>
@@ -118,13 +172,22 @@
                         {% else %}
                             <span class="badge bg-secondary">No confirmed sales</span>
                         {% endif %}
+                        {% if p.monthly_sales_as_of %}
+                            <div class="text-muted" style="font-size:0.7rem;" title="Keepa's last confirmed 'bought in past month' figure -- may be older than today if Amazon hasn't republished it recently.">
+                                as of {{ p.monthly_sales_as_of.strftime("%b %Y") }}
+                            </div>
+                        {% endif %}
                     </td>
                     <td>{{ p.score }}</td>
                     <td>
                         {% if p.recommendation == "BUY" %}
                             <span class="badge bg-success">BUY</span>
-                        {% elif p.recommendation == "REVIEW" %}
-                            <span class="badge bg-warning text-dark">REVIEW</span>
+                        {% elif p.recommendation == "CONSIDER" %}
+                            <span class="badge bg-warning text-dark">CONSIDER</span>
+                        {% elif p.recommendation == "PEAK_WINDOW" %}
+                            <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
+                                <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                            </span>
                         {% else %}
                             <span class="badge bg-secondary">IGNORE</span>
                         {% endif %}
@@ -147,7 +210,7 @@
                                 <ul class="list-unstyled small mb-0">
                                 {% for f in p.parsed_report.score_breakdown %}
                                     <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
-                                        <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-circle' }}"></i>
+                                        <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-x-circle' }}"></i>
                                         {{ f.label }}
                                         {% if f.passed %}<strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
                                     </li>
@@ -179,13 +242,13 @@
 <nav class="mt-3">
     <ul class="pagination">
         <li class="page-item {{ 'disabled' if page <= 1 }}">
-            <a class="page-link" href="/products?page={{ page - 1 }}&filter={{ filter }}">Previous</a>
+            <a class="page-link" href="{{ base_path }}?page={{ page - 1 }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">Previous</a>
         </li>
         <li class="page-item disabled">
             <span class="page-link">Page {{ page }} of {{ total_pages }}</span>
         </li>
         <li class="page-item {{ 'disabled' if page >= total_pages }}">
-            <a class="page-link" href="/products?page={{ page + 1 }}&filter={{ filter }}">Next</a>
+            <a class="page-link" href="{{ base_path }}?page={{ page + 1 }}&filter={{ filter }}&brand={{ brand | urlencode }}&sort={{ sort }}">Next</a>
         </li>
     </ul>
 </nav>
@@ -195,10 +258,13 @@
 <div class="alert alert-info">
     <h5>No products found</h5>
     <p class="mb-0">
-        {% if filter != "all" %}
-            No products match this filter. <a href="/products">Show all products</a>, or
+        {% if filter != "all" or brand %}
+            No products match this filter. <a href="{{ base_path }}">Clear filters</a>, or run a scan on the <a href="/discovery">Discovery</a> page.
+        {% elif view == "today" %}
+            No scans yet today -- run one on the <a href="/discovery">Discovery</a> page, or <a href="/products">view historical scans</a>.
+        {% else %}
+            Nothing here yet -- run a scan on the <a href="/discovery">Discovery</a> page, every opportunity found gets saved here automatically.
         {% endif %}
-        run a scan on the <a href="/discovery">Discovery</a> page -- every opportunity found gets saved here automatically.
     </p>
 </div>
 

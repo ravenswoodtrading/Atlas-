@@ -4,8 +4,13 @@
 
 {% block content %}
 
+{% set cat_qs = category_ids | map('urlencode') | join('&category_ids=') if category_ids else "" %}
+
 <div class="card metric p-4 mb-4">
     <form method="get" action="/discovery" class="row g-3 align-items-end">
+        {% for cid in category_ids %}
+        <input type="hidden" name="category_ids" value="{{ cid }}">
+        {% endfor %}
         <div class="col-md-4">
             <label class="form-label">Brand</label>
             <input type="text" class="form-control" name="brand" value="{{ brand }}" placeholder="e.g. philips" required>
@@ -27,6 +32,18 @@
             </button>
         </div>
     </form>
+
+    {% if category_ids %}
+        <div class="mt-3 small">
+            <span class="text-muted">Category filter:</span>
+            {% for cid in category_ids %}
+                <span class="badge bg-dark">{{ category_names.get(cid, cid) }}</span>
+            {% endfor %}
+            <a href="/categories?brand={{ brand }}" class="ms-1">Edit</a>
+            &middot;
+            <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">Clear filter</a>
+        </div>
+    {% endif %}
 </div>
 
 <div class="card metric p-4 mb-4">
@@ -96,6 +113,18 @@
             </div>
             <div class="col-md-2">
                 <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Your exclusions (Exclude button)</div>
+                    <h2>{{ result.skipped_user_excluded }}</h2>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card metric p-3 text-center">
+                    <div class="text-muted small">Catalog exclusions (imported data)</div>
+                    <h2>{{ result.skipped_known_excluded }}</h2>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card metric p-3 text-center">
                     <div class="text-muted small">Dead listings skipped</div>
                     <h2>{{ result.skipped_dead_listing }}</h2>
                 </div>
@@ -127,7 +156,7 @@
                 {% if is_upload %}
                     Re-upload the file with "Force rescan" enabled to check them again.
                 {% else %}
-                    <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}&force_rescan=true">Force rescan everything</a>
+                    <a href="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}&force_rescan=true{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">Force rescan everything</a>
                 {% endif %}
             </div>
         {% endif %}
@@ -172,24 +201,47 @@
                         {% for o in result.opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
-                        <tr class="opportunity-row {{ 'table-success' if p.monthly_sales > 0 }}" {% if p.profit <= 0 and p.profit_90d <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if (p.profit > 0 or p.profit_90d > 0) else 'false' }}">
+                        <tr class="opportunity-row {{ 'table-success' if (p.monthly_sales > 0 and (p.roi > 25 or p.roi_90d > 25)) }}" {% if p.profit <= 0 and p.profit_90d <= 0 and profitable_only %}style="display:none;"{% endif %} data-profitable="{{ 'true' if (p.profit > 0 or p.profit_90d > 0) else 'false' }}">
                             <td style="max-width:280px;">
                                 <div class="fw-semibold small">
                                     {{ p.title[:80] }}{% if p.title|length > 80 %}...{% endif %}
                                     {% if p.asin in watched_asins %}<span class="badge bg-primary"><i class="bi bi-star-fill"></i> Watched</span>{% endif %}
                                     {% if p.asin in excluded_asins %}<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Excluded</span>{% endif %}
                                 </div>
-                                <div class="text-muted small">{{ p.asin }} &middot; {{ p.brand }}</div>
+                                <div class="text-muted small">
+                                    {{ p.asin }}
+                                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ p.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                                    &middot; {{ p.brand }}
+                                </div>
                             </td>
                             <td style="min-width:110px;">
                                 <div class="d-flex flex-column gap-1">
                                     <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
                                         <i class="bi bi-info-circle"></i> Why?
                                     </button>
+                                    {% set current_review = reviews.get(p.asin) %}
+                                    <div class="d-flex gap-1">
+                                        <form method="post" action="/review/set" class="flex-fill">
+                                            <input type="hidden" name="asin" value="{{ p.asin }}">
+                                            <input type="hidden" name="verdict" value="{{ '' if current_review == 'up' else 'up' }}">
+                                            <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
+                                            <button class="btn btn-sm {{ 'btn-success' if current_review == 'up' else 'btn-outline-secondary' }} w-100" type="submit" title="Good opportunity">
+                                                <i class="bi bi-hand-thumbs-up{{ '-fill' if current_review == 'up' else '' }}"></i>
+                                            </button>
+                                        </form>
+                                        <form method="post" action="/review/set" class="flex-fill">
+                                            <input type="hidden" name="asin" value="{{ p.asin }}">
+                                            <input type="hidden" name="verdict" value="{{ '' if current_review == 'down' else 'down' }}">
+                                            <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
+                                            <button class="btn btn-sm {{ 'btn-danger' if current_review == 'down' else 'btn-outline-secondary' }} w-100" type="submit" title="Not worth it">
+                                                <i class="bi bi-hand-thumbs-down{{ '-fill' if current_review == 'down' else '' }}"></i>
+                                            </button>
+                                        </form>
+                                    </div>
                                     {% if p.asin in watched_asins %}
                                     <form method="post" action="/watch/remove">
                                         <input type="hidden" name="asin" value="{{ p.asin }}">
-                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
                                         <button class="btn btn-sm btn-primary w-100" type="submit">
                                             <i class="bi bi-star-fill"></i> Unwatch
                                         </button>
@@ -199,7 +251,7 @@
                                         <input type="hidden" name="asin" value="{{ p.asin }}">
                                         <input type="hidden" name="title" value="{{ p.title }}">
                                         <input type="hidden" name="brand" value="{{ p.brand }}">
-                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
                                         <button class="btn btn-sm btn-outline-primary w-100" type="submit">
                                             <i class="bi bi-star"></i> Watch
                                         </button>
@@ -208,7 +260,7 @@
                                     {% if p.asin in excluded_asins %}
                                     <form method="post" action="/exclude/remove">
                                         <input type="hidden" name="asin" value="{{ p.asin }}">
-                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
                                         <button class="btn btn-sm btn-danger w-100" type="submit">
                                             <i class="bi bi-x-circle-fill"></i> Unexclude
                                         </button>
@@ -217,7 +269,7 @@
                                     <form method="post" action="/exclude/add">
                                         <input type="hidden" name="asin" value="{{ p.asin }}">
                                         <input type="hidden" name="title" value="{{ p.title }}">
-                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}">
+                                        <input type="hidden" name="return_to" value="/discovery?brand={{ brand }}&limit={{ limit }}&profitable_only={{ profitable_only|lower }}{{ ('&category_ids=' + cat_qs) if cat_qs else '' }}">
                                         <button class="btn btn-sm btn-outline-danger w-100" type="submit">
                                             <i class="bi bi-x-circle"></i> Exclude
                                         </button>
@@ -228,10 +280,10 @@
                             <td>{{ p.best_source_marketplace }}</td>
                             <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                             <td>&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
-                            <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}">
+                            <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
                                 &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
                             </td>
-                            <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
+                            <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
                                 &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
                             </td>
                             <td>
@@ -240,14 +292,23 @@
                                 {% else %}
                                     <span class="badge bg-secondary">No confirmed sales</span>
                                 {% endif %}
+                                {% if p.monthly_sales_as_of %}
+                                    <div class="text-muted" style="font-size:0.7rem;" title="Keepa's last confirmed 'bought in past month' figure -- may be older than today if Amazon hasn't republished it recently.">
+                                        as of {{ p.monthly_sales_as_of.strftime("%b %Y") }}
+                                    </div>
+                                {% endif %}
                             </td>
                             <td>{{ r.score }}</td>
                             <td>{{ r.confidence }}%</td>
                             <td>
                                 {% if r.recommendation == "BUY" %}
                                     <span class="badge bg-success">BUY</span>
-                                {% elif r.recommendation == "REVIEW" %}
-                                    <span class="badge bg-warning text-dark">REVIEW</span>
+                                {% elif r.recommendation == "CONSIDER" %}
+                                    <span class="badge bg-warning text-dark">CONSIDER</span>
+                                {% elif r.recommendation == "PEAK_WINDOW" %}
+                                    <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
+                                        <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                                    </span>
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
                                 {% endif %}
@@ -266,7 +327,7 @@
                                         <ul class="list-unstyled small mb-0">
                                         {% for f in r.score_breakdown %}
                                             <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
-                                                <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-circle' }}"></i>
+                                                <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-x-circle' }}"></i>
                                                 {{ f.label }}
                                                 {% if f.passed %}<strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
                                             </li>

@@ -1,35 +1,259 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Dashboard - Atlas{% endblock %}
 
 {% block content %}
 
-<div class="row mb-4">
+<div class="d-flex align-items-center mb-3">
+    <h4 class="mb-0">Dashboard</h4>
+    {{ help_button("dashboard") }}
+</div>
+
+<div class="row mb-3">
     <div class="col-md-3">
         <div class="card metric p-3 text-center">
             <div class="text-muted small">Products scanned</div>
-            <h2>{{ stats.total_scanned }}</h2>
+            <h2 title="{{ stats.total_profitable }} have at least some profit margin, but that's not the same as a good deal -- see 'BUY this week' and the star-buy alert below for what's actually worth pursuing.">{{ stats.total_scanned }}</h2>
         </div>
     </div>
     <div class="col-md-3">
         <div class="card metric p-3 text-center">
-            <div class="text-muted small">Profitable opportunities</div>
-            <h2 class="text-success">{{ stats.total_profitable }}</h2>
+            <div class="text-muted small">Keepa tokens remaining</div>
+            <h2 class="{{ 'text-danger' if keepa_tokens_remaining is not none and keepa_tokens_remaining < 50 }}">{{ keepa_tokens_remaining if keepa_tokens_remaining is not none else "?" }}</h2>
         </div>
     </div>
     <div class="col-md-3">
         <div class="card metric p-3 text-center">
-            <div class="text-muted small">Marked BUY</div>
-            <h2 class="text-success">{{ stats.total_buy }}</h2>
+            <div class="text-muted small">Marked BUY this week</div>
+            <h2 class="text-success">{{ stats.buy_this_week }}</h2>
         </div>
     </div>
     <div class="col-md-3">
         <div class="card metric p-3 text-center">
-            <div class="text-muted small">Marked REVIEW</div>
-            <h2 class="text-warning">{{ stats.total_review }}</h2>
+            <div class="text-muted small">Marked CONSIDER this week</div>
+            <h2 class="text-warning">{{ stats.consider_this_week }}</h2>
         </div>
     </div>
 </div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-1">Scan Queue health</div>
+            {% if scan_queue_health.item_count %}
+                <div>
+                    <span class="badge bg-{{ scan_queue_health.level }}">{{ scan_queue_health.item_count }} brand{{ "s" if scan_queue_health.item_count != 1 }}</span>
+                    <span class="small text-muted">revisited every ~{{ scan_queue_health.revisit_minutes }} min</span>
+                </div>
+                <div class="small text-muted mt-1">{{ scan_queue_health.label }}</div>
+            {% else %}
+                <div class="small text-muted">Nothing queued -- see <a href="/scan-queue">Scan Queue</a> to add brands for continuous background scanning.</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-1">New competitor listings (24h)</div>
+            <h4 class="mb-0">{{ new_competitor_detections }}</h4>
+            <div class="small text-muted"><a href="/competitors">View Competitors</a></div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-1">Gated opportunities worth chasing</div>
+            {% if gated_opportunity.count %}
+                <h4 class="mb-0">{{ gated_opportunity.count }}</h4>
+                {% if gated_opportunity.best %}
+                <div class="small text-muted">
+                    Best: {{ gated_opportunity.best.title[:40] }}{% if gated_opportunity.best.title|length > 40 %}...{% endif %}
+                    ({{ "%.1f"|format([gated_opportunity.best.roi, gated_opportunity.best.roi_90d]|max) }}% ROI) --
+                    <a href="/gated-opportunities">see all</a>
+                </div>
+                {% endif %}
+            {% else %}
+                <div class="small text-muted">None right now.</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-6">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-1">OA Source Discovery</div>
+            {% if oa_discovery.awaiting_review %}
+                <h4 class="mb-0">{{ oa_discovery.awaiting_review }} awaiting your review</h4>
+            {% else %}
+                <div class="small text-muted">Nothing waiting on you right now.</div>
+            {% endif %}
+            {% if oa_discovery.quota_stopped %}
+                <div class="small mt-1" style="color:#96660a;">
+                    <i class="bi bi-exclamation-triangle"></i> Last run stopped early to protect your SerpApi quota
+                    ({{ oa_discovery.searches_left }} searches left) -- see <a href="/oa-discovery">OA Source Discovery</a>.
+                </div>
+            {% endif %}
+            <div class="small text-muted mt-1"><a href="/oa-discovery">View OA Source Discovery</a></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-1">New Signals</div>
+            {% if new_signal_matches %}
+                <h4 class="mb-0">{{ new_signal_matches }} new match{{ "es" if new_signal_matches != 1 }}</h4>
+            {% else %}
+                <div class="small text-muted">No new stock-out/price-spike matches right now.</div>
+            {% endif %}
+            <div class="small text-muted mt-1"><a href="/signals">View Signals</a></div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-7">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-2">Today's activity</div>
+            <div class="d-flex flex-wrap" style="gap: 1.75rem;">
+                {% for activity in today_activity %}
+                <div>
+                    <div class="h5 mb-0">{{ activity.count }}</div>
+                    <div class="small text-muted">{{ activity.label }}</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <div class="col-md-5">
+        <div class="card metric p-3">
+            <div class="text-muted small mb-2">What's automated next</div>
+            <ul class="list-unstyled mb-0 small">
+                {% for task in automation_overview %}
+                <li class="mb-1">
+                    <strong>{{ task.label }}</strong>:
+                    {% if task.last_ago %}
+                        last ran {{ task.last_ago }}{% if task.last_summary %} ({{ task.last_summary }}){% endif %} --
+                        {% if task.continuous %}
+                            runs continuously
+                        {% else %}
+                            {{ task.next_due }}
+                        {% endif %}
+                    {% else %}
+                        <span class="text-muted">hasn't run yet since Atlas last started</span>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+
+{% if review_queue_summary.total > 0 %}
+<div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
+    <div>
+        {% if review_queue_summary.star_buys > 0 %}
+            <i class="bi bi-star-fill"></i>
+            <strong>{{ review_queue_summary.star_buys }}</strong> star buy{{ "s" if review_queue_summary.star_buys != 1 }}
+        {% endif %}
+        {% if review_queue_summary.star_buys > 0 and review_queue_summary.buys > 0 %}&middot;{% endif %}
+        {% if review_queue_summary.buys > 0 %}
+            <i class="bi bi-hand-thumbs-up-fill"></i>
+            <strong>{{ review_queue_summary.buys }}</strong> BUY recommendation{{ "s" if review_queue_summary.buys != 1 }}
+        {% endif %}
+        {% if (review_queue_summary.star_buys > 0 or review_queue_summary.buys > 0) and review_queue_summary.peak > 0 %}&middot;{% endif %}
+        {% if review_queue_summary.peak > 0 %}
+            <i class="bi bi-exclamation-triangle"></i>
+            <strong>{{ review_queue_summary.peak }}</strong> riskier PEAK lead{{ "s" if review_queue_summary.peak != 1 }}
+        {% endif %}
+        {% if (review_queue_summary.star_buys > 0 or review_queue_summary.buys > 0 or review_queue_summary.peak > 0) and review_queue_summary.competitor > 0 %}&middot;{% endif %}
+        {% if review_queue_summary.competitor > 0 %}
+            <i class="bi bi-binoculars"></i>
+            <strong>{{ review_queue_summary.competitor }}</strong> buyable competitor find{{ "s" if review_queue_summary.competitor != 1 }}
+        {% endif %}
+        waiting in your <a href="/review-queue">Review Queue</a> right now.
+    </div>
+    <a href="/review-queue" class="btn btn-success btn-sm">Take a look</a>
+</div>
+{% endif %}
+
+{% if sheet_leads_waiting > 0 or manual_leads_waiting > 0 %}
+<div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
+    <div>
+        {% if sheet_leads_waiting > 0 %}
+            <i class="bi bi-file-earmark-spreadsheet"></i>
+            <strong>{{ sheet_leads_waiting }}</strong> VA lead{{ "s" if sheet_leads_waiting != 1 }} waiting to be reviewed
+        {% endif %}
+        {% if sheet_leads_waiting > 0 and manual_leads_waiting > 0 %}&middot;{% endif %}
+        {% if manual_leads_waiting > 0 %}
+            <i class="bi bi-clipboard-check"></i>
+            <strong>{{ manual_leads_waiting }}</strong> manual verdict check{{ "s" if manual_leads_waiting != 1 }} waiting to be reviewed
+        {% endif %}
+    </div>
+    <a href="/review" class="btn btn-success btn-sm">Take a look</a>
+</div>
+{% endif %}
+
+{% call help_modal("dashboard", "Dashboard") %}
+<p>
+    The Dashboard is a snapshot, not a to-do list -- for actual work queues see
+    <a href="/review-queue">Review Queue</a> and <a href="/review">Lead Queue</a>.
+</p>
+
+<h6>The top row</h6>
+<ul>
+    <li><strong>Products scanned</strong> is an all-time count across every scan ever run, most-recent-scan-per-ASIN
+        only (re-scanning something doesn't count it twice). Hover it for how many of those have any profit margin
+        at all -- that's a much lower bar than "worth buying", which is what the tiles below actually track.</li>
+    <li><strong>Keepa tokens remaining</strong> comes straight from Keepa's own API and turns red under 50. Every
+        scan, lookup, and background queue item spends tokens -- if this runs out, scans silently stop returning
+        useful data until it refills.</li>
+    <li><strong>Marked BUY / CONSIDER this week</strong> are scoped to the last 7 days, unlike the old all-time
+        counts this replaced -- an all-time count only ever goes up and stops being useful for "is anything new
+        happening", which is what this tile is for.</li>
+</ul>
+
+<h6>The second row</h6>
+<ul>
+    <li><strong>Scan Queue health</strong> shows how many brands are queued for continuous background scanning and
+        roughly how often each gets revisited -- see <a href="/scan-queue">Scan Queue</a> to add or remove brands.</li>
+    <li><strong>New competitor listings (24h)</strong> counts newly-detected competitor offers in the last day --
+        see <a href="/competitors">Competitors</a> for details on any of them.</li>
+    <li><strong>Gated opportunities worth chasing</strong> counts gated-brand products that price out well despite
+        being blocked from purchase right now -- see <a href="/gated-opportunities">Gated Opportunities</a> for the
+        full case on whether ungating is worth pursuing.</li>
+</ul>
+
+<h6>The third row</h6>
+<ul>
+    <li><strong>OA Source Discovery</strong> counts priced candidates that weren't strong enough to auto-add to the
+        Review Queue -- these need your judgment call (keep, swap in a different retailer, or move on). Also warns
+        if the last run had to stop early to protect your SerpApi search quota.</li>
+    <li><strong>New Signals</strong> counts undismissed stock-out/price-spike matches from your Signal Queries --
+        see <a href="/signals">Signals</a>.</li>
+</ul>
+
+<h6>Today's activity / What's automated next</h6>
+<p>
+    <strong>Today's activity</strong> counts real work Atlas has done since UTC midnight -- brand searches
+    (Discovery, manual or via Scan Queue), competitor checks, replen/watchlist rechecks, signal checks, OA Discovery
+    runs, and leads analyzed. This started tracking on 2026-08-19, so it reads 0 for anything that happened before
+    then -- there's no history to backfill.<br>
+    <strong>What's automated next</strong> shows when each background scheduler last actually ran and roughly when
+    it's next due, so you can tell a stalled process (stuck on "last ran" from hours ago, well past its usual
+    cadence) from one that's simply between ticks. Lead analysis runs every ~30 seconds, so it's shown as
+    "continuous" rather than a literal countdown.
+</p>
+
+<h6>The alerts below</h6>
+<p>
+    The Review Queue alert and the VA/manual-verdict alert only appear when there's something in them. The Review
+    Queue count is read directly from what <a href="/review-queue">Review Queue</a> itself would show you right
+    now -- star buys (confirmed sales + 25%+ ROI), BUY recommendations, PEAK (risky) leads that clear the stricter
+    35% ROI/65 score bar, and buyable competitor finds -- so this number and that page can never disagree. There's
+    no separate "reset" for it any more: it naturally goes to zero as you review things, and a small (or empty)
+    queue just means nothing right now clears Atlas's bar for "worth pursuing" -- see the
+    <a href="/help#star-buy">glossary</a> for the exact star-buy rule.
+</p>
+{% endcall %}
 
 {% if stats.total_scanned == 0 %}
     <div class="alert alert-info">

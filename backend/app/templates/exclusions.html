@@ -5,26 +5,68 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Excluded Products ({{ exclusions|length }})</h4>
+    <h4 class="mb-0">Exclusions</h4>
     <a href="/discovery" class="btn btn-outline-dark btn-sm">
         <i class="bi bi-search"></i> Back to Discovery
     </a>
 </div>
 
-<p class="text-muted">These ASINs are skipped BEFORE any tokens are spent on future scans -- click "Exclude" next to any product on the Discovery or Products page to add one.</p>
+{% if catalog_stats.count %}
+<div class="alert {{ 'alert-warning' if catalog_stats.oldest_days_ago and catalog_stats.oldest_days_ago > 90 else 'alert-secondary' }} py-2 small mb-4">
+    <i class="bi bi-database"></i>
+    Imported catalog data (<code>known_products</code>): {{ catalog_stats.count }} ASINs, used to pre-filter category/brand exclusions before any Keepa token is spent.
+    {% if catalog_stats.oldest_days_ago is not none %}
+        Oldest import is <strong>{{ catalog_stats.oldest_days_ago }} day{{ "s" if catalog_stats.oldest_days_ago != 1 }} old</strong>.
+        {% if catalog_stats.oldest_days_ago > 90 %}
+            That's old enough that categories/brands may have changed on Amazon since -- worth re-importing a fresh export if this is silently filtering out real opportunities.
+        {% endif %}
+    {% endif %}
+</div>
+{% else %}
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-database"></i> No catalog data imported yet -- <code>known_products</code> exclusions only apply once you import one (see <code>import_known_products.py</code>).
+</div>
+{% endif %}
+
+<h5 class="mb-2">Excluded Products ({{ exclusions|length }})</h5>
+<p class="text-muted">These ASINs are skipped BEFORE any tokens are spent on future scans -- click "Exclude" next to any product on the Discovery or Products page, or add one directly here.</p>
+
+<div class="card metric p-3 mb-4">
+    <form method="post" action="/exclude/add" class="row g-2 align-items-end">
+        <input type="hidden" name="return_to" value="/exclusions">
+        <div class="col-md-3">
+            <label class="form-label small">ASIN</label>
+            <input type="text" class="form-control form-control-sm" name="asin" placeholder="e.g. B0EXAMPLE1" required>
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small">Title (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="title" placeholder="For your own reference">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small">Reason (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="reason" placeholder="e.g. can't source, gated">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark btn-sm w-100">
+                <i class="bi bi-slash-circle"></i> Exclude ASIN
+            </button>
+        </div>
+    </form>
+</div>
 
 {% if not exclusions %}
     <div class="alert alert-info">
         No products excluded yet.
     </div>
 {% else %}
-<div class="card metric p-3">
+<div class="card metric p-3 mb-4">
     <div class="table-responsive">
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
                     <th>ASIN</th>
                     <th>Title</th>
+                    <th>Reason</th>
                     <th>Excluded on</th>
                     <th>Remove</th>
                 </tr>
@@ -34,10 +76,155 @@
                 <tr>
                     <td>{{ e.asin }}</td>
                     <td>{{ e.title[:80] }}{% if e.title|length > 80 %}...{% endif %}</td>
+                    <td class="small text-muted">{{ e.reason }}</td>
                     <td class="small text-muted">{{ e.excluded_at.strftime("%Y-%m-%d %H:%M") if e.excluded_at else "" }}</td>
                     <td>
                         <form method="post" action="/exclude/remove">
                             <input type="hidden" name="asin" value="{{ e.asin }}">
+                            <input type="hidden" name="return_to" value="/exclusions">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<h5 class="mb-2">Excluded Categories ({{ category_exclusions|length }})</h5>
+<p class="text-muted">
+    Anything in these categories is skipped the same way -- an already-scanned product's category ID is checked live, and imported known_products rows are checked by name, so fill in whichever you have (an ID from the <a href="/categories">Categories</a> page, a name, or both).
+</p>
+
+<div class="card metric p-3 mb-4">
+    <form method="post" action="/exclude/category/add" class="row g-2 align-items-end">
+        <input type="hidden" name="return_to" value="/exclusions">
+        <div class="col-md-3">
+            <label class="form-label small">Category ID</label>
+            <input type="text" class="form-control form-control-sm" name="category_id" placeholder="e.g. 213077031">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label small">Category name</label>
+            <input type="text" class="form-control form-control-sm" name="category_name" placeholder="e.g. Lighting">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small">Reason (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="reason" placeholder="e.g. can't source, mains-powered">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark btn-sm w-100">
+                <i class="bi bi-slash-circle"></i> Exclude category
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if not category_exclusions %}
+    <div class="alert alert-info">
+        No categories excluded yet.
+    </div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Category ID</th>
+                    <th>Category name</th>
+                    <th>Reason</th>
+                    <th>Excluded on</th>
+                    <th>Remove</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in category_exclusions %}
+                <tr>
+                    <td>{{ c.category_id or "" }}</td>
+                    <td>{{ c.category_name or "" }}</td>
+                    <td class="small text-muted">{{ c.reason }}</td>
+                    <td class="small text-muted">{{ c.excluded_at.strftime("%Y-%m-%d %H:%M") if c.excluded_at else "" }}</td>
+                    <td>
+                        <form method="post" action="/exclude/category/remove">
+                            <input type="hidden" name="exclusion_id" value="{{ c.id }}">
+                            <input type="hidden" name="return_to" value="/exclusions">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<h5 class="mb-2 mt-4">Gated Brands ({{ gated_brands|length }})</h5>
+<p class="text-muted">
+    Brands (or brand+category combos) you can't currently get Amazon approval to sell. Unlike the exclusions above, Atlas doesn't just throw these away: brand-search scanning of a gated brand is skipped entirely to avoid wasting tokens hunting for more of it, but if one turns up anyway -- most commonly via <a href="/competitors">Competitor Watch</a> spotting a rival selling it -- it still gets fully priced and scored, just tagged "Gated" instead of a normal recommendation. See <a href="/gated-opportunities">Gated Brand Opportunities</a> to build a case for which brands are worth pursuing ungating on.
+</p>
+
+<div class="card metric p-3 mb-4">
+    <form method="post" action="/gate/add" class="row g-2 align-items-end">
+        <input type="hidden" name="return_to" value="/exclusions">
+        <div class="col-md-3">
+            <label class="form-label small">Brand</label>
+            <input type="text" class="form-control form-control-sm" name="brand" placeholder="e.g. HP" required>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Category ID (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="category_id" placeholder="Leave blank = whole brand">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label small">Category name (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="category_name" placeholder="e.g. Printers">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small">Reason (optional)</label>
+            <input type="text" class="form-control form-control-sm" name="reason" placeholder="e.g. gated since 2025, applying for approval">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark btn-sm w-100">
+                <i class="bi bi-slash-circle"></i> Add gated brand
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if not gated_brands %}
+    <div class="alert alert-info">
+        No gated brands added yet.
+    </div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Category ID</th>
+                    <th>Category name</th>
+                    <th>Reason</th>
+                    <th>Gated on</th>
+                    <th>Remove</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in gated_brands %}
+                <tr>
+                    <td class="fw-semibold">{{ g.brand }}</td>
+                    <td>{{ g.category_id or "" }}</td>
+                    <td>{{ g.category_name or "" }}</td>
+                    <td class="small text-muted">{{ g.reason }}{% if not g.category_id and not g.category_name %}{% if g.reason %} -- {% endif %}whole brand{% endif %}</td>
+                    <td class="small text-muted">{{ g.gated_at.strftime("%Y-%m-%d %H:%M") if g.gated_at else "" }}</td>
+                    <td>
+                        <form method="post" action="/gate/remove">
+                            <input type="hidden" name="gated_id" value="{{ g.id }}">
                             <input type="hidden" name="return_to" value="/exclusions">
                             <button class="btn btn-sm btn-outline-danger" type="submit">
                                 <i class="bi bi-trash"></i> Remove

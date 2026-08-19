@@ -2,11 +2,15 @@ import re
 import io
 
 import pandas as pd
-from fastapi import APIRouter, Request, UploadFile, File, Form
+from fastapi import APIRouter, Request, UploadFile, File, Form, Query
 from fastapi.templating import Jinja2Templates
 
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
+from app.services.category_survey_service import get_category_names
+from app.services.scan_coordinator import ScanCoordinator
+from app.services.activity_log import ActivityLog
+from app.keepa.client import get_keepa_client
 
 router = APIRouter()
 
@@ -81,14 +85,35 @@ def _apply_profit_filter(result, profitable_only):
 
 @router.get("/discovery")
 def discovery(request: Request, brand: str = "", limit: int = 20,
-              profitable_only: bool = True, force_rescan: bool = False):
+              profitable_only: bool = True, force_rescan: bool = False,
+              category_ids: list[str] = Query(default=[])):
     result = None
     hidden_count = 0
 
     if brand:
-        scanner = BrandScanService()
-        result = scanner.scan(brand, limit=limit, force_rescan=force_rescan)
+        # Discovery is a manual, user-initiated scan -- it takes
+        # priority over the automated scan queue. Acquiring this
+        # blocks (briefly) only if an automated tick is already
+        # mid-scan; the queue's own scheduler always yields to this
+        # instead of competing for tokens.
+        ScanCoordinator.acquire_for_manual_scan()
+        try:
+            scanner = BrandScanService()
+            result = scanner.scan(brand, limit=limit, force_rescan=force_rescan,
+                                   category_ids=category_ids or None)
+        finally:
+            ScanCoordinator.release_after_manual_scan()
+
+        if not result.get("error"):
+            ActivityLog.record("brand_search", f"{brand} (manual, {result.get('asins_scanned', 0)} ASINs)")
+
         result, hidden_count = _apply_profit_filter(result, profitable_only)
+
+    category_names = get_category_names(get_keepa_client()) if category_ids else {}
+
+    reviews = {}
+    if result and not result.get("error"):
+        reviews = ProductRepository.get_reviews([o["product"]["asin"] for o in result["opportunities"]])
 
     return templates.TemplateResponse(
         request=request,
@@ -102,8 +127,11 @@ def discovery(request: Request, brand: str = "", limit: int = 20,
             "hidden_count": hidden_count,
             "result": result,
             "is_upload": False,
+            "category_ids": category_ids,
+            "category_names": category_names,
             "watched_asins": ProductRepository.get_watched_asins(),
             "excluded_asins": ProductRepository.get_excluded_asins(),
+            "reviews": reviews,
         }
     )
 
@@ -138,8 +166,11 @@ async def discovery_upload(
                     "count": 0, "opportunities": [],
                 },
                 "is_upload": True,
+                "category_ids": [],
+                "category_names": {},
                 "watched_asins": ProductRepository.get_watched_asins(),
                 "excluded_asins": ProductRepository.get_excluded_asins(),
+                "reviews": {},
             }
         )
 
@@ -151,8 +182,16 @@ async def discovery_upload(
     hidden_count = 0
 
     if asins:
-        scanner = BrandScanService()
-        result = scanner.scan(label, limit=limit, force_rescan=force_rescan, asins=asins)
+        ScanCoordinator.acquire_for_manual_scan()
+        try:
+            scanner = BrandScanService()
+            result = scanner.scan(label, limit=limit, force_rescan=force_rescan, asins=asins)
+        finally:
+            ScanCoordinator.release_after_manual_scan()
+
+        if not result.get("error"):
+            ActivityLog.record("brand_search", f"{label} (manual upload, {result.get('asins_scanned', 0)} ASINs)")
+
         result, hidden_count = _apply_profit_filter(result, profitable_only)
     else:
         result = {
@@ -160,6 +199,10 @@ async def discovery_upload(
                      "Expected 10-character codes like B0EXAMPLE1, one per line or in a CSV column.",
             "count": 0, "opportunities": [],
         }
+
+    upload_reviews = {}
+    if result and not result.get("error"):
+        upload_reviews = ProductRepository.get_reviews([o["product"]["asin"] for o in result["opportunities"]])
 
     return templates.TemplateResponse(
         request=request,
@@ -174,7 +217,10 @@ async def discovery_upload(
             "result": result,
             "asins_found_in_upload": len(asins),
             "is_upload": True,
+            "category_ids": [],
+            "category_names": {},
             "watched_asins": ProductRepository.get_watched_asins(),
             "excluded_asins": ProductRepository.get_excluded_asins(),
+            "reviews": upload_reviews,
         }
     )
