@@ -1,8 +1,13 @@
 from datetime import datetime, timedelta, timezone
 import json
 
+from sqlalchemy import func
+
 from app.database.database import SessionLocal
-from app.database.models import ProductRecord, KnownProduct, WatchedProduct, ExcludedProduct
+from app.database.models import (
+    ProductRecord, KnownProduct, WatchedProduct, ExcludedProduct, ExcludedCategory,
+    GatedBrand, SignalQuery, SignalMatch, CeilingRejected,
+)
 
 
 class ProductRepository:
@@ -12,6 +17,50 @@ class ProductRepository:
     this is used from services (BrandScanService) rather than routes
     that have FastAPI's Depends(get_db) available.
     """
+
+    # sales_drops_30d (Keepa's salesRankDrops30) at or above this
+    # counts as evidence of sales when monthly_sales has no confirmed
+    # figure -- high enough to filter out a single stray rank
+    # fluctuation, low enough to still catch real-but-thin velocity.
+    SALES_DROPS_NOTABLE_THRESHOLD = 3
+
+    @staticmethod
+    def is_notable(recommendation: str, monthly_sales: int, roi: float, roi_90d: float,
+                    sales_drops_30d: int = 0) -> bool:
+        """
+        "Worth a look" bar shared by list_latest's "notable" filter,
+        the Dashboard's star-buy/BUY counters, and
+        SellerWatchService.list_notable_buyable (for competitor
+        detections) -- extracted so all three stay provably in sync
+        rather than each keeping their own copy of the same rule.
+        Confirmed sales (or, absent that, 3+ rank drops in 30d as a
+        proxy) + 25%+ ROI, OR a BUY recommendation outright. Raised
+        from 18% to 25% -- 18% wasn't a high enough bar for what
+        counts as a genuinely good lead.
+
+        The ROI-only branch used to fire regardless of
+        OpportunityEngine's own recommendation, so a product it had
+        already tagged IGNORE (score < 65 or confidence < 60 --
+        see OpportunityEngine.analyse) could still leak into the
+        Review Queue just because ROI on one of today's/90d crossed
+        25%. Requiring recommendation != "IGNORE" here keeps the
+        queue limited to what OpportunityEngine itself considers at
+        least CONSIDER-worthy, which is what the Review Queue's own
+        "star buy or BUY recommendation" description promises.
+
+        GATED is excluded the same way -- a gated-brand product can
+        score brilliantly (see OpportunityEngine's product.gated
+        override) but isn't actionable right now, so it must never
+        count toward is_notable/the Review Queue/Discord/the Dashboard
+        BUY-CONSIDER counters. It has its own dedicated view instead
+        (see ProductRepository.list_gated_opportunities /
+        the Gated Brand Opportunities page).
+        """
+        if recommendation in ("IGNORE", "GATED"):
+            return False
+
+        has_sales_evidence = monthly_sales > 0 or sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
+        return recommendation == "BUY" or (has_sales_evidence and (roi > 25 or roi_90d > 25))
 
     @staticmethod
     def save_opportunity(product_dict: dict, report_dict: dict, brand_query: str):
@@ -23,6 +72,7 @@ class ProductRepository:
                 title=product_dict.get("title") or "",
                 brand=product_dict.get("brand") or "",
                 category=product_dict.get("category") or "",
+                ean=product_dict.get("ean") or "",
                 brand_query=brand_query,
                 buy_box_now=product_dict.get("buy_box_now") or 0.0,
                 buy_box_90d=product_dict.get("buy_box_90d") or 0.0,
@@ -34,10 +84,16 @@ class ProductRepository:
                 roi=product_dict.get("roi") or 0.0,
                 profit_90d=product_dict.get("profit_90d") or 0.0,
                 roi_90d=product_dict.get("roi_90d") or 0.0,
+                category_name=product_dict.get("category_name") or "",
+                referral_rate_used=product_dict.get("referral_rate_used") or 0.0,
+                uk_vat_rate_used=product_dict.get("uk_vat_rate_used") or 0.0,
+                eu_vat_rate_used=product_dict.get("eu_vat_rate_used") or 0.0,
                 score=report_dict.get("score") or 0,
                 confidence=report_dict.get("confidence") or 0,
                 recommendation=report_dict.get("recommendation") or "",
                 monthly_sales=product_dict.get("monthly_sales") or 0,
+                monthly_sales_as_of=product_dict.get("monthly_sales_as_of"),
+                sales_drops_30d=product_dict.get("sales_drops_30d") or 0,
                 report_json=json.dumps(report_dict),
             )
             db.add(record)
@@ -51,8 +107,21 @@ class ProductRepository:
         finally:
             db.close()
 
+    # Each maps a `sort` query value to (key function, reverse) -- reverse=True
+    # means highest-first, which is what every option except cost wants.
+    SORT_OPTIONS = {
+        "scanned_desc": (lambda r: r.scanned_at, True),
+        "score_desc": (lambda r: r.score, True),
+        "profit_desc": (lambda r: max(r.profit, r.profit_90d), True),
+        "roi_desc": (lambda r: max(r.roi, r.roi_90d), True),
+        "monthly_sales_desc": (lambda r: r.monthly_sales, True),
+        "cost_asc": (lambda r: r.best_source_cost_gbp if r.best_source_cost_gbp > 0 else float("inf"), False),
+    }
+
     @staticmethod
-    def list_latest(page: int = 1, page_size: int = 25, profitable_only: bool = None):
+    def list_latest(page: int = 1, page_size: int = 25, profitable_only: bool = None,
+                     brand: str = None, sort: str = "scanned_desc", today_only: bool = None,
+                     review_filter: str = None):
         """
         Returns (records_for_this_page, total_count) using the most
         recent scan record per ASIN (not every historical row).
@@ -60,6 +129,29 @@ class ProductRepository:
         profitable_only: None shows everything, True shows only
         products profitable today or at their 90-day typical price,
         False shows only the ones that aren't either way.
+
+        brand: exact (case-insensitive) match against the product's
+        real Keepa brand -- not brand_query, which is just the label
+        of whatever scan/upload found it (e.g. an uploaded list name).
+
+        sort: one of ProductRepository.SORT_OPTIONS. Falls back to
+        scanned_desc (the previous, only, behaviour) if unrecognised.
+
+        today_only: None applies no date filtering. True keeps only
+        ASINs whose LATEST scan happened today (UTC calendar day, same
+        as scanned_at's own timezone) -- powers the "Today's Scans"
+        page. False keeps everything else -- powers "Historical
+        Scans". An ASIN rescanned today only ever shows up in "today",
+        never both, since this already only looks at the latest record
+        per ASIN.
+
+        review_filter: None applies no filtering. "notable" keeps only
+        unreviewed star buys (confirmed sales + 25%+ ROI) OR unreviewed
+        BUY recommendations, merged into one filter -- same two
+        criteria the Dashboard alert counts. "consider" keeps only
+        unreviewed CONSIDER-recommended items. "any" keeps every
+        unreviewed item regardless of star/BUY/CONSIDER status, for
+        finding anything you haven't looked at yet.
         """
         db = SessionLocal()
 
@@ -85,6 +177,48 @@ class ProductRepository:
             elif profitable_only is False:
                 latest = [r for r in latest if r.profit <= 0 and r.profit_90d <= 0]
 
+            if review_filter == "notable":
+                latest = [
+                    r for r in latest if not r.review
+                    and ProductRepository.is_notable(
+                        r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
+                    )
+                ]
+            elif review_filter == "consider":
+                latest = [r for r in latest if not r.review and r.recommendation == "CONSIDER"]
+            elif review_filter == "peak":
+                # Riskier "peak price window" leads -- see
+                # OpportunityEngine.PEAK_WINDOW. Deliberately its own
+                # filter, not folded into "notable" or "consider",
+                # since is_notable's roi/roi_90d checks never see these
+                # (they only clear the bar at the 90-day PEAK price).
+                latest = [r for r in latest if not r.review and r.recommendation == "PEAK_WINDOW"]
+            elif review_filter == "any":
+                latest = [r for r in latest if not r.review]
+
+            if brand:
+                latest = [r for r in latest if r.brand.lower() == brand.lower()]
+
+            if today_only is not None:
+                # scanned_at is stored as UTC but comes back timezone-NAIVE
+                # from SQLite (confirmed: tzinfo is None even though it was
+                # written via datetime.now(timezone.utc)) -- this cutoff
+                # must be naive too, or the comparison below raises
+                # "can't compare offset-naive and offset-aware datetimes".
+                start_of_today = datetime.now(timezone.utc).replace(
+                    hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+                )
+
+                if today_only:
+                    latest = [r for r in latest if r.scanned_at and r.scanned_at >= start_of_today]
+                else:
+                    latest = [r for r in latest if not r.scanned_at or r.scanned_at < start_of_today]
+
+            key, reverse = ProductRepository.SORT_OPTIONS.get(
+                sort, ProductRepository.SORT_OPTIONS["scanned_desc"]
+            )
+            latest.sort(key=key, reverse=reverse)
+
             total_count = len(latest)
 
             start = max(page - 1, 0) * page_size
@@ -96,13 +230,129 @@ class ProductRepository:
             db.close()
 
     @staticmethod
-    def get_recently_scanned_asins(brand_query: str, since_hours: int) -> set:
+    def get_distinct_brands() -> list:
         """
-        Returns the set of ASINs already scanned for this brand within
-        the last `since_hours` hours -- used to skip re-spending
-        tokens on products we already have fresh data for, and lets
-        repeated scans naturally reach deeper into the catalog instead
-        of hitting the same top-ranked ASINs every time.
+        Distinct, non-empty real Keepa brands seen across every scan
+        record (not just the latest per ASIN) -- populates the
+        Products page brand filter dropdown.
+
+        Deduped case-insensitively for display (Keepa/Amazon listings
+        occasionally report the same real brand with different casing
+        across products, e.g. "PHILIPS" vs "Philips") -- doesn't touch
+        the underlying `brand` column, which stays exactly as Keepa
+        reported it per record. The brand filter itself already
+        compares case-insensitively, so whichever casing shows up here
+        matches every variant regardless.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(ProductRecord.brand)
+                .filter(ProductRecord.brand != "")
+                .distinct()
+                .order_by(ProductRecord.brand)
+                .all()
+            )
+
+            seen_lower = set()
+            deduped = []
+
+            for row in rows:
+                key = row[0].strip().lower()
+
+                if key in seen_lower:
+                    continue
+
+                seen_lower.add(key)
+                deduped.append(row[0])
+
+            return sorted(deduped, key=str.lower)
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_brand_performance(brand_queries: list) -> dict:
+        """
+        Per-brand success snapshot for the Scan Queue page -- lets you
+        judge whether a brand is actually worth continuing to scan,
+        not just how many pages it's walked. Keyed by the same
+        normalized (stripped + lowercased) string ScanQueueItem.brand
+        and ProductRecord.brand_query both already use, so it lines up
+        directly with each queue row regardless of the real Keepa
+        `brand` field's casing/variants.
+
+        Counts are over the LATEST record per ASIN (not raw row
+        count), same convention as get_summary_stats -- the queue now
+        cycles continuously and rescans the same ASINs constantly, so
+        raw row counts would keep inflating even when nothing new was
+        actually found.
+        """
+        db = SessionLocal()
+
+        try:
+            normalized = [b.strip().lower() for b in brand_queries]
+
+            if not normalized:
+                return {}
+
+            rows = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.brand_query.in_(normalized))
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            latest_by_brand = {}  # {brand_query: {asin: latest record}}
+
+            for record in rows:
+                bucket = latest_by_brand.setdefault(record.brand_query, {})
+                if record.asin not in bucket:
+                    bucket[record.asin] = record
+
+            result = {}
+
+            for brand in normalized:
+                records = list(latest_by_brand.get(brand, {}).values())
+                scanned = len(records)
+                buy = sum(1 for r in records if r.recommendation == "BUY")
+                consider = sum(1 for r in records if r.recommendation == "CONSIDER")
+
+                result[brand] = {
+                    "scanned": scanned,
+                    "buy": buy,
+                    "consider": consider,
+                    "hit_rate": round((buy + consider) / scanned * 100, 1) if scanned else None,
+                }
+
+            return result
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recently_scanned_asins(since_hours: int) -> set:
+        """
+        Returns the set of ASINs scanned by ANY campaign (a brand
+        search, an uploaded list, Watchlist, Replen, a Scan Queue item
+        -- anything with a different brand_query label) within the
+        last `since_hours` hours -- used to skip re-spending tokens on
+        products we already have fresh data for.
+
+        Deliberately GLOBAL, not scoped to one brand_query label. It
+        used to be scoped that way, but once Keepa data for an ASIN
+        has been freshly fetched, it doesn't matter which campaign
+        fetched it -- confirmed via direct inspection of real scan
+        history that the same ASIN routinely gets found by several
+        different campaigns (e.g. a brand search AND Replen AND the
+        Scan Queue), and the old per-label scoping meant each one paid
+        for its own "first" fetch of that ASIN within the same day
+        regardless of how many times it had already been fetched
+        moments earlier by a different campaign. Pass force_rescan=True
+        on any individual scan to bypass this entirely when you
+        genuinely want fresh data regardless of what's been checked
+        recently.
         """
         db = SessionLocal()
 
@@ -111,7 +361,6 @@ class ProductRepository:
 
             rows = (
                 db.query(ProductRecord.asin)
-                .filter(ProductRecord.brand_query == brand_query)
                 .filter(ProductRecord.scanned_at >= cutoff)
                 .all()
             )
@@ -147,11 +396,34 @@ class ProductRepository:
                 seen.add(record.asin)
                 latest.append(record)
 
+            # "This week" = the product's MOST RECENT scan (still
+            # per-ASIN deduped via `latest` above) landed within the
+            # last 7 days -- added 2026-08-19 for the Dashboard
+            # redesign, replacing the old all-time total_buy/
+            # total_consider tiles. An all-time count only ever grows
+            # and stops being informative day to day (and blends
+            # already-reviewed items in with new ones, duplicating
+            # what the unreviewed-star-buys alert already answers
+            # better); "found this week" is a genuine, moving signal.
+            # total_buy/total_consider (all-time) are kept below too,
+            # in case anything else ever wants the full-catalog figure
+            # -- only the Dashboard's own display changed, not what's
+            # computed here.
+            week_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None)
+
             return {
                 "total_scanned": len(latest),
                 "total_profitable": sum(1 for r in latest if r.profit > 0),
                 "total_buy": sum(1 for r in latest if r.recommendation == "BUY"),
-                "total_review": sum(1 for r in latest if r.recommendation == "REVIEW"),
+                "total_consider": sum(1 for r in latest if r.recommendation == "CONSIDER"),
+                "buy_this_week": sum(
+                    1 for r in latest
+                    if r.recommendation == "BUY" and r.scanned_at and r.scanned_at >= week_cutoff
+                ),
+                "consider_this_week": sum(
+                    1 for r in latest
+                    if r.recommendation == "CONSIDER" and r.scanned_at and r.scanned_at >= week_cutoff
+                ),
             }
 
         finally:
@@ -269,6 +541,47 @@ class ProductRepository:
             db.close()
 
     @staticmethod
+    def add_exclusion_bulk(asins: list, reason: str = ""):
+        """
+        Bulk form of add_exclusion -- same upsert-by-asin behaviour,
+        one commit for the whole batch. The Review Queue's bulk
+        checkboxes only carry the ASIN (not a title), so the title is
+        looked up here from each ASIN's most recent scan record --
+        same source add_exclusion's callers normally pass in
+        explicitly from page context.
+        """
+        unique_asins = {a.strip().upper() for a in asins if a}
+
+        if not unique_asins:
+            return
+
+        db = SessionLocal()
+
+        try:
+            for asin in unique_asins:
+                existing = db.get(ExcludedProduct, asin)
+
+                if existing:
+                    if reason:
+                        existing.reason = reason
+                    continue
+
+                latest_record = (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.asin == asin)
+                    .order_by(ProductRecord.scanned_at.desc())
+                    .first()
+                )
+                title = latest_record.title if latest_record else ""
+
+                db.add(ExcludedProduct(asin=asin, title=title, reason=reason))
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
     def remove_exclusion(asin: str):
         db = SessionLocal()
 
@@ -297,6 +610,38 @@ class ProductRepository:
             db.close()
 
     @staticmethod
+    def get_known_products_catalog_stats() -> dict:
+        """
+        Summary of the imported known_products catalog (see
+        KnownProduct's docstring) for the Exclusions page -- this data
+        silently pre-filters ASINs before any Keepa token is spent
+        (see is_excluded_by_name / BrandScanService.scan Step 1b), but
+        KnownProduct.imported_at was previously captured on import and
+        never shown anywhere, so a stale import (e.g. months-old brand
+        catalog data, or a category that's since been re-organized on
+        Amazon) could be silently pre-excluding real opportunities
+        with no way to notice. oldest_imported_at is the more useful
+        of the two for that purpose -- a single freshest import gives
+        false reassurance if most of the catalog is actually much
+        older.
+        """
+        db = SessionLocal()
+
+        try:
+            count = db.query(func.count(KnownProduct.asin)).scalar() or 0
+            oldest = db.query(func.min(KnownProduct.imported_at)).scalar()
+            newest = db.query(func.max(KnownProduct.imported_at)).scalar()
+
+            return {
+                "count": count,
+                "oldest_imported_at": oldest,
+                "newest_imported_at": newest,
+            }
+
+        finally:
+            db.close()
+
+    @staticmethod
     def get_excluded_asins() -> set:
         """
         Used as a zero-token pre-check before spending any tokens on a
@@ -307,6 +652,702 @@ class ProductRepository:
         try:
             rows = db.query(ExcludedProduct.asin).all()
             return {row[0] for row in rows}
+
+        finally:
+            db.close()
+
+    # ---- User category exclusions (DB-backed companion to the static
+    # EXCLUDED_CATEGORIES/EXCLUDED_CATEGORY_NAMES sets in
+    # app/config/exclusions.py -- see ExcludedCategory for why a row
+    # can carry an ID, a name, or both) ----
+
+    @staticmethod
+    def add_category_exclusion(category_id: str = "", category_name: str = "", reason: str = ""):
+        category_id = category_id.strip()
+        category_name = category_name.strip()
+
+        if not category_id and not category_name:
+            return
+
+        db = SessionLocal()
+
+        try:
+            db.add(ExcludedCategory(
+                category_id=category_id or None,
+                category_name=category_name or None,
+                reason=reason,
+            ))
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_category_exclusion(exclusion_id: int):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(ExcludedCategory, exclusion_id)
+
+            if existing:
+                db.delete(existing)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_category_exclusions():
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(ExcludedCategory)
+                .order_by(ExcludedCategory.excluded_at.desc())
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_excluded_category_ids() -> set:
+        """
+        Fetched ONCE per scan (see BrandScanService.scan Step 3) and
+        passed into is_excluded(), same "one query, not one per ASIN"
+        convention as get_excluded_asins().
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(ExcludedCategory.category_id).filter(
+                ExcludedCategory.category_id.isnot(None)
+            ).all()
+            return {row[0] for row in rows}
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_excluded_category_names() -> set:
+        """
+        Lower-cased, matching is_excluded_by_name()'s case-insensitive
+        comparison against known_products' imported CSV category text.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(ExcludedCategory.category_name).filter(
+                ExcludedCategory.category_name.isnot(None)
+            ).all()
+            return {row[0].lower() for row in rows}
+
+        finally:
+            db.close()
+
+    # ---- Gated brands (DB-backed companion to the static
+    # GATED_BRAND_CATEGORIES set in app/config/exclusions.py -- see
+    # GatedBrand's docstring for why this is a separate table/behaviour
+    # from ExcludedCategory rather than reusing it) ----
+
+    @staticmethod
+    def add_gated_brand(brand: str = "", category_id: str = "", category_name: str = "", reason: str = ""):
+        brand = brand.strip().lower()
+        category_id = category_id.strip()
+        category_name = category_name.strip()
+
+        if not brand:
+            return
+
+        db = SessionLocal()
+
+        try:
+            db.add(GatedBrand(
+                brand=brand,
+                category_id=category_id or None,
+                category_name=category_name or None,
+                reason=reason,
+            ))
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_gated_brand(gated_id: int):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(GatedBrand, gated_id)
+
+            if existing:
+                db.delete(existing)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_gated_brands():
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(GatedBrand)
+                .order_by(GatedBrand.gated_at.desc())
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_whole_gated_brand_names() -> set:
+        """
+        Brand names gated with NO category scoping (category_id AND
+        category_name both blank) -- i.e. gated across the board.
+        Used as the pre-token check in BrandScanService.scan Step 1
+        that blocks brand-search-DRIVEN scanning entirely: no point
+        spending a single Keepa token hunting for MORE of a brand you
+        can't sell at all. A category-scoped gate can't be checked
+        this early (no category is known until after the UK lookup),
+        so those only ever apply at Step 3 via is_gated().
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(GatedBrand.brand).filter(
+                GatedBrand.category_id.is_(None), GatedBrand.category_name.is_(None)
+            ).all()
+            return {row[0] for row in rows}  # already stored lower-cased
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_gated_brand_pairs() -> set:
+        """
+        Fetched ONCE per scan (see BrandScanService.scan Step 3) and
+        passed into is_gated(), same "one query, not one per ASIN"
+        convention as get_excluded_category_ids(). Returns (brand,
+        category_id or "") pairs -- "" meaning "whole brand, any
+        category", same convention is_gated() expects.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(GatedBrand.brand, GatedBrand.category_id).all()
+            return {(brand, category_id or "") for brand, category_id in rows}
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_gated_brand_pairs_by_name() -> set:
+        """
+        Same idea as get_gated_brand_pairs(), for is_gated_by_name()'s
+        category-NAME matching (known_products' imported CSV text).
+        """
+        db = SessionLocal()
+
+        try:
+            rows = db.query(GatedBrand.brand, GatedBrand.category_name).all()
+            return {(brand, (category_name or "").lower()) for brand, category_name in rows}
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_gated_opportunities() -> list:
+        """
+        Latest scan record per ASIN where OpportunityEngine tagged the
+        product "GATED" (see Product.gated / OpportunityEngine.analyse)
+        -- i.e. real, scored A2A opportunities Atlas currently can't
+        act on because the brand is gated. This is the data behind the
+        Gated Brand Opportunities page: the case for pursuing ungating
+        on a specific brand is exactly "look how many/how strong these
+        would be if we could sell them".
+        """
+        db = SessionLocal()
+
+        try:
+            recent = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.recommendation == "GATED")
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            seen = set()
+            latest = []
+
+            for record in recent:
+                if record.asin in seen:
+                    continue
+
+                seen.add(record.asin)
+                latest.append(record)
+
+            latest.sort(key=lambda r: max(r.roi, r.roi_90d), reverse=True)
+
+            return latest
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_gated_brand_summary() -> list:
+        """
+        Per-brand rollup of list_gated_opportunities(), for the
+        top-of-page summary on the Gated Brand Opportunities view --
+        lets you see at a glance which gated brands have the strongest
+        case for pursuing ungating (most opportunities, best ROI)
+        without reading every row.
+        """
+        records = ProductRepository.list_gated_opportunities()
+        by_brand = {}
+
+        for record in records:
+            brand = record.brand or "(unknown)"
+            bucket = by_brand.setdefault(brand, {"brand": brand, "count": 0, "best_roi": 0.0, "total_roi": 0.0})
+            best_roi_this = max(record.roi, record.roi_90d)
+
+            bucket["count"] += 1
+            bucket["best_roi"] = max(bucket["best_roi"], best_roi_this)
+            bucket["total_roi"] += best_roi_this
+
+        summary = list(by_brand.values())
+
+        for bucket in summary:
+            bucket["avg_roi"] = round(bucket["total_roi"] / bucket["count"], 1) if bucket["count"] else 0.0
+
+        summary.sort(key=lambda b: (b["count"], b["best_roi"]), reverse=True)
+
+        return summary
+
+    # ---- Review (thumbs up/down) ----
+
+    @staticmethod
+    def set_review(asin: str, verdict: str | None):
+        """
+        verdict: "up", "down", or None to clear. Applies to the MOST
+        RECENT scan record for this ASIN -- the one currently being
+        shown on whichever page the thumbs button was clicked from.
+        """
+        db = SessionLocal()
+
+        try:
+            record = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin)
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+
+            if record:
+                record.review = verdict
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_review_bulk(asins: list, verdict: str | None):
+        """
+        Bulk form of set_review -- same "most recent scan record per
+        ASIN" semantics, one query per unique ASIN (dedup'd first
+        since the same ASIN could in principle appear twice in a
+        selection) then a single commit for the whole batch.
+        """
+        unique_asins = {a for a in asins if a}
+
+        if not unique_asins:
+            return
+
+        db = SessionLocal()
+
+        try:
+            for asin in unique_asins:
+                record = (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.asin == asin)
+                    .order_by(ProductRecord.scanned_at.desc())
+                    .first()
+                )
+
+                if record:
+                    record.review = verdict
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_latest_record_ids(asins) -> dict:
+        """
+        Returns {asin: latest ProductRecord.id} for the given ASINs --
+        used to link a fresh detection (e.g. SellerWatchService's
+        seller_new_listings rows) to whatever ProductRecord the scan
+        pipeline just created (or already had, if it was recently
+        scanned via another campaign) for it, without a separate query
+        per ASIN. Same "first hit per asin, newest first" shape as
+        get_reviews. An ASIN with no record at all (e.g. it got
+        excluded/filtered before ever producing one) is simply absent
+        from the returned dict.
+        """
+        if not asins:
+            return {}
+
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin.in_(asins))
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            ids = {}
+
+            for row in rows:
+                if row.asin not in ids:
+                    ids[row.asin] = row.id
+
+            return ids
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_reviews(asins) -> dict:
+        """
+        Returns {asin: "up"|"down"} for the latest scan record of each
+        given ASIN -- lets a results page show which thumb (if any) is
+        currently active without a separate query per row.
+        """
+        if not asins:
+            return {}
+
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin.in_(asins))
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            reviews = {}
+
+            for row in rows:
+                if row.asin not in reviews and row.review:
+                    reviews[row.asin] = row.review
+
+            return reviews
+
+        finally:
+            db.close()
+
+    # ---- Ceiling-rejected pool (feeds the "ceiling_recheck" Signal --
+    # see BrandScanService Step 3b and SignalService) ----
+
+    @staticmethod
+    def upsert_ceiling_rejected(asin: str, title: str = "", brand: str = "",
+                                 category: str = "", category_name: str = "",
+                                 fba_fee: float = 0.0, buy_box_at_reject: float = 0.0):
+        """
+        Records/refreshes one ASIN that just failed BrandScanService's
+        Step 3b ceiling check (today's-or-90d UK price wasn't even
+        enough to clear Amazon's own fees, before any EU cost was
+        looked up). One row per ASIN -- re-rejecting an ASIN that's
+        already here just refreshes its price/fee snapshot and
+        last_seen_at, it doesn't duplicate the row. Costs nothing
+        extra: this is purely persisting data BrandScanService's scan
+        already paid Keepa tokens for.
+        """
+        db = SessionLocal()
+
+        try:
+            existing = db.get(CeilingRejected, asin)
+
+            if existing:
+                if title:
+                    existing.title = title
+                if brand:
+                    existing.brand = brand
+                if category:
+                    existing.category = category
+                if category_name:
+                    existing.category_name = category_name
+                existing.fba_fee = fba_fee
+                existing.buy_box_at_reject = buy_box_at_reject
+                existing.last_seen_at = datetime.now(timezone.utc)
+            else:
+                db.add(CeilingRejected(
+                    asin=asin, title=title, brand=brand, category=category,
+                    category_name=category_name, fba_fee=fba_fee,
+                    buy_box_at_reject=buy_box_at_reject,
+                ))
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_ceiling_rejected(asin: str):
+        """
+        Drops an ASIN from the ceiling-rejected pool -- called either
+        when a normal scan finds it DOES clear the ceiling now (see
+        BrandScanService Step 3b), or when SignalService's
+        ceiling_recheck signal surfaces it as a SignalMatch (no point
+        re-checking something already surfaced).
+        """
+        db = SessionLocal()
+
+        try:
+            existing = db.get(CeilingRejected, asin)
+
+            if existing:
+                db.delete(existing)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_ceiling_rejected(category_ids: list = None, limit: int = 500) -> list:
+        """
+        Returns CeilingRejected rows, optionally narrowed to a set of
+        Keepa category IDs (matched against the `category` column --
+        the rootCategory ID recorded at reject time). Used by
+        SignalService's ceiling_recheck to pick which previously-
+        rejected ASINs to re-price this run, oldest-checked first so
+        the whole pool eventually cycles through rather than the same
+        few ASINs getting re-checked forever.
+        """
+        db = SessionLocal()
+
+        try:
+            query = db.query(CeilingRejected)
+
+            if category_ids:
+                query = query.filter(CeilingRejected.category.in_([str(c) for c in category_ids]))
+
+            return (
+                query.order_by(CeilingRejected.last_seen_at.asc())
+                .limit(limit)
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_last_eu_check(asin: str):
+        """
+        Returns Atlas's own most recent ProductRecord for this ASIN
+        (if any), or None -- a free enrichment for a SignalMatch using
+        data Atlas already has, NOT a fresh EU lookup. Lets the
+        Signals page show "we last checked this and found a source in
+        DE at £X, Y% ROI" without spending a single extra Keepa token.
+        """
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin)
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+
+        finally:
+            db.close()
+
+    # ---- Signal queries / matches (Signals opportunity-discovery page --
+    # see SignalService) ----
+
+    @staticmethod
+    def list_signal_queries(enabled_only: bool = False) -> list:
+        db = SessionLocal()
+
+        try:
+            query = db.query(SignalQuery)
+
+            if enabled_only:
+                query = query.filter(SignalQuery.enabled == True)  # noqa: E712
+
+            return query.order_by(SignalQuery.created_at.asc()).all()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_signal_query(query_id: int):
+        db = SessionLocal()
+
+        try:
+            return db.get(SignalQuery, query_id)
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def create_signal_query(name: str, signal_type: str, category_ids: str = "") -> int:
+        db = SessionLocal()
+
+        try:
+            row = SignalQuery(name=name, signal_type=signal_type, category_ids=category_ids)
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return row.id
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def delete_signal_query(query_id: int):
+        """
+        Also clears any SignalMatch rows tied to this query -- a
+        SignalMatch has no meaning once its parent query is gone, and
+        leaving them behind would let a stale query_id linger in the
+        matches table forever.
+        """
+        db = SessionLocal()
+
+        try:
+            db.query(SignalMatch).filter(SignalMatch.signal_query_id == query_id).delete()
+
+            existing = db.get(SignalQuery, query_id)
+            if existing:
+                db.delete(existing)
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_signal_query_enabled(query_id: int, enabled: bool):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(SignalQuery, query_id)
+            if existing:
+                existing.enabled = enabled
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def update_signal_query_snapshot(query_id: int, snapshot_json: str = None):
+        """
+        Stamps last_checked_at, and -- if snapshot_json is given --
+        records the ASIN list a Product-Finder-based run just saw
+        (JSON-encoded), so the NEXT run diffs against it to find only
+        newly-appearing ASINs (same idea as TrackedSeller.
+        last_asin_snapshot for Competitor Watch).
+
+        snapshot_json=None (the ceiling_recheck case, which has no
+        Product Finder call/diff concept at all -- see SignalQuery's
+        docstring) just refreshes last_checked_at for the "last run
+        X ago" display, leaving last_match_snapshot untouched.
+        """
+        db = SessionLocal()
+
+        try:
+            existing = db.get(SignalQuery, query_id)
+            if existing:
+                if snapshot_json is not None:
+                    existing.last_match_snapshot = snapshot_json
+                existing.last_checked_at = datetime.now(timezone.utc)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def save_signal_match(signal_query_id: int, signal_type: str, asin: str, title: str = "",
+                           brand: str = "", category_name: str = "", buy_box_now: float = 0.0,
+                           monthly_sales: int = 0, sales_drops_30d: int = 0,
+                           target_buy_price_gbp: float = 0.0, signal_reasoning_json: str = "",
+                           eu_history_json: str = ""):
+        db = SessionLocal()
+
+        try:
+            db.add(SignalMatch(
+                signal_query_id=signal_query_id, signal_type=signal_type, asin=asin,
+                title=title, brand=brand, category_name=category_name,
+                buy_box_now=buy_box_now, monthly_sales=monthly_sales,
+                sales_drops_30d=sales_drops_30d, target_buy_price_gbp=target_buy_price_gbp,
+                signal_reasoning_json=signal_reasoning_json, eu_history_json=eu_history_json,
+            ))
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_signal_matches(signal_query_id: int = None, include_dismissed: bool = False,
+                             limit: int = 200) -> list:
+        db = SessionLocal()
+
+        try:
+            query = db.query(SignalMatch)
+
+            if signal_query_id is not None:
+                query = query.filter(SignalMatch.signal_query_id == signal_query_id)
+
+            if not include_dismissed:
+                query = query.filter(SignalMatch.dismissed == False)  # noqa: E712
+
+            return (
+                query.order_by(SignalMatch.detected_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def dismiss_signal_match(match_id: int):
+        db = SessionLocal()
+
+        try:
+            existing = db.get(SignalMatch, match_id)
+            if existing:
+                existing.dismissed = True
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def count_new_signal_matches() -> int:
+        """
+        Cheap COUNT-only query (never fetches the actual rows) for the
+        "N new" sidebar badge next to the Signals link -- see
+        base.html and main.py's inject_sidebar_badges middleware,
+        which calls this on every single page load. Deliberately kept
+        separate from list_signal_matches (which fetches full rows
+        and is only called by the /signals page itself) so the badge
+        stays cheap regardless of how many matches have piled up.
+        """
+        db = SessionLocal()
+
+        try:
+            return (
+                db.query(func.count(SignalMatch.id))
+                .filter(SignalMatch.dismissed == False)  # noqa: E712
+                .scalar()
+            ) or 0
 
         finally:
             db.close()
