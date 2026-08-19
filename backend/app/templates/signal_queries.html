@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block title %}Signal Queries - Atlas{% endblock %}
+
+{% block content %}
+
+{% if check_result %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ check_result }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Manage Signal Queries</h4>
+    <a href="/signals" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Signals</a>
+</div>
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i>
+    A signal query is a saved "find opportunities like this" definition. Nothing runs automatically -- click <strong>Run now</strong> on a query whenever you want to spend the tokens and check for new candidates (see why on the <a href="/signals">Signals</a> page).
+    <br><strong>Stock-out</strong> / <strong>Price spike</strong> run a category-scoped Keepa Product Finder search. <strong>Ceiling cleared</strong> ignores the category filter entirely -- it just re-checks Atlas's own pool of previously-rejected ASINs, so you normally only need one of these.
+</div>
+
+<div class="card metric p-4 mb-4">
+    <div class="text-muted small mb-2">
+        Add a signal query. Optionally restrict Stock-out/Price spike to specific Keepa categories (comma-separated IDs -- find these on the <a href="/categories">Categories</a> page). Leave blank to search all categories.
+    </div>
+    <form method="post" action="/signals/queries/add" class="row g-3 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label">Name</label>
+            <input type="text" class="form-control" name="name" placeholder="e.g. Kitchen stock-outs" required>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Signal type</label>
+            <select class="form-select" name="signal_type" required>
+                {% for t in signal_types %}
+                <option value="{{ t }}">{{ signal_type_labels[t] }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Category IDs (optional)</label>
+            <input type="text" class="form-control" name="category_ids" placeholder="e.g. 340831031, 192413031">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark w-100">
+                <i class="bi bi-plus-lg"></i> Add
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if queries %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Signal type</th>
+                    <th>Categories</th>
+                    <th>Enabled</th>
+                    <th>Last run</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for q in queries %}
+                <tr>
+                    <td class="fw-semibold">{{ q.name }}</td>
+                    <td class="small">{{ signal_type_labels.get(q.signal_type, q.signal_type) }}</td>
+                    <td class="small text-muted">
+                        {% if q.signal_type == "ceiling_recheck" %}
+                        <span class="text-muted">N/A -- uses the rejected pool</span>
+                        {% else %}
+                        {{ q.category_ids or "All categories" }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="post" action="/signals/queries/toggle">
+                            <input type="hidden" name="query_id" value="{{ q.id }}">
+                            <input type="hidden" name="enabled" value="{{ 'false' if q.enabled else 'true' }}">
+                            <button type="submit" class="btn btn-sm {{ 'btn-success' if q.enabled else 'btn-outline-secondary' }}">
+                                <i class="bi {{ 'bi-toggle-on' if q.enabled else 'bi-toggle-off' }}"></i> {{ "Enabled" if q.enabled else "Disabled" }}
+                            </button>
+                        </form>
+                    </td>
+                    <td class="small text-muted">
+                        {% if q.last_checked_at %}{{ q.last_checked_at.strftime("%d %b %H:%M") }}{% else %}Never{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            <form method="post" action="/signals/run">
+                                <input type="hidden" name="query_id" value="{{ q.id }}">
+                                <input type="hidden" name="return_to" value="/signals/queries">
+                                <button type="submit" class="btn btn-sm btn-outline-primary" {{ "disabled" if not q.enabled }} title="{{ 'Enable this query first' if not q.enabled }}">
+                                    <i class="bi bi-play-fill"></i> Run now
+                                </button>
+                            </form>
+                            <form method="post" action="/signals/queries/delete" onsubmit="return confirm('Delete this signal query? This also removes its matches from the Signals page.');">
+                                <input type="hidden" name="query_id" value="{{ q.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> No signal queries yet -- add one above to get started. A good first one: "Ceiling cleared" with no category filter, since it costs nothing to set up (it just re-checks products Atlas has already seen).
+</div>
+{% endif %}
+
+{% endblock %}

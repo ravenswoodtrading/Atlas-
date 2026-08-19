@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}Signals - Atlas{% endblock %}
+
+{% block content %}
+
+{% if check_result %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ check_result }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Opportunity Signals ({{ total_count }})</h4>
+    <a href="/signals/queries" class="btn btn-outline-dark btn-sm"><i class="bi bi-sliders"></i> Manage signal queries</a>
+</div>
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i>
+    ASINs that recently tripped a signal (went out of stock, Buy Box price spiked, or a previously-rejected product finally cleared its own fee ceiling) inside categories you're already scanning. Each one only cost a single UK-only lookup -- no EU tokens spent.
+    <strong>Nothing here has been priced from EU yet</strong> -- dig into a promising one on Keepa or SAS yourself using the target buy price as your ceiling, then hit Watch to have Atlas run the full 5-marketplace check next time the Watchlist is checked.
+    <br>Gated brands and anything on your Exclusions list are filtered out automatically, before even the UK lookup is spent -- same as everywhere else in Atlas.
+</div>
+
+{% if not queries %}
+<div class="alert alert-warning py-2 small mb-4">
+    <i class="bi bi-exclamation-triangle"></i> No signal queries set up yet -- nothing will appear here until you <a href="/signals/queries">create one</a> and click "Run now".
+</div>
+{% endif %}
+
+<div class="card metric p-3 mb-3">
+    <form method="get" action="/signals" class="row g-3 align-items-end">
+        <div class="col-md-6">
+            <label class="form-label small mb-1">Signal type</label>
+            <div>
+                <a href="/signals?sort={{ sort }}" class="badge {{ 'bg-dark' if not signal_type else 'bg-light text-dark border' }} text-decoration-none">
+                    All <span class="badge bg-light text-dark border ms-1">{{ total_count }}</span>
+                </a>
+                {% for t in ["stock_out", "price_spike", "ceiling_recheck"] %}
+                <a href="/signals?signal_type={{ t }}&sort={{ sort }}" class="badge {{ 'bg-dark' if signal_type == t else 'bg-light text-dark border' }} text-decoration-none">
+                    {{ signal_type_labels[t] }} <span class="badge bg-secondary ms-1">{{ counts_by_type.get(t, 0) }}</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Category</label>
+            <select class="form-select form-select-sm" name="category" onchange="this.form.submit()">
+                <option value="" {{ "selected" if not category }}>All categories</option>
+                {% for c in categories_seen %}
+                <option value="{{ c }}" {{ "selected" if category == c }}>{{ c }}</option>
+                {% endfor %}
+            </select>
+            <input type="hidden" name="signal_type" value="{{ signal_type }}">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small mb-1">Sort by</label>
+            <select class="form-select form-select-sm" name="sort" onchange="this.form.submit()">
+                {% for key, label in sort_options.items() %}
+                <option value="{{ key }}" {{ "selected" if sort == key }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+
+{% if rows %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Signal</th>
+                    <th>UK Price</th>
+                    <th>Sales evidence</th>
+                    <th>Target buy price <span class="text-muted fw-normal">({{ target_roi_pct|int }}%+ ROI)</span></th>
+                    <th>EU history</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                {% set m = row.match %}
+                <tr>
+                    <td style="max-width:230px;">
+                        <div class="fw-semibold small">{{ m.title or m.asin }}</div>
+                        <div class="text-muted small">
+                            {{ m.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ m.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if m.brand %} &middot; {{ m.brand }}{% endif %}
+                        </div>
+                    </td>
+                    <td class="small">{{ m.category_name or "-" }}</td>
+                    <td>
+                        <span class="badge" style="background:{{ row.badge.bg }};color:{{ row.badge.fg }};"><i class="bi {{ row.badge.icon }}"></i> {{ row.type_label }}</span>
+                        {% if row.detail_line %}
+                        <div class="text-muted small mt-1">{{ row.detail_line }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="small">&pound;{{ "%.2f"|format(m.buy_box_now) }}</td>
+                    <td class="small">
+                        {% if m.monthly_sales > 0 %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ m.monthly_sales }}/mo</span>
+                        {% elif m.sales_drops_30d >= 3 %}
+                        <span class="badge bg-secondary">{{ m.sales_drops_30d }} rank drops/30d</span>
+                        {% else %}
+                        <span class="badge bg-secondary">No confirmed sales</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-success fw-semibold">&pound;{{ "%.2f"|format(m.target_buy_price_gbp) }} <span class="text-muted fw-normal">or less</span></td>
+                    <td>
+                        {% if row.eu_history %}
+                        <div class="small rounded px-2 py-1" style="{{ 'background:#fdf3e0;border:1px solid #f3ddab;color:#96660a;' if row.eu_history.under_target else 'background:#eaf6ec;border:1px solid #bfe3c6;color:#1e7a41;' }}">
+                            <i class="bi bi-clock-history"></i>
+                            {{ row.eu_history.marketplace }} checked
+                            {% if row.eu_history.days_ago is not none %}{{ row.eu_history.days_ago }}d ago{% else %}before{% endif %}
+                            -- {{ "viable" if not row.eu_history.under_target else "too pricey" }}
+                            at &pound;{{ "%.2f"|format(row.eu_history.cost or 0) }} ({{ "%.0f"|format(row.eu_history.roi) }}% ROI{{ ", under target" if row.eu_history.under_target }})
+                        </div>
+                        {% else %}
+                        <span class="text-muted small">Not checked before</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex flex-column gap-1" style="min-width:130px;">
+                            <a href="https://www.amazon.co.uk/dp/{{ m.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open listing</a>
+                            <form method="post" action="/watch/add">
+                                <input type="hidden" name="asin" value="{{ m.asin }}">
+                                <input type="hidden" name="title" value="{{ m.title }}">
+                                <input type="hidden" name="brand" value="{{ m.brand }}">
+                                <input type="hidden" name="note" value="From Signals: {{ row.type_label }}">
+                                <input type="hidden" name="return_to" value="/signals">
+                                <button type="submit" class="btn btn-sm btn-outline-primary w-100"><i class="bi bi-star"></i> Watch</button>
+                            </form>
+                            <form method="post" action="/signals/dismiss">
+                                <input type="hidden" name="match_id" value="{{ m.id }}">
+                                <input type="hidden" name="return_to" value="/signals">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary w-100"><i class="bi bi-x"></i> Dismiss</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% elif queries %}
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> No matches yet for your current filters. Head to <a href="/signals/queries">Manage signal queries</a> and click "Run now" on a query to check for new candidates.
+</div>
+{% endif %}
+
+<div class="mt-3 small text-muted">
+    <i class="bi bi-gear"></i> "Manage signal queries" (top right) is where you turn signals on/off per category and trigger a manual "Run now" -- these are never run on an automatic schedule (see the project notes on why).
+</div>
+
+{% endblock %}
