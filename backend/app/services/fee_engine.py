@@ -188,6 +188,73 @@ class FeeEngine:
         return round(headroom / denominator, 2) if denominator else 0.0
 
     @staticmethod
+    def _max_source_cost_for_net_profit(buy_box_now: float, category_name: str, fba_fee: float,
+                                         target_profit_gbp: float) -> float:
+        """
+        Shared core for max_source_cost_for_margin/max_source_cost_for_profit
+        below -- both ultimately ask "what's the highest GROSS cost that
+        still leaves at least this much NET profit at this sale price",
+        just expressed as a % of the price (margin) or a flat £ figure
+        (the absolute profit floor). Same VAT-inclusive OA assumption as
+        max_source_cost, which this deliberately mirrors rather than
+        reuses (that one solves for a target ROI -- a genuinely different
+        equation, not a special case of this one).
+        """
+        category_key = category_name.lower()
+        uk_vat_rate = 0.0 if category_key in UK_VAT_ZERO_RATED_CATEGORY_NAMES else UK_VAT_STANDARD_RATE
+        effective_fba_fee = fba_fee if fba_fee else FeeEngine.DEFAULT_FBA_FEE
+        referral_fee = FeeEngine._referral_fee(buy_box_now, category_key)
+
+        net_revenue = buy_box_now / (1 + uk_vat_rate)
+        headroom = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP
+        net_cost_ceiling = headroom - target_profit_gbp
+
+        if net_cost_ceiling <= 0:
+            return 0.0
+
+        return round(net_cost_ceiling * (1 + uk_vat_rate), 2)
+
+    @staticmethod
+    def max_source_cost_for_margin(buy_box_now: float, category_name: str, fba_fee: float,
+                                    target_margin_pct: float) -> float:
+        """
+        Margin-target counterpart to max_source_cost -- solves for the
+        highest GROSS cost that still clears a target MARGIN (profit as
+        a % of the sale price) rather than a target ROI (profit as a %
+        of cost). These are different questions with different answers
+        at the same sale price (see FeeResult.margin's docstring for why
+        margin and ROI diverge) -- added 2026-08-23 alongside the
+        confirmed 13% margin floor (OpportunityEngine.MIN_VIABLE_MARGIN_PCT),
+        since a cost ceiling that only satisfies a target ROI can still
+        leave margin below its own floor for a lower-cost/higher-price
+        product. Callers wanting a ceiling that respects BOTH floors
+        together should take the min() of this and max_source_cost's
+        result -- each is independently monotonic in cost, so the lower
+        of the two is the genuine combined answer.
+
+        Returns 0.0 if Amazon's own fees already exceed the sale price.
+        """
+        target_profit_gbp = buy_box_now * (target_margin_pct / 100)
+        return FeeEngine._max_source_cost_for_net_profit(buy_box_now, category_name, fba_fee, target_profit_gbp)
+
+    @staticmethod
+    def max_source_cost_for_profit(buy_box_now: float, category_name: str, fba_fee: float,
+                                    target_profit_gbp: float) -> float:
+        """
+        Absolute-£-profit-target counterpart to max_source_cost/
+        max_source_cost_for_margin -- solves for the highest GROSS cost
+        that still leaves at least target_profit_gbp of actual cash
+        profit, regardless of what that is as a % of cost or price.
+        Added 2026-08-23 alongside the confirmed £2 absolute profit
+        floor (OpportunityEngine.MIN_VIABLE_PROFIT_GBP) -- catches a
+        cheap item that clears both the ROI and margin bars on pennies
+        of real profit (see MIN_VIABLE_PROFIT_GBP's own docstring).
+
+        Returns 0.0 if Amazon's own fees already exceed the sale price.
+        """
+        return FeeEngine._max_source_cost_for_net_profit(buy_box_now, category_name, fba_fee, target_profit_gbp)
+
+    @staticmethod
     def calculate(product: Product, category_name: str = "") -> FeeResult:
 
         fba_fee = product.fba_fee if product.fba_fee else FeeEngine.DEFAULT_FBA_FEE

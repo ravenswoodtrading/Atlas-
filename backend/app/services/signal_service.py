@@ -5,6 +5,7 @@ from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
 from app.services.product_repository import ProductRepository
 from app.services.fee_engine import FeeEngine
+from app.services.opportunity_engine import OpportunityEngine
 from app.services.category_survey_service import get_category_names
 from app.config.exclusions import is_excluded, is_gated
 from app.config.fees import DEFAULT_REFERRAL_RATE, REFERRAL_RATE_BY_CATEGORY_NAME
@@ -230,17 +231,15 @@ class SignalService:
             fba_fee = product.fba_fee if product.fba_fee else FeeEngine.DEFAULT_FBA_FEE
             category_name = category_names.get(product.category, "")
 
-            target_buy_price = FeeEngine.max_source_cost(
-                reference_price, category_name, fba_fee, self.TARGET_ROI_PCT
-            )
+            target_buy_price = self._target_buy_price(reference_price, category_name, fba_fee)
 
             if target_buy_price <= 0:
-                # Even the 25%+ ROI ceiling comes back 0 -- Amazon's
-                # own fees already eat the whole reference price, so
-                # this isn't a genuine lead either. Feed it into the
-                # same ceiling-rejected pool BrandScanService uses, so
-                # it's tracked for a later ceiling_recheck rather than
-                # just discarded.
+                # Even the combined ROI/margin/profit ceiling comes back
+                # 0 -- either Amazon's own fees already eat the whole
+                # reference price, or no cost clears all three floors at
+                # once. Feed it into the same ceiling-rejected pool
+                # BrandScanService uses, so it's tracked for a later
+                # ceiling_recheck rather than just discarded.
                 ProductRepository.upsert_ceiling_rejected(
                     asin=asin, title=product.title, brand=product.brand,
                     category=product.category, category_name=category_name,
@@ -357,10 +356,10 @@ class SignalService:
                 continue
 
             # Graduated -- clears the ceiling now. Surface it as a
-            # match at the 25%+ ROI target buy price and remove it
-            # from the rejected pool (no point re-checking something
-            # already surfaced).
-            target_buy_price = FeeEngine.max_source_cost(best_price, category_name, fba_fee, self.TARGET_ROI_PCT)
+            # match at the combined ROI/margin/profit target buy price
+            # (see _target_buy_price) and remove it from the rejected
+            # pool (no point re-checking something already surfaced).
+            target_buy_price = self._target_buy_price(best_price, category_name, fba_fee)
 
             self._save_match(
                 query, asin, product, category_name, best_price, target_buy_price,
@@ -384,6 +383,34 @@ class SignalService:
     # ---- shared ----
 
     @staticmethod
+    def _target_buy_price(reference_price: float, category_name: str, fba_fee: float) -> float:
+        """
+        Highest price payable at reference_price and still clear ALL
+        THREE of Atlas's confirmed viability floors (2026-08-23): this
+        class's own TARGET_ROI_PCT (25%, the "worth chasing" bar) AND
+        OpportunityEngine.MIN_VIABLE_MARGIN_PCT (13%) AND
+        OpportunityEngine.MIN_VIABLE_PROFIT_GBP (£2) -- the same
+        three-floor combination OpportunityEngine.analyse applies once a
+        real EU cost is known, computed here as a ceiling since a
+        Signals match has no cost yet, only a UK price to work backwards
+        from. Previously ROI-only, which could let a genuinely
+        low-margin or pennies-of-profit match through at the top of its
+        ROI-only ceiling (see FeeEngine.max_source_cost_for_margin's
+        docstring for why ROI alone doesn't imply the margin floor).
+        Each floor is independently monotonic in cost, so the LOWEST of
+        the three per-floor ceilings is the genuine combined answer.
+        """
+        return min(
+            FeeEngine.max_source_cost(reference_price, category_name, fba_fee, SignalService.TARGET_ROI_PCT),
+            FeeEngine.max_source_cost_for_margin(
+                reference_price, category_name, fba_fee, OpportunityEngine.MIN_VIABLE_MARGIN_PCT,
+            ),
+            FeeEngine.max_source_cost_for_profit(
+                reference_price, category_name, fba_fee, OpportunityEngine.MIN_VIABLE_PROFIT_GBP,
+            ),
+        )
+
+    @staticmethod
     def _save_match(query, asin, product, category_name, reference_price, target_buy_price, extra_reasoning=None):
         """
         eu_history_json is a free enrichment from Atlas's OWN past
@@ -396,6 +423,8 @@ class SignalService:
             "sales_drops_30d": product.sales_drops_30d,
             "reference_price_used": reference_price,
             "target_roi_pct": SignalService.TARGET_ROI_PCT,
+            "target_margin_pct": OpportunityEngine.MIN_VIABLE_MARGIN_PCT,
+            "target_profit_gbp": OpportunityEngine.MIN_VIABLE_PROFIT_GBP,
         }
         if extra_reasoning:
             reasoning.update(extra_reasoning)
