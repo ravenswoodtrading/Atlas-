@@ -30,6 +30,10 @@ Other standing rules, unchanged from before this file existed:
 
 ## Judgment notes
 
-*(none yet — add a line here whenever a rejection reason turns out to reflect a real, repeatable
-preference rather than a one-off. The periodic pattern-review step proposes additions here based
-on recent rejection reasons, for your approval — it never edits this file on its own.)*
+Add a line here whenever a rejection reason turns out to reflect a real, repeatable preference
+rather than a one-off. The `/criteria/review` page proposes additions here based on recent
+rejection reasons, for your approval — it only ever writes between the markers below, and never
+without your explicit approval on that page. You can also just edit this section by hand.
+
+<!-- BEGIN JUDGMENT NOTES -->
+<!-- END JUDGMENT NOTES -->

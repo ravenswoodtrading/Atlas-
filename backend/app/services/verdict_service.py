@@ -15,6 +15,13 @@ from app.sp_api.client import get_sp_api_client
 # 5 most relevant, and it's real prompt-token cost either way.
 MAX_SIMILAR_REJECTIONS = 5
 
+# Cap on VerdictService.get_all_reasoned_rejections' output (the
+# /criteria/review pattern-analysis input, not a per-verdict prompt) --
+# bounds a single analysis call's prompt size once the review queue has
+# real history; most recent first, so it's the newest preferences that
+# get seen if this cap is ever actually hit.
+MAX_REJECTIONS_FOR_PATTERN_REVIEW = 200
+
 # Label passed as best_source_marketplace when computing a rough
 # Keepa-estimate profit for a verdict check -- not a real EU
 # marketplace, so FeeEngine.calculate falls back to the UK VAT rate
@@ -32,6 +39,49 @@ STATS_WINDOW_DAYS = 180
 
 
 class VerdictService:
+
+    @staticmethod
+    def get_all_reasoned_rejections() -> list[dict]:
+        """
+        Every Lead rejection that carries a "why not" reason, most
+        recent first, capped at MAX_REJECTIONS_FOR_PATTERN_REVIEW --
+        the input to the /criteria/review pattern-analysis page (brief
+        step 8, part 2). Unlike get_similar_rejections below, this
+        isn't matched against any one candidate ASIN; it's the whole
+        pool a pattern search runs over.
+        """
+        db = SessionLocal()
+        try:
+            rejected = (
+                db.query(Lead)
+                .filter(
+                    Lead.decision == "rejected",
+                    Lead.decision_reason.isnot(None),
+                    Lead.decision_reason != "",
+                )
+                .order_by(Lead.reviewed_at.desc())
+                .limit(MAX_REJECTIONS_FOR_PATTERN_REVIEW)
+                .all()
+            )
+        finally:
+            db.close()
+
+        results = []
+        for lead in rejected:
+            m = {}
+            if lead.keepa_metrics:
+                try:
+                    m = json.loads(lead.keepa_metrics)
+                except Exception:
+                    m = {}
+            results.append({
+                "asin": lead.asin,
+                "brand": m.get("brand"),
+                "category_name": m.get("category_name"),
+                "decision_reason": lead.decision_reason,
+            })
+
+        return results
 
     @staticmethod
     def get_similar_rejections(asin: str, brand: str | None, category_name: str | None) -> list[dict]:

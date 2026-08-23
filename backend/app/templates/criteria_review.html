@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Criteria Review - Atlas{% endblock %}
+
+{% block content %}
+
+<h4 class="mb-4">Criteria Review</h4>
+
+{% if approved_count %}
+<div class="alert alert-success">Added {{ approved_count }} note{{ "s" if approved_count != 1 else "" }} to criteria.md.</div>
+{% elif approved_count == 0 %}
+<div class="alert alert-secondary">No proposals were checked, so nothing was added.</div>
+{% endif %}
+
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-1">Current criteria doc</h5>
+    <div class="small text-muted mb-3">Read fresh into every Verdict Checker prompt. Edit <code>criteria.md</code> directly any time, or approve a proposal below.</div>
+    <pre class="small mb-0" style="white-space:pre-wrap;">{{ doc_text }}</pre>
+</div>
+
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-1">Analyze rejection patterns</h5>
+    <div class="small text-muted mb-3">
+        {{ rejection_count }} past lead rejection{{ "s" if rejection_count != 1 else "" }} with a "why not" reason on file.
+        {% if rejection_count == 0 %}Reject a lead with a reason on the Lead Queue first -- there's nothing to analyze yet.{% endif %}
+    </div>
+    <form method="post" action="/criteria/review">
+        <button type="submit" class="btn btn-dark" {{ "disabled" if rejection_count == 0 else "" }}>
+            <i class="bi bi-search"></i> Run analysis
+        </button>
+    </form>
+</div>
+
+{% if analyzed %}
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-3">Proposed additions</h5>
+    {% if not proposals %}
+    <div class="text-muted">No repeatable pattern found in the current rejection history.</div>
+    {% else %}
+    <form method="post" action="/criteria/review/approve">
+        <div class="small text-muted mb-2">Check the ones you agree with, then approve -- nothing is written to criteria.md until you do.</div>
+        {% for p in proposals %}
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="approved" value="{{ p }}" id="proposal-{{ loop.index }}">
+            <label class="form-check-label small" for="proposal-{{ loop.index }}">{{ p }}</label>
+        </div>
+        {% endfor %}
+        <button type="submit" class="btn btn-dark mt-2">
+            <i class="bi bi-check2"></i> Add checked notes to criteria.md
+        </button>
+    </form>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -363,3 +363,65 @@ def _ensure_bulleted(rationale: str) -> str:
     sentences = [s if s.endswith((".", "!", "?")) else f"{s}." for s in sentences if s]
 
     return "\n".join(f"- {s}" for s in sentences)
+
+
+def propose_criteria_amendments(rejections: list[dict]) -> list[str]:
+    """
+    Sourcing agent brief step 8, part 2 -- the /criteria/review page's
+    on-demand analysis. Takes VerdictService.get_all_reasoned_rejections'
+    output and asks Claude to name genuinely repeatable patterns worth
+    adding to criteria.md's Judgment notes section, as plain one-line
+    rules in the same voice a human would write there. Returns each
+    proposed line as its own list entry -- purely a proposal, nothing is
+    written to the file here; the route only appends whatever the user
+    explicitly approves on that page.
+
+    Returns [] if there's nothing worth proposing (too little history,
+    or Claude genuinely finds no repeatable pattern) -- callers should
+    treat an empty list as "no suggestions", not an error.
+    """
+    if not rejections:
+        return []
+
+    client = get_anthropic_client()
+
+    lines = []
+    for r in rejections:
+        brand = r.get("brand") or "unknown brand"
+        category = r.get("category_name") or "unknown category"
+        lines.append(f"- ASIN {r['asin']} ({brand}, {category}): \"{r['decision_reason']}\"")
+
+    prompt = (
+        "Below are Amazon FBA sourcing leads a reseller has rejected, each with their own "
+        "free-text reason. Find genuinely REPEATABLE patterns -- something that shows up "
+        "across multiple rejections, or one clear, strongly-stated dealbreaker -- that would "
+        "be worth adding as a standing rule to their buying-criteria doc. A single one-off "
+        "reason that doesn't generalize is NOT a pattern; don't propose one for it.\n\n"
+        f"Rejections:\n" + "\n".join(lines) + "\n\n"
+        "Reply with EITHER the single word NONE (nothing else) if you don't find a genuine "
+        "repeatable pattern, OR 1-5 bullet lines, each starting with '- ', stating ONE proposed "
+        "rule in plain language a VA could follow -- the way a human would write a note to "
+        "themselves, not a summary of the data. No other text before, between, or after the "
+        "bullets.\n\n"
+        "Example shape (write your own content, don't reuse this wording):\n"
+        "- Avoid seasonal/Christmas-only product lines -- margin never survives past December\n"
+        "- Treat single-seller-dominated listings (one seller >80% buy box) as a caution, not "
+        "just a number"
+    )
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        output_config={"effort": "medium"},
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    if response.stop_reason == "refusal":
+        raise ValueError("Claude declined to propose criteria amendments")
+
+    text = "".join(block.text for block in response.content if block.type == "text").strip()
+
+    if text.upper() == "NONE":
+        return []
+
+    return [line.strip()[2:].strip() for line in text.split("\n") if line.strip().startswith("- ")]
