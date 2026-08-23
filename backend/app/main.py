@@ -27,7 +27,7 @@ from app.routes import (
     dashboard, keepa, scan, analyse, opportunities_view, products, watchlist,
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
-    token_usage, criteria,
+    token_usage, criteria, shortlist,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -323,6 +323,7 @@ app.include_router(oa_source_discovery.router)
 app.include_router(help_route.router)
 app.include_router(token_usage.router)
 app.include_router(criteria.router)
+app.include_router(shortlist.router)
 
 
 @app.get("/opportunities/{brand}")

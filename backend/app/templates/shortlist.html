@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Shortlist - Atlas{% endblock %}
+
+{% block content %}
+
+<h4 class="mb-4">Shortlist</h4>
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Sweeps Discovery and Competitor Watch's own already-scored candidates (CONSIDER/PEAK_WINDOW/BUY, deduped by ASIN) and re-checks the strongest ones live -- baseline verdict, then an automatic deeper pass on anything BUY/WATCH -- so a candidate found weeks ago gets a fresh, current answer, not a stale one. Results land in the <a href="/review">Lead Queue</a> same as any other check.
+</div>
+
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-1">Run a sweep</h5>
+    <div class="small text-muted mb-3">
+        {{ pool_size }} candidate{{ "s" if pool_size != 1 }} currently clear Atlas's existing bar and aren't reviewed yet.
+        {% if pool_size == 0 %}Nothing to sweep right now.{% endif %}
+    </div>
+    <form method="post" action="/shortlist/run" class="row g-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">How many to deep-check</label>
+            <input type="number" class="form-control" name="batch_size" value="{{ default_size }}" min="1" max="100">
+        </div>
+        <div class="col-md-3">
+            <button type="submit" class="btn btn-dark w-100" {{ "disabled" if pool_size == 0 else "" }}>
+                <i class="bi bi-lightning-charge"></i> Run sweep
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if results is not none %}
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-3">Sweep results ({{ results|length }})</h5>
+    {% if not results %}
+    <div class="text-muted">No candidates to check.</div>
+    {% else %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>ASIN</th>
+                    <th>Title</th>
+                    <th>Found via</th>
+                    <th>Verdict</th>
+                    <th>Live estimate</th>
+                    <th>Deep dive?</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in results %}
+                <tr>
+                    <td class="small font-monospace">{{ r.asin }}</td>
+                    <td class="small">{{ r.title or "--" }}</td>
+                    <td class="small text-muted">
+                        {{ r.recommendation }}{% if r.seen_via_competitor_watch %} <span title="Also seen via Competitor Watch"><i class="bi bi-binoculars"></i></span>{% endif %}
+                    </td>
+                    <td>
+                        {% if r.skipped %}
+                        <span class="badge bg-light text-dark border" title="Already sitting unreviewed in the Lead Queue">Already pending</span>
+                        {% elif r.error %}
+                        <span class="badge bg-secondary" title="{{ r.error }}">Failed</span>
+                        {% elif r.verdict == "BUY" %}
+                        <span class="badge bg-success">BUY</span>
+                        {% elif r.verdict == "WATCH" %}
+                        <span class="badge bg-warning text-dark">WATCH</span>
+                        {% else %}
+                        <span class="badge bg-danger">AVOID</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if r.keepa_estimate_profit is not none %}
+                        &pound;{{ "%.2f"|format(r.keepa_estimate_profit) }} ({{ "%.1f"|format(r.keepa_estimate_roi) }}%)
+                        {% else %}
+                        <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td>{% if r.deep_dive_fired %}<i class="bi bi-search" title="Deep dive ran -- competitor stock levels + a live SP-API price check"></i>{% endif %}</td>
+                    <td>
+                        {% if r.lead_id %}
+                        <a href="/review/{{ r.lead_id }}" class="btn btn-sm btn-outline-secondary">Details</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

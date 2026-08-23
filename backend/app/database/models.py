@@ -435,7 +435,10 @@ class Lead(Base):
 
     asin: Mapped[str] = mapped_column(String, index=True)
 
-    # "manual" | "sheet"
+    # "manual" | "sheet" | "shortlist" -- "shortlist" added 2026-08-24:
+    # a lead the Shortlist sweep (app/services/shortlist_service.py)
+    # promoted on its own, from Discovery/Competitor Watch's own
+    # already-scored candidates, not something a human typed in.
     source: Mapped[str] = mapped_column(String)
 
     # "OA" | "A2A", or NULL if not known/provided

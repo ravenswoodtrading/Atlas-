@@ -117,14 +117,23 @@ def _run_verdict_check_inner(asin: str, cost_price: float | None):
 
 def _save_lead(
     asin: str, cost_price: float | None, metrics: dict, verdict: str, rationale: str,
-    source_detail: str | None = None,
+    source_detail: str | None = None, source: str = "manual",
 ) -> int:
-    """Persists a Lead(source="manual") row, per spec section 3. Returns its id."""
+    """
+    Persists a Lead row, per spec section 3. Returns its id.
+
+    source defaults to "manual" (the Verdict Checker's own single/bulk
+    ASIN entry) but the Shortlist sweep (app/routes/shortlist.py)
+    passes "shortlist" -- a third, distinct value from the original
+    "manual" | "sheet" pair, so a shortlist-originated lead is
+    traceable back to the pipeline that surfaced it rather than looking
+    like something a human typed in by hand.
+    """
     db = SessionLocal()
     try:
         lead = Lead(
             asin=asin,
-            source="manual",
+            source=source,
             va_cost_price=cost_price,
             status="analyzed",
             verdict=verdict,
