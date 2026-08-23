@@ -8,6 +8,12 @@ from dotenv import load_dotenv
 env_path = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(env_path)
 
+# The user's own editable buying-criteria doc (sourcing agent brief
+# step 8) -- same directory as .env above, i.e. the repo root next to
+# criteria.md. Read fresh on every verdict, not cached: the whole point
+# is that editing this file changes what Claude weighs with no restart.
+CRITERIA_DOC_PATH = Path(__file__).resolve().parents[2] / "criteria.md"
+
 MODEL = "claude-sonnet-5"
 
 VERDICT_VALUES = ("BUY", "WATCH", "AVOID")
@@ -192,6 +198,21 @@ def _format_rejection_history_summary(similar_rejections: list[dict] | None) -> 
     )
 
 
+def _load_criteria_doc() -> str | None:
+    """
+    Reads criteria.md fresh on every call -- the user's own editable
+    buying criteria (hard floors already enforced in code, restated for
+    transparency, plus judgment notes that don't reduce to a single
+    number). Returns None if the file is missing or empty so
+    generate_verdict can skip the section entirely.
+    """
+    try:
+        text = CRITERIA_DOC_PATH.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    return text or None
+
+
 def generate_verdict(
     metrics: dict, va_financials: dict | None = None, similar_rejections: list[dict] | None = None,
 ) -> tuple[str, str]:
@@ -223,9 +244,17 @@ def generate_verdict(
     rejection_history_summary = _format_rejection_history_summary(similar_rejections)
     rejection_history_block = f"\n{rejection_history_summary}\n" if rejection_history_summary else ""
 
+    criteria_doc = _load_criteria_doc()
+    criteria_block = (
+        f"\nUSER'S CRITERIA DOC (their own words, edited directly by them -- read carefully, "
+        f"this is a more specific/authoritative source of judgment than generic reasoning):\n{criteria_doc}\n"
+        if criteria_doc else ""
+    )
+
     prompt = (
         "You are assessing an Amazon FBA sourcing lead (OA or A2A) for a "
         "reseller deciding whether to buy stock.\n\n"
+        f"{criteria_block}"
         f"{financials_block}\n"
         f"Keepa-derived metrics:\n{_format_metrics_summary(metrics)}\n"
         f"{deep_dive_block}"
