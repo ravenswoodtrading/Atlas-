@@ -224,6 +224,20 @@
 </div>
 {% endif %}
 
+{% if metrics.similar_rejections %}
+<div class="vr-card mb-3">
+    <div class="vr-section-title"><i class="bi bi-hand-thumbs-down"></i> Past rejections considered for this verdict</div>
+    <ul class="mb-0 ps-3">
+        {% for r in metrics.similar_rejections %}
+        <li class="small mb-1">
+            {% if r.match_reason == "same_asin" %}<strong>This exact ASIN</strong> was rejected before{% elif r.match_reason == "same_brand" %}Same brand (<strong>{{ r.brand }}</strong>){% else %}Same category (<strong>{{ r.category_name }}</strong>){% endif %}
+            -- <span class="font-monospace">{{ r.asin }}</span>: "{{ r.decision_reason }}"
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
 <div class="row g-3">
     <div class="col-md-6">
         <div class="vr-card h-100">

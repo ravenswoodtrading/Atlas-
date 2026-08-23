@@ -1,11 +1,19 @@
+import json
 from dataclasses import replace
 
+from app.database.database import SessionLocal
+from app.database.models import Lead
 from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
 from app.services.category_survey_service import get_category_names
 from app.services.fee_engine import FeeEngine
 from app.keepa.parser import KeepaParser
 from app.sp_api.client import get_sp_api_client
+
+# Cap on VerdictService.get_similar_rejections' output -- a verdict
+# prompt with 30 past rejections crammed in is worse than one with the
+# 5 most relevant, and it's real prompt-token cost either way.
+MAX_SIMILAR_REJECTIONS = 5
 
 # Label passed as best_source_marketplace when computing a rough
 # Keepa-estimate profit for a verdict check -- not a real EU
@@ -24,6 +32,88 @@ STATS_WINDOW_DAYS = 180
 
 
 class VerdictService:
+
+    @staticmethod
+    def get_similar_rejections(asin: str, brand: str | None, category_name: str | None) -> list[dict]:
+        """
+        Sourcing agent brief step 7 -- past Lead rejections with a
+        captured "why not" reason (Lead.decision_reason, added
+        2026-08-23 in the reject-flow change) surfaced as context for
+        scoring a new, possibly-related candidate.
+
+        Deliberately scoped to Lead only, not ProductRecord/
+        SellerNewListing's own review_reason columns -- those belong
+        to Discovery/Competitor Watch's separate deterministic pipeline
+        (see the brief's "repo split that matters" note), and blending
+        their rejection reasons into the Verdict Checker's LLM prompt
+        would mix two different review contexts together.
+
+        Matching, highest-signal first, capped at
+        MAX_SIMILAR_REJECTIONS total: (1) this exact ASIN rejected
+        before -- the strongest possible signal, it's literally this
+        product resurfacing; (2) same brand; (3) same category. Brand/
+        category aren't their own Lead columns (only inside the JSON
+        keepa_metrics blob), so this loads candidate rejected leads
+        and filters/ranks in Python rather than querying the JSON blob
+        via SQL LIKE -- a manual review queue's rejected-lead volume is
+        small enough that this is simpler and more correct than a
+        fragile text match.
+        """
+        db = SessionLocal()
+        try:
+            rejected = (
+                db.query(Lead)
+                .filter(
+                    Lead.decision == "rejected",
+                    Lead.decision_reason.isnot(None),
+                    Lead.decision_reason != "",
+                )
+                .order_by(Lead.reviewed_at.desc())
+                .all()
+            )
+        finally:
+            db.close()
+
+        def _metrics(lead: Lead) -> dict:
+            if not lead.keepa_metrics:
+                return {}
+            try:
+                return json.loads(lead.keepa_metrics)
+            except Exception:
+                return {}
+
+        brand_norm = brand.strip().lower() if brand else None
+        category_norm = category_name.strip().lower() if category_name else None
+
+        same_asin, same_brand, same_category = [], [], []
+
+        for lead in rejected:
+            if lead.asin == asin:
+                same_asin.append((lead, _metrics(lead), "same_asin"))
+                continue
+
+            m = _metrics(lead)
+            lead_brand = (m.get("brand") or "").strip().lower()
+            lead_category = (m.get("category_name") or "").strip().lower()
+
+            if brand_norm and lead_brand == brand_norm:
+                same_brand.append((lead, m, "same_brand"))
+            elif category_norm and lead_category == category_norm:
+                same_category.append((lead, m, "same_category"))
+
+        results = []
+        for lead, m, match_reason in (same_asin + same_brand + same_category)[:MAX_SIMILAR_REJECTIONS]:
+            results.append({
+                "asin": lead.asin,
+                "brand": m.get("brand"),
+                "category_name": m.get("category_name"),
+                "decision_reason": lead.decision_reason,
+                "reviewed_at": lead.reviewed_at.isoformat() if lead.reviewed_at else None,
+                "match_reason": match_reason,
+                "same_asin": lead.asin == asin,
+            })
+
+        return results
 
     @staticmethod
     def compute_metrics(asin: str, cost_price: float | None = None, deep_dive: bool = False) -> dict | None:

@@ -78,8 +78,18 @@ def _run_verdict_check_inner(asin: str, cost_price: float | None):
     if metrics is None:
         return None, None, None, False, "Keepa has no data for this ASIN."
 
+    # Sourcing agent brief step 7 -- computed once per ASIN (brand/
+    # category don't change between the baseline and deep-dive passes
+    # below) and threaded into every generate_verdict call, then
+    # stamped onto whichever metrics dict actually ends up persisted
+    # so the Review Queue can show what the verdict was weighed against.
+    similar_rejections = VerdictService.get_similar_rejections(
+        asin, metrics.get("brand"), metrics.get("category_name")
+    )
+    metrics["similar_rejections"] = similar_rejections
+
     try:
-        verdict, rationale = generate_verdict(metrics, va_financials=None)
+        verdict, rationale = generate_verdict(metrics, va_financials=None, similar_rejections=similar_rejections)
     except Exception as exc:
         return metrics, None, None, False, f"Verdict generation failed: {exc}"
 
@@ -89,8 +99,11 @@ def _run_verdict_check_inner(asin: str, cost_price: float | None):
         deep_metrics = VerdictService.compute_metrics(asin, cost_price=cost_price, deep_dive=True)
 
         if deep_metrics is not None:
+            deep_metrics["similar_rejections"] = similar_rejections
             try:
-                deep_verdict, deep_rationale = generate_verdict(deep_metrics, va_financials=None)
+                deep_verdict, deep_rationale = generate_verdict(
+                    deep_metrics, va_financials=None, similar_rejections=similar_rejections
+                )
                 metrics, verdict, rationale = deep_metrics, deep_verdict, deep_rationale
                 deep_dive_fired = True
             except Exception as exc:

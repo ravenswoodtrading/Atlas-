@@ -164,7 +164,37 @@ def _format_deep_dive_summary(metrics: dict) -> str | None:
     )
 
 
-def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[str, str]:
+def _format_rejection_history_summary(similar_rejections: list[dict] | None) -> str | None:
+    """
+    Renders VerdictService.get_similar_rejections' output (sourcing
+    agent brief step 7) as a labelled section -- related leads the
+    user has already rejected, in their own words. Returns None when
+    there's nothing to show (the common case today: Lead.decision_reason
+    only started being captured 2026-08-23 and the review queue hasn't
+    built up history yet), so generate_verdict can skip the section.
+    """
+    if not similar_rejections:
+        return None
+
+    lines = []
+    for r in similar_rejections:
+        if r["match_reason"] == "same_asin":
+            tag = "THIS EXACT ASIN was rejected before"
+        elif r["match_reason"] == "same_brand":
+            tag = f"same brand ({r['brand']})"
+        else:
+            tag = f"same category ({r['category_name']})"
+        lines.append(f"- {tag}, ASIN {r['asin']}: \"{r['decision_reason']}\"")
+
+    return (
+        "PAST REJECTIONS -- the user has previously rejected these related leads, in their own words:\n"
+        + "\n".join(lines)
+    )
+
+
+def generate_verdict(
+    metrics: dict, va_financials: dict | None = None, similar_rejections: list[dict] | None = None,
+) -> tuple[str, str]:
     """
     Calls Claude with the Keepa metric set (see VerdictService.compute_metrics)
     and, when present, the VA/SAS-verified profit figures as ground truth --
@@ -190,12 +220,16 @@ def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[
     deep_dive_summary = _format_deep_dive_summary(metrics)
     deep_dive_block = f"\n{deep_dive_summary}\n" if deep_dive_summary else ""
 
+    rejection_history_summary = _format_rejection_history_summary(similar_rejections)
+    rejection_history_block = f"\n{rejection_history_summary}\n" if rejection_history_summary else ""
+
     prompt = (
         "You are assessing an Amazon FBA sourcing lead (OA or A2A) for a "
         "reseller deciding whether to buy stock.\n\n"
         f"{financials_block}\n"
         f"Keepa-derived metrics:\n{_format_metrics_summary(metrics)}\n"
-        f"{deep_dive_block}\n"
+        f"{deep_dive_block}"
+        f"{rejection_history_block}\n"
         "Ground every bullet in a specific figure above, and follow these "
         "rules exactly -- each one fixes a real mistake seen in a previous "
         "verdict:\n"
@@ -225,7 +259,14 @@ def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[
         "for longer), while low/no competing stock is a genuine "
         "supporting signal. If the SP-API live cross-check disagrees "
         "materially with Keepa's snapshot price above, flag that "
-        "explicitly rather than silently picking one.\n\n"
+        "explicitly rather than silently picking one.\n"
+        "6. When a PAST REJECTIONS section is present above, treat it as "
+        "the user's own stated preferences, not a rule to apply blindly -- "
+        "if THIS EXACT ASIN was rejected before, say so plainly and weigh "
+        "that reason heavily unless something concrete has genuinely "
+        "changed since (price, stock, competition). A same-brand or "
+        "same-category rejection is softer evidence of a pattern worth "
+        "naming, not an automatic AVOID on its own.\n\n"
         "Reply using EXACTLY this format -- the first line must be one of "
         "these three words and nothing else: BUY, WATCH, or AVOID (not a "
         "synonym like 'Pass' or 'Skip', not punctuation, not a sentence -- "
