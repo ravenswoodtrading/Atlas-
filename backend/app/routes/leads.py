@@ -10,10 +10,17 @@ from pydantic import BaseModel
 from app.database.database import SessionLocal
 from app.database.models import Lead
 from app.services.product_repository import ProductRepository
+from app.routes.verdict import highlight_figures
 
 router = APIRouter()
 
 templates = Jinja2Templates(directory="app/templates")
+# _verdict_metrics.html (shared with verdict.py's /verdict page) needs
+# this filter too -- each route module owns its own Jinja2Templates
+# instance in this codebase, so registering it once on verdict.py's
+# copy doesn't cover renders that go through this one (was a latent
+# 500 on every /review/<id> page, confirmed live 2026-08-23).
+templates.env.filters["highlight_figures"] = highlight_figures
 
 # Google Apps Script trigger (spec section 6) should send the shared
 # secret as a header, matching ATLAS_WEBHOOK_SECRET in Atlas/.env:
