@@ -90,6 +90,9 @@
                         {% if lead.sourcing_type %}
                         <div class="text-muted small mt-1">{{ lead.sourcing_type }}</div>
                         {% endif %}
+                        {% if lead.source_detail %}
+                        <div class="text-muted small mt-1" style="max-width:160px;" title="{{ lead.source_detail }}"><i class="bi bi-shop"></i> {{ lead.source_detail }}</div>
+                        {% endif %}
                     </td>
                     <td class="small">
                         {% if lead.va_roi is not none %}

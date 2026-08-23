@@ -115,7 +115,10 @@ def _run_verdict_check_inner(asin: str, cost_price: float | None):
     return metrics, verdict, rationale, deep_dive_fired, None
 
 
-def _save_lead(asin: str, cost_price: float | None, metrics: dict, verdict: str, rationale: str) -> int:
+def _save_lead(
+    asin: str, cost_price: float | None, metrics: dict, verdict: str, rationale: str,
+    source_detail: str | None = None,
+) -> int:
     """Persists a Lead(source="manual") row, per spec section 3. Returns its id."""
     db = SessionLocal()
     try:
@@ -128,6 +131,7 @@ def _save_lead(asin: str, cost_price: float | None, metrics: dict, verdict: str,
             rationale=rationale,
             keepa_metrics=json.dumps(metrics),
             analyzed_at=datetime.now(timezone.utc),
+            source_detail=source_detail or None,
         )
         db.add(lead)
         db.commit()
@@ -137,7 +141,7 @@ def _save_lead(asin: str, cost_price: float | None, metrics: dict, verdict: str,
         db.close()
 
 
-def _run_verdict_check(asin: str, cost_price: float | None):
+def _run_verdict_check(asin: str, cost_price: float | None, source_detail: str | None = None):
     """
     Single-ASIN entry point -- wraps _run_verdict_check_inner in its
     own KeepaPriority window and persists the result. Shared by the
@@ -151,17 +155,23 @@ def _run_verdict_check(asin: str, cost_price: float | None):
     if error:
         return metrics, verdict, rationale, deep_dive_fired, error
 
-    _save_lead(asin, cost_price, metrics, verdict, rationale)
+    _save_lead(asin, cost_price, metrics, verdict, rationale, source_detail=source_detail)
     return metrics, verdict, rationale, deep_dive_fired, None
 
 
-def _run_bulk_verdict_check(items: list[tuple[str, float | None]]) -> list[dict]:
+def _run_bulk_verdict_check(items: list[tuple[str, float | None]], source_detail: str | None = None) -> list[dict]:
     """
     Bulk entry point -- the whole batch shares ONE KeepaPriority window
     (per its own docstring: marking active once, not once per ASIN, is
     what actually bounds how long an in-flight low-priority scan waits
     before yielding). Returns one result dict per input ASIN, in order,
     each report-shaped for direct template/JSON use.
+
+    source_detail, if given, applies to every lead in the batch -- a
+    bulk submission is normally a set of ASINs someone found in one
+    place (a single retailer's clearance page, one wholesaler list),
+    so one shared note is more realistic than asking for one per line
+    in a plain textarea.
     """
     results = []
 
@@ -171,7 +181,7 @@ def _run_bulk_verdict_check(items: list[tuple[str, float | None]]) -> list[dict]
 
             lead_id = None
             if not error:
-                lead_id = _save_lead(asin, cost_price, metrics, verdict, rationale)
+                lead_id = _save_lead(asin, cost_price, metrics, verdict, rationale, source_detail=source_detail)
 
             results.append({
                 "asin": asin,
@@ -220,7 +230,7 @@ def _parse_bulk_input(text: str) -> list[tuple[str, float | None]]:
 
 
 @router.get("/verdict")
-def verdict_page(request: Request, asin: str = "", cost_price: str = ""):
+def verdict_page(request: Request, asin: str = "", cost_price: str = "", source_detail: str = ""):
     asin = asin.strip().upper()
 
     metrics = None
@@ -236,7 +246,9 @@ def verdict_page(request: Request, asin: str = "", cost_price: str = ""):
             parsed_cost = None
 
     if asin:
-        metrics, verdict, rationale, _deep_dive_fired, error = _run_verdict_check(asin, parsed_cost)
+        metrics, verdict, rationale, _deep_dive_fired, error = _run_verdict_check(
+            asin, parsed_cost, source_detail=source_detail.strip() or None
+        )
 
     return templates.TemplateResponse(
         request=request,
@@ -245,6 +257,7 @@ def verdict_page(request: Request, asin: str = "", cost_price: str = ""):
             "request": request,
             "asin": asin,
             "cost_price": cost_price,
+            "source_detail": source_detail,
             "metrics": metrics,
             "verdict": verdict,
             "rationale": rationale,
@@ -256,10 +269,10 @@ def verdict_page(request: Request, asin: str = "", cost_price: str = ""):
 
 
 @router.post("/verdict/bulk")
-def verdict_bulk_page(request: Request, asins_text: str = Form(...)):
+def verdict_bulk_page(request: Request, asins_text: str = Form(...), source_detail: str = Form("")):
     items = _parse_bulk_input(asins_text)[:MAX_BULK_ASINS]
 
-    bulk_results = _run_bulk_verdict_check(items) if items else []
+    bulk_results = _run_bulk_verdict_check(items, source_detail=source_detail.strip() or None) if items else []
 
     return templates.TemplateResponse(
         request=request,
@@ -268,6 +281,7 @@ def verdict_bulk_page(request: Request, asins_text: str = Form(...)):
             "request": request,
             "asin": "",
             "cost_price": "",
+            "source_detail": "",
             "metrics": None,
             "verdict": None,
             "rationale": None,
@@ -281,12 +295,15 @@ def verdict_bulk_page(request: Request, asins_text: str = Form(...)):
 class VerdictRequest(BaseModel):
     asin: str
     cost_price: float | None = None
+    source_detail: str | None = None
 
 
 @router.post("/api/verdict")
 def api_verdict(body: VerdictRequest):
     asin = body.asin.strip().upper()
-    metrics, verdict, rationale, deep_dive_fired, error = _run_verdict_check(asin, body.cost_price)
+    metrics, verdict, rationale, deep_dive_fired, error = _run_verdict_check(
+        asin, body.cost_price, source_detail=body.source_detail
+    )
 
     if error:
         return {"asin": asin, "error": error}
@@ -307,9 +324,10 @@ class BulkVerdictItem(BaseModel):
 
 class BulkVerdictRequest(BaseModel):
     items: list[BulkVerdictItem]
+    source_detail: str | None = None
 
 
 @router.post("/api/verdict/bulk")
 def api_verdict_bulk(body: BulkVerdictRequest):
     items = [(i.asin.strip().upper(), i.cost_price) for i in body.items[:MAX_BULK_ASINS]]
-    return {"results": _run_bulk_verdict_check(items)}
+    return {"results": _run_bulk_verdict_check(items, source_detail=body.source_detail)}

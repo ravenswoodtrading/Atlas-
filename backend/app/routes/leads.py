@@ -45,6 +45,12 @@ VA_ROI_ALIASES = ["roi", "roi%", "roi %"]
 VA_PROFIT_ALIASES = ["profit", "net profit", "expected profit"]
 VA_COST_PRICE_ALIASES = ["cost_price", "cost", "cost price", "buy cost", "unit cost", "actual cog", "cog (unit)"]
 VA_SALE_PRICE_ALIASES = ["sale_price", "sale price", "sell price", "selling price"]
+# Best-effort "where did this cost price come from" for a sheet lead --
+# see Lead.source_detail's own docstring for why this is distinct from
+# the source="sheet"/"manual" mechanism field. NULL if the VA's sheet
+# has no matching column, same graceful-miss behaviour as every other
+# alias list here.
+SOURCE_DETAIL_ALIASES = ["source", "sourced from", "retailer", "supplier", "store", "url", "link"]
 
 
 def _extract(payload: dict, aliases: list) -> str | None:
@@ -77,6 +83,11 @@ def _normalize_sourcing_type(value) -> str | None:
         return "OA"
 
     return text or None
+
+
+def _stringify(value) -> str | None:
+    """A sheet cell can come through as any JSON type -- coerce to a plain string for a String column."""
+    return str(value).strip() or None if value is not None else None
 
 
 def _extract_float(payload: dict, aliases: list) -> float | None:
@@ -114,6 +125,7 @@ def sheet_lead_webhook(payload: dict, x_webhook_secret: str = Header(default=Non
             va_profit=_extract_float(payload, VA_PROFIT_ALIASES),
             va_cost_price=_extract_float(payload, VA_COST_PRICE_ALIASES),
             va_sale_price=_extract_float(payload, VA_SALE_PRICE_ALIASES),
+            source_detail=_stringify(_extract(payload, SOURCE_DETAIL_ALIASES)),
             status="queued",
         )
         db.add(lead)

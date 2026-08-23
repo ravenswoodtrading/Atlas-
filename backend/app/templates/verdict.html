@@ -8,13 +8,17 @@
 
 <div class="card metric p-4 mb-4">
     <form method="get" action="/verdict" class="row g-3 align-items-end">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <label class="form-label">ASIN</label>
             <input type="text" class="form-control" name="asin" value="{{ asin }}" placeholder="e.g. B0BSCLTYJT" required>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <label class="form-label">Cost price <span class="text-muted">(optional -- for a rough Keepa-estimate ROI)</span></label>
             <input type="text" class="form-control" name="cost_price" value="{{ cost_price }}" placeholder="e.g. 12.50">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Source <span class="text-muted">(optional -- where you'd buy this from)</span></label>
+            <input type="text" class="form-control" name="source_detail" value="{{ source_detail }}" placeholder="e.g. Home Bargains, or a URL">
         </div>
         <div class="col-md-2">
             <button type="submit" class="btn btn-dark w-100">
@@ -38,6 +42,10 @@
     </div>
     <form method="post" action="/verdict/bulk">
         <textarea class="form-control mb-3" name="asins_text" rows="6" placeholder="B0BSCLTYJT,12.50&#10;B0ABCDEFGH&#10;B0IJKLMNOP,8.00" required></textarea>
+        <div class="mb-3">
+            <label class="form-label">Source <span class="text-muted">(optional -- applies to the whole batch, e.g. one retailer's clearance page)</span></label>
+            <input type="text" class="form-control" name="source_detail" placeholder="e.g. Home Bargains, or a URL">
+        </div>
         <button type="submit" class="btn btn-dark">
             <i class="bi bi-clipboard-check"></i> Check batch
         </button>

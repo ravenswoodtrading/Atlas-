@@ -50,6 +50,7 @@ migrate_table("product_records", {
 
 migrate_table("leads", {
     "decision_reason": "TEXT",
+    "source_detail": "TEXT",
 })
 
 migrate_table("automation_settings", {

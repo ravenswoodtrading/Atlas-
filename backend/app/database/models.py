@@ -444,6 +444,17 @@ class Lead(Base):
     # Full sheet row as submitted, JSON text -- NULL for manual leads.
     raw_sheet_data: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Free-text "where did this cost price come from" -- a retailer
+    # name, a URL, a note like "clearance aisle, Tesco Filton" -- NOT
+    # the same thing as `source` above (which just means how the lead
+    # entered Atlas, manual vs sheet). Optional on the Verdict Checker
+    # form; for a sheet lead, best-effort extracted from the VA's raw
+    # row if it has a matching column (see leads.py's SOURCE_DETAIL_
+    # ALIASES), NULL if neither ever captured it. Added 2026-08-23
+    # after a real BUY-verdict lead (B0B42Y9661) had a cost price typed
+    # in with no record anywhere of where that price came from.
+    source_detail: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     va_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     va_profit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     va_cost_price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
