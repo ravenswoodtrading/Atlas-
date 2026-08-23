@@ -201,15 +201,22 @@ class DiscordNotifier:
                     "inline": True,
                 },
                 {
-                    # Triple-backtick fenced block (not inline code/plain
-                    # text) so Discord desktop shows a one-click "Copy"
-                    # button on hover, and mobile's long-press selects the
-                    # whole block cleanly in one go -- much easier than
-                    # dragging a selection across plain field text, which
-                    # is what made pasting this into SAS fiddly before.
-                    # Not inline (full-width) so the block/button has room
-                    # to render properly rather than being squeezed into a
-                    # third of the row alongside two other fields.
+                    # This fenced block is the VISUAL reference (and still
+                    # gives desktop its hover "Copy" button) -- but as of
+                    # 2026-08-21 it is deliberately no longer the thing
+                    # mobile users are meant to copy from. A user reported
+                    # this exact field wasn't actually copyable on their
+                    # phone in practice, and embed field values sit inside
+                    # Discord's structured embed UI, not the message's
+                    # plain-text content -- mobile's long-press "Copy Text"
+                    # only grabs a message's raw content, not its embed
+                    # fields, on the Discord mobile clients this was
+                    # checked against. See notify_opportunity/send_test_ping
+                    # below: the ASIN is now ALSO the entire plain-text
+                    # content of its own message, specifically so "Copy
+                    # Text" on that message hands back nothing but the
+                    # ASIN. Kept here too so the embed still reads
+                    # correctly on its own at a glance.
                     "name": "ASIN",
                     "value": f"```\n{asin}\n```",
                     "inline": False,
@@ -235,12 +242,12 @@ class DiscordNotifier:
     @staticmethod
     def notify_opportunity(product_dict: dict, report_dict: dict, source_label: str = "") -> bool:
         """
-        Posts one Discord message for a notable opportunity. Returns
-        True if a message was actually sent, False for every no-op
-        case (not configured, already notified within the cooldown, or
-        the post itself failed) -- callers don't need to check the
-        return value, this never raises, matching every other
-        best-effort side-channel in this codebase (e.g.
+        Posts a Discord notification for a notable opportunity. Returns
+        True if the main message was actually sent, False for every
+        no-op case (not configured, already notified within the
+        cooldown, or the post itself failed) -- callers don't need to
+        check the return value, this never raises, matching every
+        other best-effort side-channel in this codebase (e.g.
         ProductRepository.save_opportunity's own try/except).
 
         source_label: the raw `brand` string BrandScanService.scan()
@@ -248,6 +255,33 @@ class DiscordNotifier:
         becomes "Scan (philips)" vs "Competitor watch (SellerName)" in
         the message. Optional (defaults to "Unknown") so this doesn't
         become a breaking change for any caller that doesn't pass it.
+
+        This sends up to TWO webhook messages, not one, as of
+        2026-08-21 -- fixing a real complaint that the ASIN in the
+        embed's field wasn't actually copyable on mobile. A mention
+        only notifies (pings) if it's in a message's plain-text
+        `content`, not an embed, so that has to stay in content -- but
+        content is also the ONLY thing mobile's long-press "Copy Text"
+        grabs, an embed field is not part of it. Mixing the mention
+        into the same content as the ASIN would mean "Copy Text" hands
+        back the mention text too, which is exactly the kind of
+        "technically copyable, still annoying to use on a phone"
+        result this is meant to fix. So: an optional short ping-only
+        message first (mention + a one-line summary, so the phone's
+        notification banner still shows useful context), then the
+        real message, whose `content` is ONLY the ASIN in backticks --
+        nothing else in that message's plain text, so "Copy Text"
+        cannot return anything but the ASIN. The embed (full details,
+        links, the visual ASIN field) rides along on this second
+        message.
+
+        Not verified live against a real Discord mobile client from
+        this environment (no network access here) -- this is built
+        from how Discord's mobile "Copy Text" action is documented/
+        known to behave (message content only, not embed fields).
+        Please confirm on your phone after this ships, the same way
+        you'd spot-check anything else Keepa/Discord-side in this
+        codebase that couldn't be tested live.
         """
         asin = product_dict.get("asin") or ""
 
@@ -257,10 +291,24 @@ class DiscordNotifier:
         if not DiscordNotifier._should_notify(asin):
             return False
 
+        if MENTION_USER_ID:
+            title = (product_dict.get("title") or asin)[:200]
+            recommendation = report_dict.get("recommendation") or "opportunity"
+            ping_payload = {"content": f"<@{MENTION_USER_ID}> New {recommendation}: {title}"}
+            try:
+                requests.post(WEBHOOK_URL, json=ping_payload, timeout=10).raise_for_status()
+            except Exception as exc:
+                # The ping is a nice-to-have (it's what makes your phone
+                # buzz) -- losing it must never stop the actual
+                # notification message below from going out.
+                print(f"Discord ping message failed for {asin}: {exc}")
+
         embed = DiscordNotifier._build_embed(product_dict, report_dict, source_label)
 
         payload = {
-            "content": f"<@{MENTION_USER_ID}>" if MENTION_USER_ID else None,
+            # ONLY the ASIN, in backticks, and nothing else -- see this
+            # method's docstring for why the mention can't live here too.
+            "content": f"`{asin}`",
             "embeds": [embed],
         }
 
@@ -331,8 +379,20 @@ class DiscordNotifier:
         embed = DiscordNotifier._build_embed(sample_product, sample_report, "test")
         embed["description"] = "If you can see this in Discord, your webhook (and mention, if you set one) is working. The links below use a fake ASIN and won't resolve to a real product."
 
+        # Mirrors notify_opportunity's real two-message shape exactly
+        # (see that method's docstring) -- otherwise this test ping
+        # would keep "passing" even if the real mobile-copy fix broke,
+        # since it'd be testing a different, simpler payload shape than
+        # what actually gets sent for a genuine opportunity.
+        if MENTION_USER_ID:
+            ping_payload = {"content": f"<@{MENTION_USER_ID}> New BUY: {sample_product['title']}"}
+            try:
+                requests.post(WEBHOOK_URL, json=ping_payload, timeout=10).raise_for_status()
+            except Exception as exc:
+                return {"sent": False, "reason": f"Discord rejected the ping message: {exc}"}
+
         payload = {
-            "content": f"<@{MENTION_USER_ID}>" if MENTION_USER_ID else None,
+            "content": f"`{sample_product['asin']}`",
             "embeds": [embed],
         }
 
@@ -345,5 +405,11 @@ class DiscordNotifier:
         return {
             "sent": True,
             "mentioned": bool(MENTION_USER_ID),
-            "reason": "Posted -- check the Discord channel your webhook points to.",
+            "reason": (
+                "Posted -- check the Discord channel your webhook points to. "
+                "Long-press (or tap-and-hold) the SECOND message on your phone and "
+                "use \"Copy Text\" -- it should hand back only the ASIN "
+                "(TEST0000000 for this test ping), nothing else. If it doesn't, "
+                "tell me exactly what got copied instead."
+            ),
         }

@@ -218,7 +218,7 @@ class ReplenService:
             title, brand, category = "", "", ""
 
             try:
-                products = ProductService().get_products([asin], "UK")
+                products = ProductService().get_products([asin], "UK", usage_category="replen")
                 if products:
                     p = products[0]
                     title = p.get("title") or ""
@@ -292,7 +292,7 @@ class ReplenService:
             batch = items[i:i + ReplenService.CHECK_BATCH_SIZE]
             batch_asins = [item.asin for item in batch]
 
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="replen")
             result = scanner.scan(
                 "replen", asins=batch_asins, limit=len(batch_asins), force_rescan=True,
             )

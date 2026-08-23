@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from app.models.product import Product
 from app.services.brand_scan_service import BrandScanService
@@ -23,6 +24,18 @@ class WatchlistService:
     # "decent" here means the exact same thing it means everywhere
     # else in the app.
     AUTO_WATCH_RECOMMENDATIONS = {"CONSIDER", "BUY"}
+
+    # An auto-added watch has to be at least this old, AND have been
+    # genuinely rechecked at least PRUNE_MIN_RECHECKS separate times
+    # since it was added, before prune_stale_auto_adds will consider
+    # removing it -- see that method's docstring for the reasoning. A
+    # 2026-08-21 review found the watchlist was 94% auto-added and 88%
+    # had never gone profitable either way in up to 23 days of
+    # rechecking; these two numbers are meant to give every auto-add a
+    # fair, repeated chance to prove itself before it's judged dead
+    # weight -- not to clear the list out aggressively.
+    PRUNE_AFTER_DAYS = 14
+    PRUNE_MIN_RECHECKS = 2
 
     @staticmethod
     def maybe_auto_watch(product: Product, category_name: str = ""):
@@ -110,7 +123,7 @@ class WatchlistService:
         if not stale_asins:
             return {"checked": 0, "total": len(watched), "stale": 0}
 
-        scanner = BrandScanService()
+        scanner = BrandScanService(usage_category="watchlist")
         result = scanner.scan(
             "watchlist-weekly", asins=stale_asins, limit=len(stale_asins), force_rescan=True,
         )
@@ -126,3 +139,78 @@ class WatchlistService:
             "stale": len(stale_asins),
             "error": result.get("error"),
         }
+
+    @staticmethod
+    def prune_stale_auto_adds() -> dict:
+        """
+        Removes an auto-added watch once it's had a fair, repeated
+        chance to prove the bet it was added on (a real recurring EU
+        cost low) and hasn't: at least PRUNE_AFTER_DAYS since it was
+        added, at least PRUNE_MIN_RECHECKS genuinely separate Keepa
+        rechecks in that window (so a stretch where Atlas wasn't
+        running, or nobody visited /watchlist and the weekly job
+        hadn't caught it yet, doesn't get mistaken for "proof" of
+        anything), and NOT ONE of those rechecks ever found it
+        profitable today or at the 90-day typical price.
+
+        Added 2026-08-21 -- a review found the watchlist was 94%
+        auto-added (WatchlistService.maybe_auto_watch runs off the
+        tail of every scan anywhere in the app) and 88% of the whole
+        list had never gone profitable either way in up to 23 days,
+        while every one of those items still gets fully re-priced
+        across every EU marketplace every ~48h. This is what actually
+        clears that dead weight out instead of it being re-scanned
+        (at real token cost) indefinitely.
+
+        Deliberately scoped to auto-added watches ONLY -- checked via
+        the same "Auto-added:" note prefix the UI already uses to show
+        the "Auto" badge (see watchlist.html). A manual "Watch" click
+        or an OOS-restock watch (note starts "Amazon OOS at review")
+        is the user's own explicit choice and is never silently
+        removed here, no matter how long it sits there.
+
+        Meant to be called from a slow (daily-or-slower) background
+        tick, same as check_stale -- see main.py's
+        _weekly_recheck_scheduler. Never raises, for the same reason
+        as maybe_auto_watch: a side-effect cleanup job must never take
+        down the scheduler tick it rides along on.
+        """
+        try:
+            watched = ProductRepository.list_watched()
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(days=WatchlistService.PRUNE_AFTER_DAYS)
+            ).replace(tzinfo=None)
+
+            pruned = []
+
+            for w in watched:
+                if not (w.note or "").startswith("Auto-added:"):
+                    continue
+
+                if w.watched_at > cutoff:
+                    continue  # hasn't had its fair chance yet
+
+                summary = ProductRepository.get_recheck_summary_since(w.asin, w.watched_at)
+
+                if summary["recheck_count"] < WatchlistService.PRUNE_MIN_RECHECKS:
+                    continue  # not enough real rechecks to call this proven either way
+
+                if summary["ever_profitable"]:
+                    continue  # the bet paid off at least once -- keep watching it
+
+                ProductRepository.remove_watch(w.asin)
+                pruned.append(w.asin)
+
+            if pruned:
+                preview = ", ".join(pruned[:10]) + ("..." if len(pruned) > 10 else "")
+                ActivityLog.record(
+                    "watchlist_prune",
+                    f"removed {len(pruned)} auto-added watch(es) that never went profitable "
+                    f"in {WatchlistService.PRUNE_AFTER_DAYS}+ days: {preview}",
+                )
+
+            return {"pruned": len(pruned), "asins": pruned}
+
+        except Exception as exc:
+            print(f"WatchlistService.prune_stale_auto_adds failed: {exc}")
+            return {"pruned": 0, "asins": [], "error": str(exc)}

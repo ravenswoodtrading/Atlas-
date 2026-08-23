@@ -98,7 +98,7 @@ def discovery(request: Request, brand: str = "", limit: int = 20,
         # instead of competing for tokens.
         ScanCoordinator.acquire_for_manual_scan()
         try:
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="discovery")
             result = scanner.scan(brand, limit=limit, force_rescan=force_rescan,
                                    category_ids=category_ids or None)
         finally:
@@ -184,7 +184,7 @@ async def discovery_upload(
     if asins:
         ScanCoordinator.acquire_for_manual_scan()
         try:
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="discovery")
             result = scanner.scan(label, limit=limit, force_rescan=force_rescan, asins=asins)
         finally:
             ScanCoordinator.release_after_manual_scan()

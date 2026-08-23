@@ -241,6 +241,7 @@ def dashboard(request: Request):
             "new_competitor_detections": _new_competitor_detections_today(),
             "gated_opportunity": _best_gated_opportunity(),
             "review_queue_summary": ReviewQueueService.count_summary(),
+            "consider_summary": ReviewQueueService.consider_summary(),
             "oa_discovery": _oa_discovery_activity(),
             "new_signal_matches": ProductRepository.count_new_signal_matches(),
             "today_activity": _todays_activity(),

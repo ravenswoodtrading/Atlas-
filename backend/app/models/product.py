@@ -38,11 +38,25 @@ class Product:
 
     sales_drops_30d: int = 0
 
-    # Downward price moves in the last 90 days -- used as evidence
-    # that a high buy_box_max_90d reflects a genuinely repeating
-    # price pattern, not a single historical spike. See
-    # KeepaParser.price_drop_count and OpportunityEngine.PEAK_WINDOW.
+    # Downward price moves in the last 90 days -- informational only
+    # (shown on the Verdict Checker page). NOT used to gate
+    # PEAK_WINDOW any more (see peak_viable_days_90d below for why) --
+    # a count of ANY price move, at any level, is a weak proxy for
+    # "the peak genuinely recurs". See KeepaParser.price_drop_count.
     price_drop_count_90d: int = 0
+
+    # How many of the last 90 days would ACTUALLY have cleared a
+    # viable ROI at TODAY's best EU source cost -- the real evidence
+    # OpportunityEngine's PEAK_WINDOW recommendation gates on
+    # (2026-08-20), replacing the old price_drop_count_90d proxy.
+    # Computed day-by-day (re-running the real ROI formula against
+    # each of the last 90 reconstructed daily UK prices), not from a
+    # single min/max/avg stat -- see
+    # SourcingClassifier.compute_peak_window_evidence for why "the
+    # 90-day peak recurs" needs to mean "was profitable on more than
+    # a handful of real days", not "the price moved around". 0 if
+    # there's no EU source to price against at all.
+    peak_viable_days_90d: int = 0
 
     # Keepa's confirmed monthly sales count (their "monthlySold" stat,
     # based on actual Amazon sales data, not an estimate). 0 means

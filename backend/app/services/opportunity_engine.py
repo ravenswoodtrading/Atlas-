@@ -31,11 +31,23 @@ class OpportunityReport:
     peak_roi: float = 0.0
     peak_price: float = 0.0
 
+    # How many of the last 90 days were actually profitable at today's
+    # EU source cost -- the real evidence behind a PEAK_WINDOW call
+    # (see PEAK_MIN_VIABLE_DAYS_90D below). Carried through to the
+    # Review Queue's "why" panel so a PEAK lead's recurrence can be
+    # seen, not just trusted.
+    peak_viable_days_90d: int = 0
+
     # Profit as a % of sale price (as opposed to ROI, profit as a % of
     # cost) -- see Product.margin's docstring. Whichever of
     # today's/90d-average price ROI was calculated from.
     margin: float = 0.0
     margin_90d: float = 0.0
+
+    # Same, at the 90-day PEAK price -- mirrors peak_profit/peak_roi
+    # above. Only meaningful when recommendation == "PEAK_WINDOW", same
+    # convention as those two fields.
+    margin_peak: float = 0.0
 
 
 class OpportunityEngine:
@@ -45,18 +57,43 @@ class OpportunityEngine:
     # otherwise strong demand/velocity/competition/price-stability
     # factors alone (75 of the old 105 achievable points) could carry
     # a product to REVIEW even at a near-zero or barely-positive ROI.
-    # 10% is a deliberately conservative "not even worth the risk"
+    # 17% is a deliberately conservative "not even worth the risk"
     # line, not a "good" ROI -- ScoringEngine's tiered ROI factor is
-    # what actually rewards genuinely strong margins.
-    MIN_VIABLE_ROI = 10
+    # what actually rewards genuinely strong margins. Raised from 10%
+    # to 17% -- user's own explicit floor ("I will never buy a product
+    # that low"), 2026-08-23.
+    MIN_VIABLE_ROI = 17
 
-    # PEAK_WINDOW requires at least this many downward price moves in
-    # the last 90 days before a high buy_box_max_90d is trusted as a
-    # genuinely repeating pattern. buy_box_max_90d is already scoped
-    # to 90 days (not all-time), but a product could still have swung
-    # only once in that window -- this guards against treating a
-    # single spike as a recurring "sells high sometimes" opportunity.
-    PEAK_VOLATILITY_MIN_DROPS_90D = 4
+    # Two more AND-conditions alongside MIN_VIABLE_ROI, confirmed by
+    # the user 2026-08-23: a lead needs 13%+ margin (profit as a % of
+    # the GROSS sale price -- see FeeResult.margin's docstring for why
+    # this is a different, always-lower number than ROI) AND £2+
+    # absolute profit per unit, on top of clearing MIN_VIABLE_ROI, to
+    # be viable at all. Margin catches a high-ROI product whose sale
+    # price barely covers its own fees; the £ floor catches a
+    # high-margin product whose absolute profit is still pennies (a
+    # cheap item can clear both ROI and margin bars on tiny numbers).
+    MIN_VIABLE_MARGIN_PCT = 13
+    MIN_VIABLE_PROFIT_GBP = 2
+
+    # PEAK_WINDOW requires the product to have actually BEEN at a
+    # profitable price on at least this many of the last 90 days
+    # (see Product.peak_viable_days_90d / SourcingClassifier.
+    # compute_peak_window_evidence) before a high buy_box_max_90d is
+    # trusted as a genuinely repeating pattern, rather than a single
+    # spike. Replaces an earlier version of this gate (2026-08-20)
+    # that counted ANY downward price move in 90 days
+    # (price_drop_count_90d) as "volatility evidence" -- that counted
+    # pure noise (a product bouncing between low, unprofitable prices
+    # racks up plenty of "drops" unrelated to the peak) and let
+    # single-spike leads through, per direct user report ("one price
+    # spike doesn't mean this is potentially profitable"). First-pass
+    # figure -- more than the bare minimum of 1 (a single lucky day),
+    # but low enough that a genuinely recurring window (even a short
+    # one, or two separate short windows across the quarter) still
+    # clears it; revisit once real PEAK_WINDOW volume post-fix is
+    # visible.
+    PEAK_MIN_VIABLE_DAYS_90D = 5
 
     # PEAK_WINDOW also requires real evidence the product actually
     # SELLS -- confirmed monthly sales, or (absent that) at least this
@@ -90,6 +127,7 @@ class OpportunityEngine:
         # normally-viable product.
         effective_roi = max(product.roi, product.roi_90d)
         effective_profit = max(product.profit, product.profit_90d)
+        effective_margin = max(product.margin, product.margin_90d)
 
         # Recommendation
         if product.gated:
@@ -104,14 +142,22 @@ class OpportunityEngine:
             # anywhere else (see ProductRepository.is_notable).
             recommendation = "GATED"
 
-        elif effective_profit <= 0 or effective_roi < OpportunityEngine.MIN_VIABLE_ROI:
-            # Not viable at today's price OR the 90-day average -- but
-            # before writing it off entirely, check whether it would
-            # be viable at the recent 90-day PEAK price, with real
-            # evidence (repeated price drops) that the peak actually
-            # recurs rather than being a one-off spike. This is a
-            # deliberately separate, lower-trust tier -- PEAK_WINDOW
-            # never counts as BUY/CONSIDER anywhere else in the app
+        elif (
+            effective_profit < OpportunityEngine.MIN_VIABLE_PROFIT_GBP
+            or effective_roi < OpportunityEngine.MIN_VIABLE_ROI
+            or effective_margin < OpportunityEngine.MIN_VIABLE_MARGIN_PCT
+        ):
+            # Not viable at today's price OR the 90-day average --
+            # "viable" now means ALL THREE of ROI/margin/absolute
+            # profit clear their own floor (see MIN_VIABLE_ROI/
+            # MIN_VIABLE_MARGIN_PCT/MIN_VIABLE_PROFIT_GBP above), not
+            # just profit being positive. But before writing it off
+            # entirely, check whether it would be viable at the recent
+            # 90-day PEAK price, with real evidence (repeated price
+            # drops) that the peak actually recurs rather than being a
+            # one-off spike. This is a deliberately separate,
+            # lower-trust tier -- PEAK_WINDOW never counts as
+            # BUY/CONSIDER anywhere else in the app
             # (ProductRepository.is_notable's roi/roi_90d checks don't
             # see this figure, so it's never auto-pinged to Discord at
             # the same trust level as a real BUY).
@@ -121,9 +167,10 @@ class OpportunityEngine:
             )
 
             if (
-                product.profit_peak > 0
+                product.profit_peak >= OpportunityEngine.MIN_VIABLE_PROFIT_GBP
                 and product.roi_peak >= OpportunityEngine.MIN_VIABLE_ROI
-                and product.price_drop_count_90d >= OpportunityEngine.PEAK_VOLATILITY_MIN_DROPS_90D
+                and product.margin_peak >= OpportunityEngine.MIN_VIABLE_MARGIN_PCT
+                and product.peak_viable_days_90d >= OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D
                 and has_sales_evidence
             ):
                 recommendation = "PEAK_WINDOW"
@@ -156,6 +203,8 @@ class OpportunityEngine:
             peak_profit=product.profit_peak,
             peak_roi=product.roi_peak,
             peak_price=product.buy_box_max_90d,
+            peak_viable_days_90d=product.peak_viable_days_90d,
             margin=product.margin,
             margin_90d=product.margin_90d,
+            margin_peak=product.margin_peak,
         )

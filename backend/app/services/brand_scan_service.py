@@ -1,8 +1,10 @@
 from dataclasses import asdict
 
+from app.keepa.parser import KeepaParser
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
-from app.services.product_mapper import ProductMapper
+from app.services.product_mapper import ProductMapper, MARKETPLACE_CURRENCY
+from app.services.currency_service import CurrencyService
 from app.services.fee_engine import FeeEngine
 from app.services.opportunity_engine import OpportunityEngine
 from app.services.product_repository import ProductRepository
@@ -12,12 +14,35 @@ from app.services.category_survey_service import get_category_names
 from app.config.fees import DEFAULT_REFERRAL_RATE, REFERRAL_RATE_BY_CATEGORY_NAME
 from app.services.keepa_priority import KeepaPriority
 from app.services.discord_notifier import DiscordNotifier
+from app.services.token_usage_service import TokenUsageService
+from app.sp_api.client import get_sp_api_client
 
 EU_MARKETPLACES = ["DE", "FR", "ES", "IT"]
 
 # Safety margin -- don't spend right down to 0, leave headroom for
 # whatever else might use the account (e.g. another tab open).
 MIN_TOKEN_BUFFER = 5
+
+# Extra headroom the Scan Queue's continuous tick (every 60s, see
+# main.py's SCAN_QUEUE_INTERVAL_SECONDS) leaves untouched, on top of
+# MIN_TOKEN_BUFFER, so the once-a-day Replen/Watchlist safety-net tick
+# (see main.py's _weekly_recheck_scheduler) isn't perpetually starved
+# by it (2026-08-20). Scan Queue ticks ~1440x/day against the safety
+# net's 1x/day, so even with no lock contention at all it would
+# otherwise soak up nearly every token as it refills -- confirmed via
+# atlas_server.log, where even MANUAL Replen "check now" runs were
+# routinely stopping after only a handful of ASINs on a near-empty
+# balance. Only the Scan Queue passes this via BrandScanService's
+# token_reserve param (see __init__/_min_tokens below) --
+# manual scans and the other lower-frequency schedulers (Seller Watch,
+# Signals, Discovery, and the safety net itself) still use the plain
+# MIN_TOKEN_BUFFER, so this reserve is only ever "off-limits" to the
+# one caller most likely to otherwise claim it first. First-pass
+# figure -- worth revisiting once real per-ASIN token cost on this
+# account is visible (Replen's own batches fetch UK + 4 EU
+# marketplaces per ASIN, so the true cost of even one full recheck
+# batch could be well above or below this).
+WEEKLY_SAFETY_NET_RESERVE = 30
 
 # How many ASINs to request per Keepa call. Keepa allows a single
 # request to push your token balance NEGATIVE if it doesn't have
@@ -31,14 +56,47 @@ CHUNK_SIZE = 10
 # same brand from re-spending tokens on the exact same top-ranked
 # products every time -- once they're on cooldown, the next scan
 # naturally falls through to the next tier down instead.
-RESCAN_COOLDOWN_HOURS = 24
+#
+# 48h (raised from 24h 2026-08-21 as a token-conservation measure) --
+# prices/ranks don't meaningfully move fast enough on most ASINs to
+# need a same-day re-check, and every scheduled loop (Scan Queue,
+# weekly recheck, etc.) already re-visits on its own cadence anyway,
+# so this mostly just avoids re-paying for a brand re-scanned twice
+# in the same day.
+RESCAN_COOLDOWN_HOURS = 48
+
+# ROI bar an EU marketplace's CURRENT price must clear (see
+# _clears_early_exit_roi) for Step 4 below to stop checking further
+# EU marketplaces for that ASIN. Mirrors OpportunityEngine.
+# MIN_VIABLE_ROI (17%, raised from 10% 2026-08-23) -- the same "not a
+# great lead yet, but not obviously worth ignoring either" floor used
+# everywhere else in Atlas. Once a source clears it, spending 1-3 more
+# Keepa calls per ASIN chasing a possibly-even-cheaper market
+# elsewhere isn't worth the token cost -- see Step 4's own comment for
+# the full reasoning.
+EARLY_EXIT_ROI_PCT = 17.0
 
 
 class BrandScanService:
 
-    def __init__(self):
+    def __init__(self, token_reserve: int = 0, usage_category: str = "other"):
+        """
+        token_reserve: extra tokens (on top of MIN_TOKEN_BUFFER) this
+        instance treats as off-limits -- see WEEKLY_SAFETY_NET_RESERVE
+        above for why/who sets this to something other than 0.
+
+        usage_category: which Atlas feature this instance is scanning
+        for (e.g. "scan_queue", "replen", "watchlist",
+        "competitor_watch", "discovery") -- purely for the Settings >
+        Token Usage page (see TokenUsageEvent), threaded through to
+        every ProductFinder/ProductService call this instance makes.
+        Defaults to "other" for any caller that hasn't been updated
+        with a real label yet.
+        """
         self.finder = ProductFinder()
         self.product_service = ProductService()
+        self._min_tokens = MIN_TOKEN_BUFFER + max(token_reserve, 0)
+        self.usage_category = usage_category
 
     def _current_tokens(self):
         """
@@ -57,7 +115,7 @@ class BrandScanService:
         """
         tokens = self.product_service.api.tokens_left
 
-        if tokens is not None and tokens <= MIN_TOKEN_BUFFER:
+        if tokens is not None and tokens <= self._min_tokens:
             try:
                 self.product_service.api.update_status()
                 tokens = self.product_service.api.tokens_left
@@ -103,17 +161,19 @@ class BrandScanService:
             if tokens_now is not None:
                 if cost_estimate is not None:
                     estimated_cost = cost_estimate * len(chunk)
-                    if tokens_now < estimated_cost + MIN_TOKEN_BUFFER:
+                    if tokens_now < estimated_cost + self._min_tokens:
                         ran_out = True
                         break
-                elif tokens_now <= MIN_TOKEN_BUFFER:
+                elif tokens_now <= self._min_tokens:
                     # No cost estimate yet, but already critically low --
                     # don't risk even the first (measuring) chunk.
                     ran_out = True
                     break
 
             tokens_before = self.product_service.api.tokens_left
-            chunk_products = self.product_service.get_products(chunk, marketplace, full=full)
+            chunk_products = self.product_service.get_products(
+                chunk, marketplace, full=full, usage_category=self.usage_category,
+            )
             tokens_after = self.product_service.api.tokens_left
 
             products.extend(chunk_products)
@@ -124,6 +184,99 @@ class BrandScanService:
                 cost_estimate = measured
 
         return products, fetched_asins, ran_out, cost_estimate
+
+    @staticmethod
+    def _clears_viable_roi(quick_product, cost_gbp: float, category_name: str) -> bool:
+        """
+        Shared core of the early-exit ROI check -- given an
+        already-GBP-converted source cost, is it good enough to stop
+        looking further? Used by both _clears_early_exit_roi (Keepa
+        EU data) and _sp_api_find_source_market (SP-API's free price
+        check) below, since the actual "is this good enough" math is
+        identical either way -- only how the cost gets to GBP differs.
+        """
+        if not cost_gbp or not quick_product.buy_box_now:
+            return False
+
+        fba_fee = quick_product.fba_fee if quick_product.fba_fee else FeeEngine.DEFAULT_FBA_FEE
+        roi = FeeEngine.roi_at_price(quick_product.buy_box_now, cost_gbp, category_name, fba_fee)
+        return roi >= EARLY_EXIT_ROI_PCT
+
+    @staticmethod
+    def _clears_early_exit_roi(quick_product, eu_product: dict, marketplace: str,
+                                category_name: str) -> bool:
+        """
+        Quick (zero extra Keepa tokens -- pure computation on data
+        already fetched) check of whether `eu_product`'s CURRENT price
+        would already deliver a viable-enough margin against
+        `quick_product`'s UK price. Used only by Step 4 to decide
+        whether it's worth spending tokens checking this ASIN against
+        any FURTHER EU marketplace -- not the real profitability
+        figure, which Step 5's FeeEngine.calculate() still computes
+        properly (today/90d/peak) against whichever marketplace this
+        settles on.
+
+        Deliberately checked against buy_box_now only, not the 90d/
+        peak prices Step 5 also considers -- erring towards checking
+        MORE marketplaces (never fewer) whenever the "is this good
+        enough already" call is close, so this can only ever miss a
+        cheaper market, never miss a genuinely profitable one.
+
+        Same "an FBM-won buy box isn't a real, VAT-reclaimable A2A
+        source" rule as ProductMapper.from_keepa_multi -- checked here
+        too so a marketplace that merely LOOKS cheap on a merchant-
+        fulfilled listing doesn't wrongly end the search early.
+        """
+        eu_parser = KeepaParser(eu_product)
+        raw_cost = eu_parser.buy_box_now()
+
+        if not raw_cost or not quick_product.buy_box_now:
+            return False
+
+        if not eu_parser.buy_box_is_amazon_fulfilled():
+            return False
+
+        currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+        cost_gbp = CurrencyService.to_gbp(raw_cost, currency)
+
+        return BrandScanService._clears_viable_roi(quick_product, cost_gbp, category_name)
+
+    @staticmethod
+    def _sp_api_find_source_market(sp_client, asin: str, quick_product, category_name: str):
+        """
+        Free (zero Keepa tokens) pass across EU_MARKETPLACES via
+        SP-API's getItemOffers, checked in the same DE/FR/ES/IT
+        priority order Keepa would use -- returns (marketplace,
+        cost_gbp) for the FIRST one whose CURRENT price already clears
+        EARLY_EXIT_ROI_PCT, or (None, None) if none do.
+
+        CONFIRMED LIVE (2026-08-21) that this account's SP-API Pricing
+        access returns genuine competitive offer data for third-party
+        ASINs (not just the seller's own listings) -- validated against
+        a 20-ASIN real Replen sample compared directly to Keepa's own
+        prices, ~76% agreement with real data on both sides. The
+        remaining ~22% were cases where Keepa had a real offer SP-API
+        didn't return (never the reverse in that sample) -- so a
+        (None, None) result here must NEVER be read as "no EU source
+        exists". It only means "SP-API couldn't give a free answer for
+        this ASIN" -- the caller (Step 4) still runs the normal Keepa
+        early-exit search for it, exactly as if SP-API weren't
+        configured at all. Only a POSITIVE SP-API result is trusted to
+        skip real work.
+        """
+        for marketplace in EU_MARKETPLACES:
+            offer = sp_client.get_item_offers(asin, marketplace)
+
+            if not offer or offer.get("status") != "Success" or not offer.get("price"):
+                continue
+
+            currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+            cost_gbp = CurrencyService.to_gbp(offer["price"], currency)
+
+            if BrandScanService._clears_viable_roi(quick_product, cost_gbp, category_name):
+                return marketplace, cost_gbp
+
+        return None, None
 
     def scan(self, brand: str, limit: int = 20, force_rescan: bool = False,
              asins: list = None, category_ids: list = None, page: int = 0,
@@ -208,7 +361,7 @@ class BrandScanService:
             # once tokens refill).
             tokens_before_search = self._current_tokens()
 
-            if tokens_before_search is not None and tokens_before_search <= MIN_TOKEN_BUFFER:
+            if tokens_before_search is not None and tokens_before_search <= self._min_tokens:
                 return {
                     "brand": brand, "count": 0, "opportunities": [],
                     "skipped_excluded": 0, "skipped_user_excluded": 0,
@@ -252,7 +405,10 @@ class BrandScanService:
                     ),
                 }
 
-            asins = self.finder.find_brand(brand, limit=100, page=page, category_ids=category_ids)
+            asins = self.finder.find_brand(
+                brand, limit=100, page=page, category_ids=category_ids,
+                usage_category=self.usage_category,
+            )
 
             if asins is None:
                 # The Product Finder call itself failed (network/API
@@ -358,7 +514,7 @@ class BrandScanService:
 
         tokens_before_uk = self._current_tokens()
 
-        if tokens_before_uk is not None and tokens_before_uk <= MIN_TOKEN_BUFFER:
+        if tokens_before_uk is not None and tokens_before_uk <= self._min_tokens:
             return {
                 **empty_response,
                 "tokens_remaining": tokens_before_uk,
@@ -451,7 +607,23 @@ class BrandScanService:
         skipped_unprofitable_ceiling = 0
         skipped_dead_listing = 0
 
+        # asin -> its already-computed quick_product, for every ASIN
+        # that survives this step -- reused by Step 4's early-exit
+        # check below so it doesn't re-parse the same UK dict again.
+        quick_by_asin = {}
+
         for uk_product in included_uk_products:
+            # BUG FIX (2026-08-21): this was previously missing here --
+            # the `asin` used a few lines down in
+            # ProductRepository.upsert_ceiling_rejected/remove_ceiling_rejected
+            # was silently falling back to Python's loop-variable leak
+            # from Step 3's `for uk_product in uk_products:` loop above,
+            # i.e. whatever ASIN that loop last touched -- NOT the
+            # product actually being ceiling-checked on this iteration.
+            # Confirmed by inspection, not caught live; low real-world
+            # impact since CeilingRejected rows are only read back by
+            # ASIN for re-pricing, but still wrong.
+            asin = uk_product.get("asin") or ""
             quick_product = ProductMapper.from_keepa(uk_product)
 
             # Dead listing: zero sales rank drops AND zero current
@@ -510,6 +682,7 @@ class BrandScanService:
             # pool (the common case).
             ProductRepository.remove_ceiling_rejected(asin)
 
+            quick_by_asin[asin] = quick_product
             ceiling_checked_products.append(uk_product)
 
         included_uk_products = ceiling_checked_products
@@ -517,9 +690,95 @@ class BrandScanService:
 
         # Step 4 - Pull EU data one marketplace at a time, in chunks,
         # carrying the measured cost estimate forward each time.
+        #
+        # TOKEN-SAVING (2026-08-21): stops checking further EU
+        # marketplaces for an ASIN as soon as one clears
+        # EARLY_EXIT_ROI_PCT (see _clears_early_exit_roi) -- before
+        # this, EVERY included ASIN paid for all 4 EU marketplaces
+        # regardless of whether the first one checked already showed a
+        # perfectly good margin, which was the single largest Keepa
+        # cost in a scan. remaining_asins shrinks after each
+        # marketplace to just the ones still needing a source; an ASIN
+        # that never clears the bar anywhere still gets compared across
+        # whichever markets it WAS checked in (from_keepa_multi picks
+        # the cheapest of those), same as before this change -- this
+        # only stops LOOKING FURTHER once a good-enough source is
+        # already in hand, it never drops an ASIN's own data.
         eu_lookups = {}
         marketplaces_skipped_low_tokens = []
         marketplaces_partial_low_tokens = {}
+        remaining_asins = list(included_asins)
+
+        # SP-API free-first-check (2026-08-21, Stage 2 of the Keepa
+        # token-conservation work -- see _sp_api_find_source_market's
+        # own docstring for how this was validated). For each ASIN,
+        # ask SP-API (free, no Keepa tokens, just wall-clock time --
+        # see app/sp_api/client.py's pacing) which single EU market
+        # already has a live, viable price. A resolved ASIN then only
+        # ever needs ONE real Keepa call (its winning market, still
+        # required for the 90-day history Step 5's scoring depends on
+        # -- SP-API only has today's price) instead of working through
+        # EU_MARKETPLACES via Keepa. get_sp_api_client() returns None
+        # if SP-API isn't configured, so this whole block is a no-op
+        # (falls straight through to the unchanged Keepa loop below)
+        # on an account without SP-API credentials set up.
+        sp_client = get_sp_api_client()
+
+        if sp_client and remaining_asins:
+            sp_resolved_by_market = {}
+
+            for asin in list(remaining_asins):
+                quick_product = quick_by_asin.get(asin)
+                if not quick_product:
+                    continue
+
+                category_name = category_names.get(quick_product.category, "")
+                marketplace, cost_gbp = BrandScanService._sp_api_find_source_market(
+                    sp_client, asin, quick_product, category_name,
+                )
+
+                # (None, None) means SP-API couldn't give a free answer
+                # -- NOT "no EU source exists" -- so this ASIN stays in
+                # remaining_asins and goes through the real Keepa search
+                # below exactly as if SP-API weren't configured at all.
+                if not marketplace:
+                    continue
+
+                sp_resolved_by_market.setdefault(marketplace, []).append(asin)
+                remaining_asins.remove(asin)
+
+                # Estimated tokens saved: the EU markets earlier in
+                # priority order than `marketplace` that the Keepa
+                # early-exit loop below would otherwise have had to
+                # probe first before ever reaching this one -- e.g. 0
+                # if SP-API's answer was DE (Keepa would have tried DE
+                # first anyway, so nothing extra was actually saved),
+                # up to 3 if it was IT. Uses the UK fetch's own measured
+                # cost_estimate as the per-ASIN-per-marketplace figure --
+                # already confirmed elsewhere in this file that EU
+                # full=True queries cost the same as UK's.
+                markets_skipped = EU_MARKETPLACES.index(marketplace)
+                if markets_skipped and cost_estimate:
+                    TokenUsageService.record_sp_api_saved(
+                        self.usage_category, marketplace, 1, markets_skipped * cost_estimate,
+                    )
+
+            for marketplace, asins_for_market in sp_resolved_by_market.items():
+                products, fetched, ran_out, eu_cost_estimate_from_sp = self._fetch_in_chunks(
+                    asins_for_market, marketplace, None, full=True
+                )
+
+                eu_lookups.setdefault(marketplace, {}).update(
+                    {p.get("asin"): p for p in products}
+                )
+
+                if ran_out:
+                    if fetched:
+                        marketplaces_partial_low_tokens[marketplace] = {
+                            "fetched": len(fetched), "total": len(asins_for_market),
+                        }
+                    else:
+                        marketplaces_skipped_low_tokens.append(marketplace)
 
         # EU calls now request full=True too (stats=90, not just
         # current price) -- CONFIRMED via direct token measurement that
@@ -535,23 +794,44 @@ class BrandScanService:
         eu_cost_estimate = None
 
         for marketplace in EU_MARKETPLACES:
-            if not included_asins:
-                eu_lookups[marketplace] = {}
+            eu_lookups.setdefault(marketplace, {})
+
+            if not remaining_asins:
                 continue
 
             products, fetched, ran_out, eu_cost_estimate = self._fetch_in_chunks(
-                included_asins, marketplace, eu_cost_estimate, full=True
+                remaining_asins, marketplace, eu_cost_estimate, full=True
             )
 
-            eu_lookups[marketplace] = {p.get("asin"): p for p in products}
+            # Merge, not overwrite -- the SP-API pre-pass above may
+            # already have populated this exact marketplace's entry
+            # for a different subset of ASINs than `remaining_asins`
+            # covers here.
+            eu_lookups[marketplace].update({p.get("asin"): p for p in products})
 
             if ran_out:
                 if fetched:
                     marketplaces_partial_low_tokens[marketplace] = {
-                        "fetched": len(fetched), "total": len(included_asins),
+                        "fetched": len(fetched), "total": len(remaining_asins),
                     }
                 else:
                     marketplaces_skipped_low_tokens.append(marketplace)
+
+            still_needed = []
+
+            for asin in remaining_asins:
+                eu_product = eu_lookups[marketplace].get(asin)
+                quick_product = quick_by_asin.get(asin)
+
+                if quick_product and eu_product and BrandScanService._clears_early_exit_roi(
+                    quick_product, eu_product, marketplace,
+                    category_names.get(quick_product.category, ""),
+                ):
+                    continue
+
+                still_needed.append(asin)
+
+            remaining_asins = still_needed
 
         opportunities = []
 
@@ -609,6 +889,20 @@ class BrandScanService:
                 product, category_name,
             )
             for field_name, value in recent_evidence.items():
+                setattr(product, field_name, value)
+
+            # Day-by-day evidence for OpportunityEngine's PEAK_WINDOW
+            # gate (2026-08-20) -- how many of the last 90 days were
+            # actually profitable at today's EU cost, not just whether
+            # the price moved around a lot. See
+            # SourcingClassifier.compute_peak_window_evidence's
+            # docstring. Must run AFTER fees are set above (needs
+            # product.fba_fee/eu_vat_rate_used/best_source_cost_gbp)
+            # and BEFORE OpportunityEngine.analyse below.
+            peak_evidence = SourcingClassifier.compute_peak_window_evidence(
+                uk_product, product, category_name,
+            )
+            for field_name, value in peak_evidence.items():
                 setattr(product, field_name, value)
 
             # Local import -- WatchlistService imports BrandScanService

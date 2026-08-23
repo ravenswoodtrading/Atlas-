@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Replen - Atlas{% endblock %}
 
@@ -12,7 +13,7 @@
 {% endif %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Replen List ({{ items|length }})</h4>
+    <h4 class="mb-0">Replen List ({{ items|length }}) {{ help_button("replen") }}</h4>
     <form method="post" action="/replen/check-now" id="checkNowForm">
         <button class="btn btn-dark btn-sm" type="submit" id="checkNowBtn">
             <i class="bi bi-arrow-repeat"></i> Check current prices now
@@ -159,5 +160,23 @@
     Nothing on the replen list yet -- add an ASIN manually or import from your purchase history above.
 </div>
 {% endif %}
+
+{% call help_modal("replen", "Replen") %}
+<p>
+    Your restock list -- ASINs proven to sell well before, either imported from a join of your
+    purchase history and Seller Toolkit's real sales data, or added manually.
+</p>
+<p>
+    <strong>Achieved ROI/units</strong> come from your own purchase history + Seller Toolkit
+    sales data -- real, historical proof it's a genuine past winner, not an estimate.
+    <strong>Current ROI</strong> is what actually decides whether it's worth buying again today
+    -- it only updates when you click "Check current prices now."
+</p>
+<p class="mb-0">
+    "Check current prices now" processes in batches against your Keepa token budget, so a large
+    list may need more than one click to fully refresh. Rows over 25% current ROI are
+    highlighted green, same bar as everywhere else in Atlas.
+</p>
+{% endcall %}
 
 {% endblock %}

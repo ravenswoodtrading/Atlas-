@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Competitors - Atlas{% endblock %}
 
@@ -12,7 +13,7 @@
 {% endif %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">Competitor Storefront Watch</h4>
+    <h4 class="mb-0">Competitor Storefront Watch {{ help_button("competitors") }}</h4>
     <div class="d-flex gap-2">
         <form method="post" action="/competitors/rescan-unscored">
             <button class="btn btn-outline-secondary btn-sm" type="submit" title="Re-run scoring for detections that only show an ASIN with no data">
@@ -150,7 +151,7 @@
                                 &middot; <span class="text-danger small">Amazon's own fees exceed this price -- unlikely worth chasing</span>
                                 {% endif %}
                             {% elif record %}
-                                &middot; <span class="{{ 'text-success' if record.profit > 0 else 'text-danger' }} fw-semibold">&pound;{{ "%.2f"|format(record.profit) }} ({{ "%.1f"|format(record.roi) }}%)</span>
+                                &middot; <span class="{{ 'text-success' if record.profit > 0 else 'text-danger' }}"><span class="fw-semibold">{{ "%.1f"|format(record.roi) }}% ROI</span> <span class="small">(&pound;{{ "%.2f"|format(record.profit) }})</span></span>
                             {% endif %}
                             {% if record and record.recommendation == "GATED" %}
                                 &middot; <span class="badge bg-danger" title="Brand is on your Gated Brands list -- tracked here for the ungating case, but not actionable right now. See Gated Brand Opportunities.">
@@ -310,5 +311,31 @@
     No {{ tab_labels[tab] }} detections match the current filters.
 </div>
 {% endif %}
+
+{% call help_modal("competitors", "Competitor Storefront Watch") %}
+<p>
+    New listings detected on rival sellers you're tracking, auto-tagged with a best-GUESS
+    sourcing method and split into tabs. See <a href="/competitors/sellers">Tracked Sellers</a>
+    to add or remove who's being watched.
+</p>
+<p>
+    <i class="bi bi-exclamation-triangle"></i> Every tag here is inferred from
+    <strong>price history alone, over the last 10 days</strong> -- never a confirmed fact,
+    since Keepa has no visibility into anyone's real purchase history. See
+    <a href="/help#sourcing-tags">sourcing tags</a> for the full caveat.
+</p>
+<p>
+    Rough thresholds behind each tag: <strong>UK A2A</strong> needs a genuine price dip to 70%
+    or less of the 90-day average that's since recovered to 90%+. <strong>Wholesale (likely)</strong>
+    needs 3 or fewer current sellers and the same brand listed by this seller before.
+    <strong>EU A2A</strong> is confirmed the same way Discovery scores it -- a real UK
+    price/EU cost spread that clears the usual ROI bar.
+</p>
+<p class="mb-0">
+    The <i class="bi bi-fire"></i> fire icon means <strong>2 or more</strong> tracked
+    competitors listed the same ASIN within 14 days -- stronger corroboration than one seller
+    alone.
+</p>
+{% endcall %}
 
 {% endblock %}

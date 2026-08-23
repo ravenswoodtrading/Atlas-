@@ -4,7 +4,7 @@ from sqlalchemy import func
 
 from app.database.database import SessionLocal
 from app.database.models import ScanQueueItem, AutomationSettings
-from app.services.brand_scan_service import BrandScanService
+from app.services.brand_scan_service import BrandScanService, WEEKLY_SAFETY_NET_RESERVE
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.activity_log import ActivityLog
 
@@ -306,7 +306,13 @@ class ScanQueueService:
             try:
                 category_ids = item.category_ids.split(",") if item.category_ids else None
 
-                scanner = BrandScanService()
+                # token_reserve -- see WEEKLY_SAFETY_NET_RESERVE's
+                # docstring in brand_scan_service.py: this is the one
+                # caller ticking often enough (every
+                # TICK_INTERVAL_SECONDS) to otherwise starve the
+                # once-a-day Replen/Watchlist safety-net tick of tokens
+                # before it ever gets a turn.
+                scanner = BrandScanService(token_reserve=WEEKLY_SAFETY_NET_RESERVE, usage_category="scan_queue")
                 result = scanner.scan(
                     item.brand,
                     limit=100,

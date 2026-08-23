@@ -179,12 +179,25 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
     watched = ProductRepository.list_watched()
     result = None
     hidden_count = 0
+    visible_opportunities = []
+
+    # "Actionable" reuses the exact same recommendation vocabulary the
+    # table's own badges already use (see the BUY/CONSIDER/PEAK_WINDOW/
+    # GATED/else-IGNORE chain in watchlist.html) -- NOT the cruder
+    # profit<=0-and-profit_90d<=0 test this used to be computed with
+    # (that test was written before PEAK_WINDOW existed as its own
+    # category, and would have hidden exactly the "don't rule out,
+    # profitable at a real recent peak" rows that feature was later
+    # built to surface). Wired up 2026-08-21 -- profitable_only/
+    # hidden_count were both already accepted here but never actually
+    # filtered anything in the template until now.
+    ACTIONABLE_RECOMMENDATIONS = {"BUY", "CONSIDER", "PEAK_WINDOW", "GATED"}
 
     if watched:
         asins = [w.asin for w in watched]
         ScanCoordinator.acquire_for_manual_scan()
         try:
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="watchlist")
             result = scanner.scan("watchlist", limit=len(asins), force_rescan=force_rescan, asins=asins)
         finally:
             ScanCoordinator.release_after_manual_scan()
@@ -192,7 +205,14 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
         if result and not result.get("error"):
             hidden_count = sum(
                 1 for o in result["opportunities"]
-                if o["product"]["profit"] <= 0 and o["product"]["profit_90d"] <= 0
+                if o["report"]["recommendation"] not in ACTIONABLE_RECOMMENDATIONS
+            )
+            visible_opportunities = (
+                [
+                    o for o in result["opportunities"]
+                    if o["report"]["recommendation"] in ACTIONABLE_RECOMMENDATIONS
+                ]
+                if profitable_only else result["opportunities"]
             )
 
     reviews = {}
@@ -212,6 +232,7 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
             "request": request,
             "watched": watched,
             "result": result,
+            "visible_opportunities": visible_opportunities,
             "hidden_count": hidden_count,
             "profitable_only": profitable_only,
             "force_rescan": force_rescan,

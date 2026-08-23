@@ -1,10 +1,16 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Discovery - Atlas{% endblock %}
 
 {% block content %}
 
 {% set cat_qs = category_ids | map('urlencode') | join('&category_ids=') if category_ids else "" %}
+
+<div class="d-flex align-items-center mb-3">
+    <h4 class="mb-0">Discovery</h4>
+    {{ help_button("discovery") }}
+</div>
 
 <div class="card metric p-4 mb-4">
     <form method="get" action="/discovery" class="row g-3 align-items-end">
@@ -189,8 +195,8 @@
                             <th>Best Source</th>
                             <th>Source Cost</th>
                             <th>UK Price (today)</th>
-                            <th>Profit / ROI (today)</th>
-                            <th>Profit / ROI (typical, 90d)</th>
+                            <th>ROI / Profit (today)</th>
+                            <th>ROI / Profit (typical, 90d)</th>
                             <th>Monthly Sales</th>
                             <th>Score</th>
                             <th>Confidence</th>
@@ -281,10 +287,12 @@
                             <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                             <td>&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
                             <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
-                                &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
+                                <div class="fw-bold">{{ "%.1f"|format(p.roi) }}%</div>
+                                <div class="small">&pound;{{ "%.2f"|format(p.profit) }}</div>
                             </td>
                             <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
-                                &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
+                                <div class="fw-bold">{{ "%.1f"|format(p.roi_90d) }}%</div>
+                                <div class="small">&pound;{{ "%.2f"|format(p.profit_90d) }}</div>
                             </td>
                             <td>
                                 {% if p.monthly_sales > 0 %}
@@ -308,6 +316,10 @@
                                 {% elif r.recommendation == "PEAK_WINDOW" %}
                                     <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
                                         <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                                    </span>
+                                {% elif r.recommendation == "GATED" %}
+                                    <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
+                                        <i class="bi bi-shield-lock"></i> GATED
                                     </span>
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
@@ -375,5 +387,33 @@
     {% endif %}
 
 {% endif %}
+
+{% call help_modal("discovery", "Discovery") %}
+<p>
+    Your main manual search tool -- type a brand or upload an ASIN list, Atlas checks Keepa UK
+    plus all 4 EU marketplaces, and lists every resulting opportunity with score/profit/ROI.
+</p>
+<p>
+    <strong>Score</strong> (0-100) is how good the opportunity is. <strong>Confidence</strong>
+    (0-100) is how much to trust that score -- docked for price swings, offer-count spikes, or
+    thin sales evidence. <strong>BUY</strong> needs score 85+ and confidence 80+;
+    <strong>CONSIDER</strong> needs 65+/60+. Green rows have confirmed sales evidence and over
+    25% ROI (today's or the 90-day typical price) -- see the
+    <a href="/help#star-buy">star buy</a> definition.
+</p>
+<p>
+    An ASIN scanned in the last <strong>24 hours</strong> is skipped by default to save Keepa
+    tokens -- use "Force rescan" to override. Products get filtered out before ever spending an
+    EU token if Amazon's own UK fees alone already eat the whole price (a "never viable"
+    ceiling check), or if they look dead (no sales-rank drops and no current offers in 30 days).
+    A red <strong>GATED</strong> badge means a real opportunity you're currently blocked from
+    selling -- see <a href="/help#excluded-vs-gated">Excluded vs. Gated</a>.
+</p>
+<p class="mb-0">
+    "Today" vs. "90d" figures: today's live price vs. the typical price over the last 90 days --
+    Atlas shows whichever is better, so a temporary discount doesn't hide a normally-good
+    product. See <a href="/help#today-90d-peak">"Today" vs "90d" vs "Peak"</a>.
+</p>
+{% endcall %}
 
 {% endblock %}

@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}OA Source Discovery - Atlas{% endblock %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">OA Source Discovery</h4>
+    <h4 class="mb-0">OA Source Discovery {{ help_button("oa-source-discovery") }}</h4>
     {% if serpapi_searches_left is not none %}
     <span class="badge bg-light text-dark border" title="Google Shopping searches left this month on your SerpApi plan">
         <i class="bi bi-search"></i> {{ serpapi_searches_left }} SerpApi searches left
@@ -277,7 +278,7 @@
                     <th>Retailer</th>
                     <th>Confirm / change retailer</th>
                     <th>Match</th>
-                    <th>Profit / ROI</th>
+                    <th>ROI / Profit</th>
                     <th></th>
                 </tr>
             </thead>
@@ -381,11 +382,12 @@
                         {% endif %}
                         {% endif %}
                     </td>
-                    <td class="small {{ 'text-success' if c.estimated_profit_gbp and c.estimated_profit_gbp > 0 else ('text-danger' if c.estimated_profit_gbp is not none else 'text-muted') }}">
+                    <td class="{{ 'text-success' if c.estimated_profit_gbp and c.estimated_profit_gbp > 0 else ('text-danger' if c.estimated_profit_gbp is not none else 'text-muted small') }}">
                         {% if c.estimated_profit_gbp is not none %}
-                            &pound;{{ "%.2f"|format(c.estimated_profit_gbp) }} ({{ "%.1f"|format(c.estimated_roi_pct) }}%)
+                            <div class="fw-bold">{{ "%.1f"|format(c.estimated_roi_pct) }}%</div>
+                            <div class="small">&pound;{{ "%.2f"|format(c.estimated_profit_gbp) }}</div>
                         {% else %}
-                            Confirm price
+                            <span class="small">Confirm price</span>
                         {% endif %}
                     </td>
                     <td>
@@ -400,5 +402,29 @@
 {% endif %}
 
 {% endif %}
+
+{% call help_modal("oa-source-discovery", "OA Source Discovery") %}
+<p>
+    Automatically searches the web for a UK retailer selling products the Sourcing classifier
+    couldn't explain as A2A -- so you don't have to Google each one by hand. Checks up to
+    <strong>3 search queries</strong> and <strong>3 candidate retailers</strong> per product.
+</p>
+<p>
+    An ASIN already searched in the last <strong>7 days</strong> won't be searched again
+    automatically, to avoid wasting search budget. Atlas also skips anything with less than
+    <strong>&pound;3</strong> of theoretical margin at the usual 25% ROI bar, even if the math
+    works on paper -- not a realistic purchase once you account for real-world slippage.
+</p>
+<p>
+    Match confidence, strongest to weakest: <strong>EAN</strong> &gt; <strong>Brand+MPN</strong>
+    &gt; <strong>MPN</strong> alone &gt; <strong>Brand+Title</strong> &gt;
+    <strong>Title-only</strong>. Title-only is never a confirmed match -- always verify it
+    yourself. See <a href="/help#match-tiers">match confidence tiers</a>.
+</p>
+<p class="mb-0">
+    The SerpApi search counter (top right) shows how many Google Shopping searches remain on
+    your plan this month -- a run stops early to protect that quota if it's running low.
+</p>
+{% endcall %}
 
 {% endblock %}

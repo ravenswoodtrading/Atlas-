@@ -11,6 +11,6 @@ router = APIRouter(
 @router.get("/{brand}")
 def scan_brand(brand: str):
 
-    service = BrandScanService()
+    service = BrandScanService(usage_category="manual_api")
 
     return service.scan(brand)

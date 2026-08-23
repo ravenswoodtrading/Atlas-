@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}Token Usage - Atlas{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Token Usage</h4>
+    <div class="btn-group btn-group-sm" role="group">
+        <a href="/settings/token-usage?days=7" class="btn btn-outline-dark {{ 'active' if days == 7 }}">7 days</a>
+        <a href="/settings/token-usage?days=30" class="btn btn-outline-dark {{ 'active' if days == 30 }}">30 days</a>
+        <a href="/settings/token-usage?days=90" class="btn btn-outline-dark {{ 'active' if days == 90 }}">90 days</a>
+    </div>
+</div>
+
+<p class="text-muted">Real Keepa token spend and SP-API's estimated savings, broken down by day and by which Atlas feature spent them -- use this to see where a further change (like the EU early-exit and SP-API pre-check already in place) would help most.</p>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Keepa tokens spent (last {{ days }}d)</div>
+            <h2>{{ savings.keepa_spent | round(0) | int }}</h2>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">SP-API estimated savings (last {{ days }}d)</div>
+            <h2 class="text-success">{{ savings.sp_api_saved_estimate | round(0) | int }}</h2>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Top spender</div>
+            <h4 class="mb-0">{{ category_labels.get(category_totals[0].category, category_totals[0].category) if category_totals else "-" }}</h4>
+            <div class="small text-muted">{{ category_totals[0].tokens | round(0) | int if category_totals else 0 }} tokens</div>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i>
+    "SP-API estimated savings" is an ESTIMATE of Keepa tokens a call would have cost had SP-API's free pre-check (see <code>BrandScanService</code> Step 4) not already found a viable EU price -- it is never subtracted from the real spend number above, since one is measured and the other is inferred. Any category showing 0 SP-API savings either hasn't reached that code path yet or genuinely found nothing free to resolve.
+</div>
+
+<h5 class="mb-2">By feature (last {{ days }}d)</h5>
+{% if not category_totals %}
+<div class="alert alert-info">No token usage recorded yet in this window.</div>
+{% else %}
+<div class="card metric p-3 mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Feature</th>
+                    <th class="text-end">Tokens spent</th>
+                    <th class="text-end">Share</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% set grand_total = category_totals | sum(attribute="tokens") %}
+                {% for row in category_totals %}
+                <tr>
+                    <td>{{ category_labels.get(row.category, row.category) }}</td>
+                    <td class="text-end">{{ row.tokens | round(0) | int }}</td>
+                    <td class="text-end text-muted">{{ ((row.tokens / grand_total * 100) | round(1)) if grand_total else 0 }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<h5 class="mb-2">By day</h5>
+{% if not daily_rows %}
+<div class="alert alert-info">No token usage recorded yet in this window.</div>
+{% else %}
+<div class="card metric p-3 mb-4">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th class="text-end">Total</th>
+                    {% for cat in categories %}
+                    <th class="text-end small text-muted">{{ category_labels.get(cat, cat) }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in daily_rows %}
+                <tr>
+                    <td>{{ row.date }}</td>
+                    <td class="text-end fw-semibold">{{ row.total | round(0) | int }}</td>
+                    {% for cat in categories %}
+                    <td class="text-end small {{ 'text-muted' if not row.by_category.get(cat) }}">{{ row.by_category.get(cat, 0) | round(0) | int if row.by_category.get(cat) else "-" }}</td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

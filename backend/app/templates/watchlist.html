@@ -1,13 +1,23 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Watchlist - Atlas{% endblock %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Watchlist ({{ watched|length }} product{{ "s" if watched|length != 1 }})</h4>
+    <h4 class="mb-0">Watchlist ({{ watched|length }} product{{ "s" if watched|length != 1 }}) {{ help_button("watchlist") }}</h4>
     <div>
-        <a href="/watchlist?force_rescan=true" class="btn btn-dark btn-sm">
+        {% if profitable_only %}
+        <a href="/watchlist?profitable_only=false" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-eye"></i> Show all{% if hidden_count %} ({{ hidden_count }} hidden){% endif %}
+        </a>
+        {% else %}
+        <a href="/watchlist?profitable_only=true" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-eye-slash"></i> Hide non-actionable{% if hidden_count %} ({{ hidden_count }}){% endif %}
+        </a>
+        {% endif %}
+        <a href="/watchlist?force_rescan=true&profitable_only={{ profitable_only|lower }}" class="btn btn-dark btn-sm">
             <i class="bi bi-arrow-clockwise"></i> Force rescan all
         </a>
         <a href="/discovery" class="btn btn-outline-dark btn-sm">
@@ -50,7 +60,14 @@
             </div>
         </div>
 
-        {% if result.opportunities %}
+        {% if profitable_only and result.opportunities and not visible_opportunities %}
+        <div class="alert alert-secondary py-2 small mb-3">
+            <i class="bi bi-info-circle"></i> Nothing currently actionable -- all {{ hidden_count }} watched item{{ "s" if hidden_count != 1 }} scored IGNORE on the latest check.
+            <a href="/watchlist?profitable_only=false">Show all</a> to see them anyway.
+        </div>
+        {% endif %}
+
+        {% if visible_opportunities %}
         <div class="card metric p-3">
             <div class="table-responsive">
                 <table class="table table-hover align-middle">
@@ -60,8 +77,8 @@
                             <th>Best Source</th>
                             <th>Source Cost</th>
                             <th>UK Price (today)</th>
-                            <th>Profit / ROI (today)</th>
-                            <th>Profit / ROI (typical, 90d)</th>
+                            <th>ROI / Profit (today)</th>
+                            <th>ROI / Profit (typical, 90d)</th>
                             <th>Monthly Sales</th>
                             <th>Score</th>
                             <th>Recommendation</th>
@@ -70,7 +87,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        {% for o in result.opportunities %}
+                        {% for o in visible_opportunities %}
                         {% set p = o.product %}
                         {% set r = o.report %}
                         <tr class="{{ 'table-success' if (p.monthly_sales > 0 and (p.roi > 25 or p.roi_90d > 25)) }}">
@@ -99,10 +116,18 @@
                             <td>&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                             <td>&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
                             <td class="{{ 'text-success' if p.profit > 0 else 'text-danger' }}">
-                                &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
+                                <div class="fw-bold">{{ "%.1f"|format(p.roi) }}%</div>
+                                <div class="small">&pound;{{ "%.2f"|format(p.profit) }}</div>
                             </td>
                             <td class="{{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}">
-                                &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
+                                <div class="fw-bold">{{ "%.1f"|format(p.roi_90d) }}%</div>
+                                <div class="small">&pound;{{ "%.2f"|format(p.profit_90d) }}</div>
+                                {% if r.recommendation == "PEAK_WINDOW" %}
+                                <div class="small rounded px-1 py-1 mt-1" style="background:#fdf3e0;border:1px solid #f3ddab;color:#96660a;" title="Not profitable today or at the 90-day average, but real evidence this recurs, not just a one-off spike.">
+                                    <i class="bi bi-exclamation-triangle"></i> Don't rule out -- profitable on <strong>{{ r.peak_viable_days_90d }}</strong>/90d
+                                    at &pound;{{ "%.2f"|format(r.peak_price) }} ({{ "%.0f"|format(r.peak_roi) }}% ROI)
+                                </div>
+                                {% endif %}
                             </td>
                             <td>
                                 {% if p.monthly_sales > 0 %}
@@ -125,6 +150,10 @@
                                 {% elif r.recommendation == "PEAK_WINDOW" %}
                                     <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
                                         <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                                    </span>
+                                {% elif r.recommendation == "GATED" %}
+                                    <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
+                                        <i class="bi bi-shield-lock"></i> GATED
                                     </span>
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
@@ -171,5 +200,35 @@
     {% endif %}
 
 {% endif %}
+
+{% call help_modal("watchlist", "Watchlist") %}
+<p>
+    Products you're actively tracking -- either you clicked "Watch" on Discovery/Products, or
+    Atlas auto-added one that isn't profitable right now but WOULD be at its recent 90-day-low
+    EU price (worth checking back on -- see the "Auto" badge's tooltip for the real numbers
+    behind any auto-added item).
+</p>
+<p>
+    <strong>This page re-checks live prices every time you load it</strong> -- unlike Products
+    (a historical log), Watchlist always shows today's real Keepa data, which is why it spends
+    tokens and shows a "Keepa tokens remaining" count.
+</p>
+<p>
+    By default the table only shows rows Atlas currently scores BUY, CONSIDER, PEAK_WINDOW, or
+    GATED -- anything scoring IGNORE is hidden (use "Show all" top-right to see them anyway).
+</p>
+<p>
+    The amber "Don't rule out" note under a 90-day figure means that row is only profitable at
+    a recent price <strong>peak</strong>, not today or on average -- but genuinely on enough
+    real days (not just a one-off spike) to be worth watching. See
+    <a href="/help#today-90d-peak">"Today" vs "90d" vs "Peak"</a>.
+</p>
+<p class="mb-0">
+    A weekly background job also re-checks anything nobody's manually rescanned in 7 days, and
+    the same job quietly removes an auto-added item once it's had a genuine, repeated chance
+    (14+ days, 2+ real rechecks) to go profitable and never has -- a manual "Watch" or an
+    OOS-restock watch is never removed this way, only the app's own speculative auto-adds.
+</p>
+{% endcall %}
 
 {% endblock %}

@@ -49,12 +49,12 @@ class CategorySurveyService:
         self.product_service = ProductService()
 
     def survey(self, brand: str, limit: int = 100):
-        asins = self.finder.find_brand(brand, limit=limit)
+        asins = self.finder.find_brand(brand, limit=limit, usage_category="category_survey")
 
         if not asins:
             return {"brand": brand, "asins_scanned": 0, "categories": []}
 
-        uk_products = self.product_service.get_products(asins, "UK")
+        uk_products = self.product_service.get_products(asins, "UK", usage_category="category_survey")
 
         by_category = defaultdict(lambda: {"count": 0, "sample_titles": []})
 

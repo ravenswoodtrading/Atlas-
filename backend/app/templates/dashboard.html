@@ -169,9 +169,22 @@
             <i class="bi bi-binoculars"></i>
             <strong>{{ review_queue_summary.competitor }}</strong> buyable competitor find{{ "s" if review_queue_summary.competitor != 1 }}
         {% endif %}
-        waiting in your <a href="/review-queue">Review Queue</a> right now.
+        in your <a href="/review-queue">Review Queue</a> --
+        <strong>{{ review_queue_summary.total }}</strong> total that need reviewing.
     </div>
     <a href="/review-queue" class="btn btn-success btn-sm">Take a look</a>
+</div>
+{% endif %}
+
+{% if consider_summary.total > 0 %}
+<div class="alert alert-secondary d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <i class="bi bi-eye"></i>
+        <strong>{{ consider_summary.today }}</strong> new Consider lead{{ "s" if consider_summary.today != 1 }} today
+        &middot; <strong>{{ consider_summary.total }}</strong> total in the Consider backlog -- this one isn't meant
+        to be cleared to zero, just browsed as you have time.
+    </div>
+    <a href="/review-queue?view=consider" class="btn btn-outline-secondary btn-sm">Browse Consider</a>
 </div>
 {% endif %}
 

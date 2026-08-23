@@ -1000,4 +1000,64 @@ class SchedulerStatus(Base):
     name: Mapped[str] = mapped_column(String, primary_key=True)
     interval_seconds: Mapped[int] = mapped_column(Integer, default=0)
     last_tick_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # BUG FIX (2026-08-21): missing from this model even though
+    # ActivityLog.mark_tick/scheduler_overview already write and read
+    # it -- a real DB-loaded row (any request after the process that
+    # set it in-memory has restarted) had no such attribute at all,
+    # crashing the Dashboard homepage with a bare AttributeError.
+    last_summary: Mapped[str] = mapped_column(String, default="")
+
+
+class TokenUsageEvent(Base):
+    """
+    One row per measured Keepa spend (or SP-API-avoided spend) --
+    2026-08-21, for the Settings > Token Usage page. Written at the
+    same low-level call sites that already talk to Keepa/SP-API
+    directly (ProductService.get_products, ProductFinder.find_brand/
+    find_signal_candidates, SellerWatchService._fetch_storefronts, and
+    BrandScanService's SP-API pre-check in Step 4) rather than derived
+    after the fact from ProductRecord timestamps -- those can't
+    distinguish WHICH feature spent the tokens, or separate a
+    Product Finder call's cost from a query() call's, the way this
+    can.
+
+    category: which Atlas feature triggered the call -- "scan_queue",
+    "replen", "watchlist", "competitor_watch", "discovery", "verdict",
+    "signals", "oa_lookup", "oa_discovery", "category_survey",
+    "manual_api", "debug", or "other" (the default for any call site
+    that hasn't been given an explicit usage_category yet -- see each
+    service's own docstring for which ones still fall back to this).
+
+    call_type: "keepa_query" (ProductService.get_products), "keepa_
+    product_finder" (ProductFinder), "keepa_seller_query"
+    (SellerWatchService), or "sp_api_saved" -- an ESTIMATE of tokens a
+    Keepa EU call would have cost, credited (not actually spent) when
+    BrandScanService's SP-API pre-check in Step 4 finds a viable price
+    for free and skips that Keepa call entirely. Summed separately
+    from real spend (see TokenUsageService.savings_totals), never
+    netted directly against it -- an estimate deserves to look like
+    one, not get silently blended into a real measured number.
+
+    marketplace: "UK"/"DE"/"FR"/"ES"/"IT" for a query()/sp_api_saved
+    row, "" for a Product Finder or seller-storefront row (neither is
+    scoped to one marketplace the way a product query is).
+    """
+    __tablename__ = "token_usage_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+    category: Mapped[str] = mapped_column(String, default="other", index=True)
+    call_type: Mapped[str] = mapped_column(String, default="")
+    marketplace: Mapped[str] = mapped_column(String, default="")
+    asins_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Real measured Keepa tokens spent (call_type="keepa_*"), or the
+    # ESTIMATED tokens a skipped Keepa call would have cost
+    # (call_type="sp_api_saved") -- see this class's own docstring.
+    tokens: Mapped[float] = mapped_column(Float, default=0.0)
     last_summary: Mapped[str] = mapped_column(String, default="")

@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}OA Lookup - Atlas{% endblock %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">OA Lookup</h4>
+    <h4 class="mb-0">OA Lookup {{ help_button("oa-lookup") }}</h4>
     {% if searches_left is not none %}
     <span class="text-muted small">SerpApi searches remaining this month: <strong>{{ searches_left }}</strong></span>
     {% endif %}
@@ -82,8 +83,8 @@
                         <th>Listing</th>
                         <th>Retailer</th>
                         <th>Price</th>
-                        <th>Profit / ROI (today)</th>
-                        <th>Profit / ROI (typical, 90d)</th>
+                        <th>ROI / Profit (today)</th>
+                        <th>ROI / Profit (typical, 90d)</th>
                         <th></th>
                     </tr>
                 </thead>
@@ -100,10 +101,12 @@
                         <td>{{ c.source }}</td>
                         <td>&pound;{{ "%.2f"|format(c.extracted_price) }}</td>
                         <td class="{{ 'text-success' if c.profit > 0 else 'text-danger' }}">
-                            &pound;{{ "%.2f"|format(c.profit) }} ({{ "%.1f"|format(c.roi) }}%)
+                            <div class="fw-bold">{{ "%.1f"|format(c.roi) }}%</div>
+                            <div class="small">&pound;{{ "%.2f"|format(c.profit) }}</div>
                         </td>
                         <td class="{{ 'text-success' if c.profit_90d > 0 else 'text-danger' }}">
-                            &pound;{{ "%.2f"|format(c.profit_90d) }} ({{ "%.1f"|format(c.roi_90d) }}%)
+                            <div class="fw-bold">{{ "%.1f"|format(c.roi_90d) }}%</div>
+                            <div class="small">&pound;{{ "%.2f"|format(c.profit_90d) }}</div>
                         </td>
                         <td>
                             <form method="post" action="/watch/add">
@@ -125,5 +128,22 @@
     </div>
     {% endif %}
 {% endif %}
+
+{% call help_modal("oa-lookup", "OA Lookup") %}
+<p>
+    The manual, single-ASIN version of <a href="/oa-discovery">OA Source Discovery</a> -- you
+    pick and edit the search query yourself and eyeball every result, rather than letting Atlas
+    run unattended in a batch.
+</p>
+<p>
+    Atlas suggests a search query built from the product's title (roughly its 10 most
+    significant words), which you can freely edit before searching.
+</p>
+<p class="mb-0">
+    Unlike OA Source Discovery, results here aren't pre-filtered by any ROI threshold -- they're
+    just sorted by profit, so use your own judgment on every row. As always, results are
+    candidates, not confirmed matches -- check the thumbnail/title/link before acting.
+</p>
+{% endcall %}
 
 {% endblock %}

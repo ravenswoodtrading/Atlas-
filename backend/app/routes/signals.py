@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 from app.services.product_repository import ProductRepository
 from app.services.signal_service import SignalService
 from app.services.scan_coordinator import ScanCoordinator
+from app.services.opportunity_engine import OpportunityEngine
 
 router = APIRouter()
 
@@ -99,6 +100,31 @@ def _eu_history_view(eu_history_json: str, target_roi_pct: float) -> dict:
             days_ago = None
 
     roi = history.get("roi") or 0.0
+    roi_90d = history.get("roi_90d") or 0.0
+    peak_profit = history.get("peak_profit") or 0.0
+    peak_roi = history.get("peak_roi") or 0.0
+    peak_viable_days_90d = history.get("peak_viable_days_90d") or 0
+
+    # "Don't rule this out" flag (2026-08-20) -- Atlas's last EU check
+    # found it not viable at today's OR the 90-day price (the same bar
+    # under_target already flags as "too pricey"), but it WOULD clear
+    # a genuine, recurring PEAK window (see OpportunityEngine.
+    # PEAK_WINDOW/PEAK_MIN_VIABLE_DAYS_90D) -- i.e. this isn't just a
+    # one-off spike Atlas is imagining, it was actually profitable on
+    # real days. Surfaced so a price-spike/stock-out signal on a
+    # product that "looks bad" by the plain roi/roi_90d figures isn't
+    # silently written off, matching the user's own framing: a
+    # price-drop lead "shouldn't be ruled out... just shown
+    # differently."
+    not_viable_today_or_90d = (
+        max(roi, roi_90d) < OpportunityEngine.MIN_VIABLE_ROI
+    )
+    peak_worth_noting = (
+        not_viable_today_or_90d
+        and peak_profit > 0
+        and peak_roi >= OpportunityEngine.MIN_VIABLE_ROI
+        and peak_viable_days_90d >= OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D
+    )
 
     return {
         "marketplace": history.get("best_source_marketplace"),
@@ -106,6 +132,10 @@ def _eu_history_view(eu_history_json: str, target_roi_pct: float) -> dict:
         "roi": roi,
         "days_ago": days_ago,
         "under_target": roi < target_roi_pct,
+        "peak_profit": peak_profit,
+        "peak_roi": peak_roi,
+        "peak_viable_days_90d": peak_viable_days_90d,
+        "peak_worth_noting": peak_worth_noting,
     }
 
 

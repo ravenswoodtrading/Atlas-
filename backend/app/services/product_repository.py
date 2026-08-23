@@ -151,7 +151,17 @@ class ProductRepository:
         criteria the Dashboard alert counts. "consider" keeps only
         unreviewed CONSIDER-recommended items. "any" keeps every
         unreviewed item regardless of star/BUY/CONSIDER status, for
-        finding anything you haven't looked at yet.
+        finding anything you haven't looked at yet. "consider_worthwhile"
+        is the Review Queue's "Consider" tab (2026-08-19, see
+        ReviewQueueService.list_consider_leads) -- unreviewed CONSIDER
+        leads that are profitable (today OR the 90-day typical price)
+        with some sign of real sales, excluding anything is_notable()
+        already claims (already shown on the main tab). Reviewing a
+        Consider lead removes it from this list the same way as every
+        other filter here -- the tab is just not EXPECTED to be
+        cleared to zero regularly the way the main tab is; new
+        profitable-but-not-star-tier leads keep landing on top as
+        older ones get reviewed off.
         """
         db = SessionLocal()
 
@@ -195,6 +205,20 @@ class ProductRepository:
                 latest = [r for r in latest if not r.review and r.recommendation == "PEAK_WINDOW"]
             elif review_filter == "any":
                 latest = [r for r in latest if not r.review]
+            elif review_filter == "consider_worthwhile":
+                latest = [
+                    r for r in latest
+                    if not r.review
+                    and r.recommendation == "CONSIDER"
+                    and (r.profit > 0 or r.profit_90d > 0)
+                    and (
+                        r.monthly_sales > 0
+                        or r.sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
+                    )
+                    and not ProductRepository.is_notable(
+                        r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
+                    )
+                ]
 
             if brand:
                 latest = [r for r in latest if r.brand.lower() == brand.lower()]
@@ -1164,6 +1188,45 @@ class ProductRepository:
                 .order_by(ProductRecord.scanned_at.desc())
                 .first()
             )
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_recheck_summary_since(asin: str, since) -> dict:
+        """
+        {"recheck_count": int, "ever_profitable": bool} across every
+        ProductRecord for this ASIN scanned at/after `since` (a naive
+        UTC datetime, matching how scanned_at is stored everywhere
+        else in this codebase). Built for WatchlistService.
+        prune_stale_auto_adds -- it needs to judge, for an auto-added
+        watch, whether it's had a fair number of REAL rechecks since
+        being added and whether any one of them ever found it
+        profitable, without pulling full ProductRecord rows into
+        memory just to check two booleans-worth of information.
+
+        product_records is append-only (a new row per scan, not an
+        upsert -- confirmed via direct inspection: some ASINs already
+        have a dozen-plus rows), so counting rows in a date range is a
+        genuine count of real, separate Keepa rechecks, not an
+        artifact of one row being updated repeatedly.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(ProductRecord.profit, ProductRecord.profit_90d)
+                .filter(ProductRecord.asin == asin, ProductRecord.scanned_at >= since)
+                .all()
+            )
+
+            return {
+                "recheck_count": len(rows),
+                "ever_profitable": any(
+                    (profit or 0) > 0 or (profit_90d or 0) > 0
+                    for profit, profit_90d in rows
+                ),
+            }
 
         finally:
             db.close()

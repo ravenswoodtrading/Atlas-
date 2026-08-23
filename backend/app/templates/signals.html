@@ -120,6 +120,13 @@
                             -- {{ "viable" if not row.eu_history.under_target else "too pricey" }}
                             at &pound;{{ "%.2f"|format(row.eu_history.cost or 0) }} ({{ "%.0f"|format(row.eu_history.roi) }}% ROI{{ ", under target" if row.eu_history.under_target }})
                         </div>
+                        {% if row.eu_history.peak_worth_noting %}
+                        <div class="small rounded px-2 py-1 mt-1" style="background:#fdf3e0;border:1px solid #f3ddab;color:#96660a;" title="Not profitable at today's or the 90-day typical price, but real evidence this recurs, not just a one-off spike.">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            Don't rule out -- profitable on <strong>{{ row.eu_history.peak_viable_days_90d }}</strong> of the last 90 days at its peak price
+                            (&pound;{{ "%.2f"|format(row.eu_history.peak_profit) }}, {{ "%.0f"|format(row.eu_history.peak_roi) }}% ROI)
+                        </div>
+                        {% endif %}
                         {% else %}
                         <span class="text-muted small">Not checked before</span>
                         {% endif %}
@@ -155,7 +162,7 @@
 {% endif %}
 
 <div class="mt-3 small text-muted">
-    <i class="bi bi-gear"></i> "Manage signal queries" (top right) is where you turn signals on/off per category and trigger a manual "Run now" -- these are never run on an automatic schedule (see the project notes on why).
+    <i class="bi bi-gear"></i> "Manage signal queries" (top right) is where you turn signals on/off per category. Stock-out and ceiling-cleared checks already run automatically every 2 hours in the background -- "Run now" just forces an immediate check instead of waiting. Price-spike checks are still manual-only for now.
 </div>
 
 {% endblock %}

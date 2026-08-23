@@ -9,17 +9,27 @@ from app.services.seller_watch_service import SellerWatchService
 # uses (limit=200) rather than a genuinely unbounded fetch.
 MAX_LEADS = 500
 
+# First-pass volume guard for the "Consider" tab (2026-08-19). Reviewing
+# a Consider lead removes it (same as every other Review Queue filter),
+# but the tab is explicitly NOT expected to be cleared to zero
+# regularly -- it's fine for a genuine backlog to sit there with newer
+# leads landing on top. The user flagged the profit/sales filter itself
+# may need tightening once real volume is seen after a restart -- this
+# constant is the other lever if the filter alone isn't enough.
+MAX_CONSIDER_LEADS = 150
+
 # A PEAK_WINDOW lead already cleared OpportunityEngine.MIN_VIABLE_ROI
-# (10%) at the peak price just to be tagged PEAK_WINDOW at all -- that
-# floor means "not worthless", not "worth the risk". Buying against a
-# recent price peak is inherently riskier than a normal BUY/CONSIDER
-# (you're betting the price gets back there again), so the Review
-# Queue holds PEAK_WINDOW leads to a higher bar before surfacing them:
-# either the peak ROI is genuinely strong, or the underlying score is
-# already at CONSIDER-tier quality despite failing the current/90d-avg
-# price gate that kept it out of CONSIDER/BUY. Below both, it's not
-# worth seeing -- this is what let weak, low-score peak leads (e.g.
-# two Wiha ASINs barely over the 10% floor) leak into the queue.
+# (17%, raised from 10% 2026-08-23) at the peak price just to be
+# tagged PEAK_WINDOW at all -- that floor means "not worthless", not
+# "worth the risk". Buying against a recent price peak is inherently
+# riskier than a normal BUY/CONSIDER (you're betting the price gets
+# back there again), so the Review Queue holds PEAK_WINDOW leads to a
+# higher bar before surfacing them: either the peak ROI is genuinely
+# strong, or the underlying score is already at CONSIDER-tier quality
+# despite failing the current/90d-avg price gate that kept it out of
+# CONSIDER/BUY. Below both, it's not worth seeing -- this is what let
+# weak, low-score peak leads (e.g. two Wiha ASINs barely over the old
+# 10% floor) leak into the queue.
 PEAK_WORTH_IT_ROI = 35
 PEAK_WORTH_IT_SCORE = 65
 
@@ -45,6 +55,44 @@ class ReviewQueueService:
     """
 
     @staticmethod
+    def _scan_lead_dict(record) -> dict:
+        """
+        Shared row shape for a scan-sourced lead (as opposed to a
+        competitor detection, see the loop below) -- used by both
+        list_leads() (main tab) and list_consider_leads() (Consider
+        tab) so the two tabs render identically and can't drift apart.
+        """
+        parsed_report = {}
+        if record.report_json:
+            try:
+                parsed_report = json.loads(record.report_json)
+            except Exception:
+                parsed_report = {}
+
+        return {
+            "source": "scan",
+            "asin": record.asin,
+            "title": record.title,
+            "brand": record.brand,
+            "best_source_marketplace": record.best_source_marketplace,
+            "best_source_cost_gbp": record.best_source_cost_gbp,
+            "profit": record.profit,
+            "roi": record.roi,
+            "profit_90d": record.profit_90d,
+            "roi_90d": record.roi_90d,
+            "score": record.score,
+            "recommendation": record.recommendation,
+            "monthly_sales": record.monthly_sales,
+            "when": record.scanned_at,
+            "parsed_report": parsed_report,
+            "reasoning": {},
+            "sourcing_tag": None,
+            "currently_buyable": False,
+            "seller": None,
+            "listing_id": 0,
+        }
+
+    @staticmethod
     def list_leads(sort: str = "when_desc") -> list:
         scan_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="notable", sort="scanned_desc",
@@ -63,12 +111,7 @@ class ReviewQueueService:
         leads = []
 
         for record in list(scan_records) + list(peak_records):
-            parsed_report = {}
-            if record.report_json:
-                try:
-                    parsed_report = json.loads(record.report_json)
-                except Exception:
-                    parsed_report = {}
+            lead = ReviewQueueService._scan_lead_dict(record)
 
             if record.recommendation == "PEAK_WINDOW":
                 # "Worth the risk" gate -- see PEAK_WORTH_IT_ROI/
@@ -77,32 +120,11 @@ class ReviewQueueService:
                 # rather than in ProductRepository.list_latest's
                 # review_filter="peak" branch, which only has the ORM
                 # record's own columns to filter on.
-                peak_roi = parsed_report.get("peak_roi") or 0
+                peak_roi = lead["parsed_report"].get("peak_roi") or 0
                 if peak_roi < PEAK_WORTH_IT_ROI and record.score < PEAK_WORTH_IT_SCORE:
                     continue
 
-            leads.append({
-                "source": "scan",
-                "asin": record.asin,
-                "title": record.title,
-                "brand": record.brand,
-                "best_source_marketplace": record.best_source_marketplace,
-                "best_source_cost_gbp": record.best_source_cost_gbp,
-                "profit": record.profit,
-                "roi": record.roi,
-                "profit_90d": record.profit_90d,
-                "roi_90d": record.roi_90d,
-                "score": record.score,
-                "recommendation": record.recommendation,
-                "monthly_sales": record.monthly_sales,
-                "when": record.scanned_at,
-                "parsed_report": parsed_report,
-                "reasoning": {},
-                "sourcing_tag": None,
-                "currently_buyable": False,
-                "seller": None,
-                "listing_id": 0,
-            })
+            leads.append(lead)
 
         for entry in SellerWatchService.list_notable_buyable(limit=MAX_LEADS):
             listing = entry["listing"]
@@ -154,6 +176,61 @@ class ReviewQueueService:
         leads.sort(key=key, reverse=reverse)
 
         return leads
+
+    @staticmethod
+    def list_consider_leads(sort: str = "when_desc") -> list:
+        """
+        "Consider" tab (2026-08-19) -- CONSIDER-tier leads that are
+        profitable (today OR the 90-day typical price -- "anything
+        unprofitable both ways isn't likely to be bought") with some
+        sign of real sales. Reviewing a row removes it from this list
+        exactly like the main tab (list_leads() above) -- the
+        difference is expectation, not mechanics: per the user's
+        explicit request, this tab is NOT meant to be cleared to zero
+        regularly. It's fine (expected, even) for a genuine backlog to
+        sit here with newer leads landing on top, unlike the main tab
+        which should get worked through.
+
+        Excludes anything is_notable() already claims, so a lead never
+        appears on both this tab and the main one (see
+        ProductRepository.list_latest's "consider_worthwhile" filter
+        for the exact criteria). Capped at MAX_CONSIDER_LEADS as a
+        first-pass volume guard -- flagged by the user as something
+        that may need retuning (the filter itself, or this cap) once
+        real volume is visible after a restart.
+        """
+        records, _ = ProductRepository.list_latest(
+            page=1, page_size=MAX_CONSIDER_LEADS,
+            review_filter="consider_worthwhile", sort="scanned_desc",
+        )
+
+        leads = [ReviewQueueService._scan_lead_dict(record) for record in records]
+
+        key, reverse = SORT_OPTIONS.get(sort, SORT_OPTIONS["when_desc"])
+        leads.sort(key=key, reverse=reverse)
+
+        return leads
+
+    @staticmethod
+    def consider_summary() -> dict:
+        """
+        Dashboard-facing counts for the Consider tab (2026-08-19):
+        "today" (new leads whose latest scan landed today, UTC -- same
+        boundary as Products' /products/today) and "total" (the whole
+        current backlog, same population list_consider_leads()
+        returns). Worth keeping these separate because, unlike the
+        main tab, "total" is allowed to stay large -- "today" is what
+        actually tells you whether anything NEW showed up.
+        """
+        today_records, _ = ProductRepository.list_latest(
+            page=1, page_size=MAX_CONSIDER_LEADS,
+            review_filter="consider_worthwhile", today_only=True,
+        )
+
+        return {
+            "total": len(ReviewQueueService.list_consider_leads()),
+            "today": len(today_records),
+        }
 
     @staticmethod
     def count_summary() -> dict:

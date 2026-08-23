@@ -11,6 +11,7 @@ from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
 from app.services.sourcing_classifier import SourcingClassifier
 from app.services.activity_log import ActivityLog
+from app.services.token_usage_service import TokenUsageService
 
 # How many DISTINCT ASINs to send to BrandScanService.scan() per Keepa
 # call within one reclassify_all() run -- same chunking spirit as
@@ -82,6 +83,7 @@ class SellerWatchService:
         """
         api = get_keepa_client()
         results = {}
+        tokens_before = api.tokens_left
 
         for seller_id in seller_ids:
             try:
@@ -97,6 +99,15 @@ class SellerWatchService:
                 continue
 
             results.update(response or {})
+
+        # One aggregate row for the whole batch rather than one per
+        # seller_id -- a run_check tick can cover dozens of tracked
+        # sellers, and the Token Usage page cares about "how much did
+        # this feature cost this run", not a row per HTTP call.
+        TokenUsageService.record_keepa_spend(
+            "competitor_watch", "keepa_seller_query", tokens_before, api.tokens_left,
+            marketplace="UK", asins_count=len(seller_ids),
+        )
 
         return results
 
@@ -141,7 +152,7 @@ class SellerWatchService:
                 [t.seller_id for t in tracked]
             )
 
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="competitor_watch")
             checked = 0
             total_new = 0
 
@@ -291,7 +302,7 @@ class SellerWatchService:
 
             asins_list = sorted({listing.asin for listing in unscored})
 
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="competitor_watch")
             scan_result = scanner.scan(
                 brand="competitor-rescan",
                 asins=asins_list,
@@ -382,7 +393,7 @@ class SellerWatchService:
 
             distinct_asins = list(rows_by_asin.keys())
 
-            scanner = BrandScanService()
+            scanner = BrandScanService(usage_category="competitor_watch")
             processed_asins = 0
             updated = 0
             flipped = 0

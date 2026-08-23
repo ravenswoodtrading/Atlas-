@@ -1,8 +1,14 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Categories - Atlas{% endblock %}
 
 {% block content %}
+
+<div class="d-flex align-items-center mb-3">
+    <h4 class="mb-0">Categories</h4>
+    {{ help_button("categories") }}
+</div>
 
 <div class="card metric p-4 mb-4">
     <form method="get" action="/categories" class="row g-3 align-items-end">
@@ -104,5 +110,25 @@
     {% endif %}
 
 {% endif %}
+
+{% call help_modal("categories", "Categories") %}
+<p>
+    A cheap, UK-only survey tool -- enter a brand, and Atlas breaks down its catalog by
+    category, showing each category's real Keepa category ID. Use it to find the ID you need
+    for an <a href="/exclusions">Exclusion</a>, a <a href="/signals/queries">Signal Query</a>,
+    or the category filter on the <a href="/discovery">Discovery</a> page -- those all need a
+    real Keepa category ID, which isn't normally visible anywhere else in Atlas.
+</p>
+<p>
+    Surveys up to <strong>500 ASINs</strong> per brand (default 100 -- raise "Max ASINs to
+    survey" for a fuller picture of a large brand's catalog). Shows 3 sample titles per
+    category so you can sanity-check that a category actually contains what you'd expect.
+</p>
+<p class="mb-0">
+    This only costs a <strong>UK-only</strong> Keepa lookup per ASIN surveyed -- no EU
+    marketplace tokens spent here at all, so it's safe to run freely even when your token
+    budget is tight.
+</p>
+{% endcall %}
 
 {% endblock %}

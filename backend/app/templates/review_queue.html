@@ -1,11 +1,12 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Review Queue - Atlas{% endblock %}
 
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Review Queue ({{ leads|length }} lead{{ "s" if leads|length != 1 }})</h4>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Review Queue ({{ leads|length }} lead{{ "s" if leads|length != 1 }}) {{ help_button("review-queue") }}</h4>
     <div>
         <a href="/products/today" class="btn btn-outline-dark btn-sm">
             <i class="bi bi-calendar2-check"></i> Today's Scans
@@ -16,18 +17,50 @@
     </div>
 </div>
 
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if view == 'main' }}" href="/review-queue?view=main&sort={{ sort }}">
+            Buy / Star buys
+            <span class="badge bg-success ms-1">{{ main_count }}</span>
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if view == 'consider' }}" href="/review-queue?view=consider&sort={{ sort }}">
+            Consider
+            <span class="badge bg-warning text-dark ms-1">{{ consider_count }}</span>
+        </a>
+    </li>
+</ul>
+
+{% if view == "consider" %}
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> CONSIDER-tier leads that are profitable (today's price or the 90-day typical
+    price) with some sign of real sales, but didn't clear the stricter "star buy" bar on the main tab. Thumbs up/down
+    removes a lead from here, same as the main tab -- the difference is expectation, not mechanics: this list isn't
+    meant to be cleared to zero, it's fine for a genuine backlog to sit here with newer leads landing on top. Review
+    it as you have time.
+</div>
+{% else %}
 <div class="alert alert-secondary py-2 small">
     <i class="bi bi-info-circle"></i> Everything here is a "star buy" (confirmed sales + 25%+ ROI), a BUY recommendation, or a riskier "PEAK (risky)" lead (only profitable at a recent price peak) -- not yet reviewed, from a normal scan OR a competitor detection that's currently buyable. Reviewing something here clears it from Today's/Historical Scans and the Competitors page too, wherever else it shows up. If it's just out of stock on Amazon right now, use <strong>Amazon OOS</strong> instead of dismissing it -- that adds it to your <a href="/watchlist">Watchlist</a> so you'll catch it when it restocks.
 </div>
+{% endif %}
 
 {% if not leads %}
 <div class="alert alert-info">
-    <h5>Nothing waiting on review</h5>
-    <p class="mb-0">Star buys, BUY recommendations, and riskier peak-price leads (from scans or buyable competitor finds) will show up here as they're found.</p>
+    <h5>{{ "Nothing here right now" if view == "consider" else "Nothing waiting on review" }}</h5>
+    <p class="mb-0">
+        {% if view == "consider" %}
+            CONSIDER leads that are profitable with some sign of sales will show up here as they're found.
+        {% else %}
+            Star buys, BUY recommendations, and riskier peak-price leads (from scans or buyable competitor finds) will show up here as they're found.
+        {% endif %}
+    </p>
 </div>
 {% else %}
 <div class="card metric p-3 mb-3">
     <form method="get" action="/review-queue" class="row g-3 align-items-end">
+        <input type="hidden" name="view" value="{{ view }}">
         <div class="col-md-3">
             <label class="form-label">Sort by</label>
             <select class="form-select" name="sort" onchange="this.form.submit()">
@@ -71,8 +104,8 @@
                     <th>Source</th>
                     <th>Best Market</th>
                     <th>Source Cost</th>
-                    <th>Profit / ROI (today)</th>
-                    <th>Profit / ROI (typical, 90d)</th>
+                    <th>ROI / Profit (today)</th>
+                    <th>ROI / Profit (typical, 90d)</th>
                     <th>Monthly Sales</th>
                     <th>Score</th>
                     <th>Recommendation</th>
@@ -104,10 +137,12 @@
                     <td class="fw-semibold">{{ lead.best_source_marketplace }}</td>
                     <td>&pound;{{ "%.2f"|format(lead.best_source_cost_gbp) }}</td>
                     <td class="{{ 'text-success' if lead.profit > 0 else 'text-danger' }}">
-                        &pound;{{ "%.2f"|format(lead.profit) }} ({{ "%.1f"|format(lead.roi) }}% ROI{% if lead.parsed_report.margin %} / {{ "%.1f"|format(lead.parsed_report.margin) }}% margin{% endif %})
+                        <div class="fw-bold">{{ "%.1f"|format(lead.roi) }}%{% if lead.parsed_report.margin %} <span class="fw-normal small">/ {{ "%.1f"|format(lead.parsed_report.margin) }}% margin</span>{% endif %}</div>
+                        <div class="small">&pound;{{ "%.2f"|format(lead.profit) }}</div>
                     </td>
                     <td class="{{ 'text-success' if lead.profit_90d > 0 else 'text-danger' }}">
-                        &pound;{{ "%.2f"|format(lead.profit_90d) }} ({{ "%.1f"|format(lead.roi_90d) }}% ROI{% if lead.parsed_report.margin_90d %} / {{ "%.1f"|format(lead.parsed_report.margin_90d) }}% margin{% endif %})
+                        <div class="fw-bold">{{ "%.1f"|format(lead.roi_90d) }}%{% if lead.parsed_report.margin_90d %} <span class="fw-normal small">/ {{ "%.1f"|format(lead.parsed_report.margin_90d) }}% margin</span>{% endif %}</div>
+                        <div class="small">&pound;{{ "%.2f"|format(lead.profit_90d) }}</div>
                     </td>
                     <td>
                         {% if lead.monthly_sales > 0 %}
@@ -126,6 +161,10 @@
                             <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
                                 <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
                             </span>
+                        {% elif lead.recommendation == "GATED" %}
+                            <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
+                                <i class="bi bi-shield-lock"></i> GATED
+                            </span>
                         {% else %}
                             <span class="badge bg-secondary">IGNORE</span>
                         {% endif %}
@@ -142,7 +181,7 @@
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
                                     <input type="hidden" name="verdict" value="up">
-                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-success w-100" type="submit" title="Good opportunity">
                                         <i class="bi bi-hand-thumbs-up"></i>
                                     </button>
@@ -151,7 +190,7 @@
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
                                     <input type="hidden" name="verdict" value="down">
-                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
                                         <i class="bi bi-hand-thumbs-down"></i>
                                     </button>
@@ -161,7 +200,7 @@
                                 <input type="hidden" name="asin" value="{{ lead.asin }}">
                                 <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
                                 <input type="hidden" name="verdict" value="oos">
-                                <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                 <button class="btn btn-sm btn-outline-warning w-100" type="submit" title="Amazon is out of stock right now -- not actionable this instant, but watch for it to restock">
                                     <i class="bi bi-box-seam"></i> Amazon OOS
                                 </button>
@@ -170,7 +209,7 @@
                                 {% if lead.asin in watched_asins %}
                                 <form method="post" action="/watch/remove" class="flex-fill">
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
-                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-primary w-100" type="submit" title="Remove from Watchlist">
                                         <i class="bi bi-star-fill"></i> Unwatch
                                     </button>
@@ -180,7 +219,7 @@
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="title" value="{{ lead.title }}">
                                     <input type="hidden" name="brand" value="{{ lead.brand }}">
-                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-primary w-100" type="submit" title="Add to Watchlist">
                                         <i class="bi bi-star"></i> Watch
                                     </button>
@@ -191,7 +230,7 @@
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="title" value="{{ lead.title }}">
                                     <input type="hidden" name="reason" value="Excluded from Review Queue">
-                                    <input type="hidden" name="return_to" value="/review-queue?sort={{ sort }}">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-dark w-100" type="submit" title="Never show this ASIN again">
                                         <i class="bi bi-slash-circle"></i> Exclude
                                     </button>
@@ -209,6 +248,8 @@
                             Not profitable today or at the 90-day average. At the recent 90-day peak price (&pound;{{ "%.2f"|format(lead.parsed_report.peak_price) }}),
                             estimated profit/ROI would be &pound;{{ "%.2f"|format(lead.parsed_report.peak_profit) }} ({{ "%.1f"|format(lead.parsed_report.peak_roi) }}%) --
                             only real if you can source and sell while the price is actually up there.
+                            Actually profitable on <strong>{{ lead.parsed_report.peak_viable_days_90d }}</strong> of the last 90 days at today's source cost,
+                            not just a single spike.
                         </div>
                         {% endif %}
                         <div class="row py-2">
@@ -310,7 +351,7 @@
         const returnTo = document.createElement('input');
         returnTo.type = 'hidden';
         returnTo.name = 'return_to';
-        returnTo.value = '/review-queue?sort={{ sort }}';
+        returnTo.value = '/review-queue?view={{ view }}&sort={{ sort }}';
         form.appendChild(returnTo);
 
         form.submit();
@@ -359,5 +400,30 @@
     }, { once: true });
 })();
 </script>
+
+{% call help_modal("review-queue", "Review Queue") %}
+<p>
+    Your single unified action list -- every star buy, BUY recommendation, riskier PEAK lead
+    that clears a stricter bar, and currently-buyable competitor find that you haven't yet given
+    a thumbs up or down.
+</p>
+<p>
+    <strong>Buy / Star buys</strong> tab: confirmed sales evidence and over 25% ROI (today's or
+    the 90-day typical price) -- see <a href="/help#star-buy">star buy</a>. A PEAK lead only
+    makes it into this tab if its peak ROI is 35%+ or its score is 65+ -- a stricter bar than
+    what earned it the PEAK tag in the first place (10% peak ROI), so some weaker PEAK
+    opportunities are filtered out before you ever see them.
+</p>
+<p>
+    <strong>Consider</strong> tab: profitable leads (today's or 90-day price) with some sign of
+    real sales, but not clearing the stricter star-buy bar above. This list isn't meant to be
+    cleared to zero -- browse it as you have time.
+</p>
+<p class="mb-0">
+    "Sourcing reasoning" numbers on competitor-sourced rows are Atlas's best GUESS at how a
+    competitor sourced something, inferred from price history alone -- never a confirmed fact.
+    Reviewing (thumbs up/down) removes a lead from whichever tab it's in.
+</p>
+{% endcall %}
 
 {% endblock %}

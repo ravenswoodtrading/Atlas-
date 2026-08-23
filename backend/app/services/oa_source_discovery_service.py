@@ -607,7 +607,9 @@ class OaSourceDiscoveryService:
         this reason.
 
         Either way, ROI must clear FeeEngine.OA_TARGET_ROI_PCT (same
-        25% bar as everywhere else in Atlas) -- deliberately NOT gated
+        25% bar as everywhere else in Atlas), AND margin/profit must
+        clear OpportunityEngine.MIN_VIABLE_MARGIN_PCT/
+        MIN_VIABLE_PROFIT_GBP (13%/£2, added 2026-08-23) -- deliberately NOT gated
         on OpportunityEngine's own BUY/CONSIDER recommendation, since a
         genuinely good OA find can legitimately land at CONSIDER (e.g.
         lower confidence from thin sales evidence) and still be exactly
@@ -654,6 +656,14 @@ class OaSourceDiscoveryService:
             not already_promoted
             and match_trusted_enough
             and fees.roi > FeeEngine.OA_TARGET_ROI_PCT
+            # Section 8.2 viability floor (2026-08-23): even at a
+            # strong 25%+ ROI, also require the margin/absolute-profit
+            # gate everywhere else in Atlas now enforces -- see
+            # OpportunityEngine.MIN_VIABLE_MARGIN_PCT/
+            # MIN_VIABLE_PROFIT_GBP's own docstring for why ROI alone
+            # isn't enough.
+            and fees.margin >= OpportunityEngine.MIN_VIABLE_MARGIN_PCT
+            and fees.profit >= OpportunityEngine.MIN_VIABLE_PROFIT_GBP
         )
 
         if not qualifies:
@@ -767,7 +777,7 @@ class OaSourceDiscoveryService:
                 return {"run_id": run_id, "asins_targeted": 0, "message": "No notable 'OA / unclear' ASINs available right now."}
 
             service = ProductService()
-            raw_products = service.get_products(asins, "UK", full=True)
+            raw_products = service.get_products(asins, "UK", full=True, usage_category="oa_discovery")
             category_names = get_category_names(service.api)
 
             search_count = 0
@@ -1151,7 +1161,7 @@ class OaSourceDiscoveryService:
             candidate.outcome = "candidate_found"
 
             service = ProductService()
-            raw_products = service.get_products([candidate.asin], "UK", full=True)
+            raw_products = service.get_products([candidate.asin], "UK", full=True, usage_category="oa_discovery")
 
             promoted = False
 

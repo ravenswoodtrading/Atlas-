@@ -19,23 +19,26 @@ class SignalService:
     ceiling) and turns them into lightweight, UNSCORED SignalMatch
     leads worth digging into manually on Keepa/SAS.
 
-    DELIBERATELY MANUAL, not scheduled: run_check() is only ever
-    called from the /signals page's "Run now" button (see
-    app/routes/signals.py) for now. Two reasons this isn't on an
-    automatic scheduler yet:
+    MOSTLY AUTOMATED as of 2026-08-21: run_check() is called both from
+    the /signals page's "Run now" button (see app/routes/signals.py)
+    AND automatically every 2h by main.py's _signal_scheduler, for
+    query.signal_type in main.py's AUTOMATED_SIGNAL_TYPES. Currently
+    that's stock_out (a confirmed Keepa field) and ceiling_recheck (no
+    Product Finder call at all -- it just re-prices Atlas's own
+    already-rejected ASINs). price_spike is still "Run now"-only:
+    its Keepa Product Finder field was corrected 2026-08-21 (see
+    ProductFinder.find_signal_candidates' docstring -- it was both the
+    wrong field name and the wrong sign), but that correction is only
+    checked against Keepa's documentation, not a live result. Run it
+    manually once and spot-check the results before adding it to
+    AUTOMATED_SIGNAL_TYPES.
 
-    1. price_spike relies on a best-guess Keepa Product Finder field
-       (deltaPercent90_BUY_BOX_gte) that has not been confirmed live
-       from this environment -- see ProductFinder.find_signal_
-       candidates' docstring. Running it manually first and
-       spot-checking the results against real Keepa/SAS price history
-       is the way to build confidence before ever automating it.
-    2. Every run here still costs real Keepa tokens (a Product Finder
-       call plus one UK-only lookup per NEW candidate, or one UK-only
-       lookup per ceiling_recheck candidate) -- deliberately small
-       and bounded per click, but worth the user's own judgement on
-       when to spend it rather than a background scheduler burning
-       through the token budget unattended.
+    The token cost is deliberately small and bounded per run regardless
+    of whether it's manual or automatic (see COST MODEL below) -- the
+    original hesitation about a scheduler "burning through the token
+    budget unattended" doesn't really apply here the way it would for
+    an unbounded brand scan; that's exactly why stock_out/
+    ceiling_recheck were safe to automate.
 
     COST MODEL (the whole point of this feature vs. a normal brand
     scan): stock_out/price_spike NEVER touch a single EU marketplace.
@@ -151,7 +154,9 @@ class SignalService:
                 "skipped_gated": 0, "skipped_excluded": 0, "skipped_unconfirmed": 0,
             }
 
-        keepa_products = self.product_service.get_products(asins, "UK", full=True, stats_days=90)
+        keepa_products = self.product_service.get_products(
+            asins, "UK", full=True, stats_days=90, usage_category="signals",
+        )
         category_names = get_category_names(self.finder.api)
 
         excluded_asins = ProductRepository.get_excluded_asins()
@@ -281,7 +286,9 @@ class SignalService:
         asins = [row.asin for row in rejected_rows]
         rows_by_asin = {row.asin: row for row in rejected_rows}
 
-        keepa_products = self.product_service.get_products(asins, "UK", full=True, stats_days=90)
+        keepa_products = self.product_service.get_products(
+            asins, "UK", full=True, stats_days=90, usage_category="signals",
+        )
         category_names = get_category_names(self.finder.api)
 
         excluded_asins = ProductRepository.get_excluded_asins()
@@ -396,12 +403,34 @@ class SignalService:
         eu_history = {}
         last_eu = ProductRepository.get_last_eu_check(asin)
         if last_eu:
+            # peak_roi/peak_profit/peak_viable_days_90d only live inside
+            # report_json (see OpportunityReport), not as their own
+            # ProductRecord columns -- pulled out here, still no fresh
+            # Keepa call, so a signal row can show "don't rule this out,
+            # it clears a genuine PEAK window" (2026-08-20, the user's
+            # own earlier point: a price-drop lead "shouldn't be ruled
+            # out... just shown differently") using data Atlas already
+            # has, without spending an EU token on every Signals row.
+            peak_profit = peak_roi = peak_viable_days_90d = 0
+            if last_eu.report_json:
+                try:
+                    report = json.loads(last_eu.report_json)
+                    peak_profit = report.get("peak_profit") or 0
+                    peak_roi = report.get("peak_roi") or 0
+                    peak_viable_days_90d = report.get("peak_viable_days_90d") or 0
+                except (ValueError, TypeError):
+                    pass
+
             eu_history = {
                 "scanned_at": last_eu.scanned_at.isoformat() if last_eu.scanned_at else None,
                 "best_source_marketplace": last_eu.best_source_marketplace,
                 "best_source_cost_gbp": last_eu.best_source_cost_gbp,
                 "roi": last_eu.roi,
+                "roi_90d": last_eu.roi_90d,
                 "recommendation": last_eu.recommendation,
+                "peak_profit": peak_profit,
+                "peak_roi": peak_roi,
+                "peak_viable_days_90d": peak_viable_days_90d,
             }
 
         ProductRepository.save_signal_match(

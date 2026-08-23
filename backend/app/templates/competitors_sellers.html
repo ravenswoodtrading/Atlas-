@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}Manage Sellers - Atlas{% endblock %}
 
@@ -14,7 +15,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
         <a href="/competitors" class="small text-muted text-decoration-none"><i class="bi bi-arrow-left"></i> Back to detections</a>
-        <h4 class="mb-0 mt-1">Tracked Sellers</h4>
+        <h4 class="mb-0 mt-1">Tracked Sellers {{ help_button("competitors-sellers") }}</h4>
     </div>
     <form method="post" action="/competitors/check-now">
         <button class="btn btn-outline-dark btn-sm" type="submit">
@@ -113,5 +114,19 @@
     No sellers tracked yet -- add one above to get started.
 </div>
 {% endif %}
+
+{% call help_modal("competitors-sellers", "Tracked Sellers") %}
+<p>
+    The seller IDs Atlas checks every couple of hours for new listings, feeding the
+    <a href="/competitors">Competitor Storefront Watch</a> page. Nothing here surfaces NEW
+    sellers to track automatically -- you add each one manually (by Amazon seller ID), usually
+    after spotting them as a competitor on an ASIN you already know.
+</p>
+<p class="mb-0">
+    "Check now" forces an immediate re-check of every tracked seller's current listings, rather
+    than waiting for the next automatic cycle -- useful right after adding a new seller so you
+    don't wait for its first scheduled check.
+</p>
+{% endcall %}
 
 {% endblock %}

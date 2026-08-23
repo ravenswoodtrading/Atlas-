@@ -34,7 +34,7 @@ class OaLookupService:
         all -- OA doesn't need a cross-border cost comparison.
         """
         service = ProductService()
-        products = service.get_products([asin], "UK", full=True)
+        products = service.get_products([asin], "UK", full=True, usage_category="oa_lookup")
 
         if not products:
             return None, ""

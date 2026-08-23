@@ -20,10 +20,11 @@ RECENT_WINDOW_DAYS = 10
 
 # "Would have been worth buying" bar for a single recent-window day's
 # EU-sourced margin. Mirrors OpportunityEngine.MIN_VIABLE_ROI (the
-# app's absolute floor) rather than is_notable's stronger 25% bar --
-# this is asking "is there real evidence a purchase like this could
-# have happened", not "is this a great lead".
-RECENT_VIABLE_ROI_PCT = 10.0
+# app's absolute floor, raised 10%->17% 2026-08-23) rather than
+# is_notable's stronger 25% bar -- this is asking "is there real
+# evidence a purchase like this could have happened", not "is this a
+# great lead".
+RECENT_VIABLE_ROI_PCT = 17.0
 
 # How far below its 90-day average a price has to have fallen to count
 # as a genuine "dip" (as opposed to normal day-to-day noise). Named
@@ -207,6 +208,63 @@ class SourcingClassifier:
             "eu_source_best_roi_cost_gbp": eu_best_roi_cost_gbp,
             "eu_source_best_roi_date": eu_best_roi_date,
         }
+
+    @staticmethod
+    def compute_peak_window_evidence(uk_raw: dict, product: Product, category_name: str) -> dict:
+        """
+        How many of the last 90 days would ACTUALLY have cleared a
+        viable ROI at TODAY's best EU source cost -- built for
+        OpportunityEngine's PEAK_WINDOW recommendation (2026-08-20).
+
+        PEAK_WINDOW used to trust price_drop_count_90d (a count of ANY
+        downward buy-box move, at ANY price level, see
+        KeepaParser.price_drop_count) as evidence the 90-day peak price
+        genuinely recurs rather than being a one-off spike. That's a
+        weak proxy -- a product that just bounces around at LOW,
+        unprofitable prices racks up plenty of "drops" with no
+        connection to the peak at all, while the actual peak
+        (buy_box_max_90d) may have been touched on a single day. The
+        user's own framing: "one price spike doesn't mean this is
+        potentially profitable... it needs to be at a profitable price
+        for more than just a day in 90 days."
+
+        This instead re-runs the real ROI formula (FeeEngine.roi_at_price)
+        against every one of the last 90 reconstructed daily UK prices
+        (see KeepaParser.daily_buy_box_prices) -- the same day-by-day
+        technique VerdictService.compute_metrics already uses for a
+        manually-priced ASIN, and compute_recent_evidence above already
+        uses for the 10-day competitor-detection window. "The peak
+        recurs" now means "was actually profitable on real days", not
+        "the price moved around a lot".
+
+        product must already have fba_fee/eu_vat_rate_used/
+        best_source_cost_gbp set (called AFTER FeeEngine.calculate).
+        Returns {"peak_viable_days_90d": 0} untouched if there's no EU
+        source to price against at all -- nothing to reconstruct.
+        """
+        if not product.best_source_cost_gbp:
+            return {"peak_viable_days_90d": 0}
+
+        daily_prices = KeepaParser(uk_raw).daily_buy_box_prices(90)
+        viable_days = 0
+
+        for day_price in daily_prices:
+            if not day_price:
+                continue
+
+            day_roi = FeeEngine.roi_at_price(
+                day_price, product.best_source_cost_gbp, category_name,
+                product.fba_fee, product.eu_vat_rate_used,
+            )
+
+            # RECENT_VIABLE_ROI_PCT mirrors OpportunityEngine.MIN_VIABLE_ROI
+            # (same 17% "not even worth the risk" floor, see its own
+            # docstring above) -- reused rather than duplicated again,
+            # since it's exactly the same bar applied to a wider window.
+            if day_roi >= RECENT_VIABLE_ROI_PCT:
+                viable_days += 1
+
+        return {"peak_viable_days_90d": viable_days}
 
     @staticmethod
     def classify(product: Product, brand_repeat_count: int = 0) -> SourcingClassification:

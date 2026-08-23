@@ -27,6 +27,7 @@ from app.routes import (
     dashboard, keepa, scan, analyse, opportunities_view, products, watchlist,
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
+    token_usage,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -139,6 +140,16 @@ async def _weekly_recheck_scheduler():
                     )
                 finally:
                     ScanCoordinator.release_after_automated_tick()
+
+            # Deliberately OUTSIDE the ScanCoordinator lock above --
+            # this spends no Keepa tokens (pure DB reads/deletes), so
+            # it has no reason to wait for or compete with a manual
+            # scan the way the token-spending check above does. Runs
+            # every tick regardless of whether the lock was free.
+            # (WatchlistService.prune_stale_auto_adds logs its own
+            # ActivityLog entry when it actually removes anything --
+            # nothing further to log here.)
+            await asyncio.to_thread(WatchlistService.prune_stale_auto_adds)
         except Exception as exc:
             print(f"Weekly recheck tick failed: {exc}")
 
@@ -170,11 +181,15 @@ async def _lead_analysis_scheduler():
 
 # How often the background Signals scheduler automatically checks
 # enabled signal queries for new candidates. Deliberately does NOT
-# include price_spike -- per the user's explicit choice, that
-# signal's Keepa filter field (deltaPercent90_BUY_BOX_gte, see
-# ProductFinder.find_signal_candidates) is still an unverified
-# best-guess, so it stays "Run now"-only on /signals/queries until
-# it's been spot-checked against real results at least once.
+# include price_spike yet -- its Keepa filter field was corrected
+# 2026-08-21 (was the wrong field name AND the wrong sign; see
+# ProductFinder.find_signal_candidates' docstring for the fix and the
+# Keepa docs it's based on), but that fix is still only checked
+# against Keepa's documentation, not a live result -- no Keepa/network
+# access from the sandbox that made the fix. Run it once manually from
+# /signals/queries' "Run now" button after restart and spot-check that
+# the returned ASINs' Buy Box prices genuinely went UP (not down) on
+# Keepa/SAS before adding "price_spike" to AUTOMATED_SIGNAL_TYPES below.
 # stock_out (a confirmed Keepa field) and ceiling_recheck (no Product
 # Finder call at all -- it just re-prices Atlas's own already-
 # rejected ASINs) are both safe to automate now.
@@ -306,6 +321,7 @@ app.include_router(leads.router)
 app.include_router(signals.router)
 app.include_router(oa_source_discovery.router)
 app.include_router(help_route.router)
+app.include_router(token_usage.router)
 
 
 @app.get("/opportunities/{brand}")
@@ -316,7 +332,7 @@ def opportunities_for_brand(brand: str, limit: int = 20, force_rescan: bool = Fa
     By default, ASINs scanned recently for this brand are skipped to
     save tokens -- pass force_rescan=true to check everything anyway.
     """
-    scanner = BrandScanService()
+    scanner = BrandScanService(usage_category="manual_api")
     return scanner.scan(brand, limit=limit, force_rescan=force_rescan)
 
 
@@ -341,12 +357,12 @@ def debug_brand(brand: str):
     finder = ProductFinder()
     service = ProductService()
 
-    asins = finder.find_brand(brand, limit=1)
+    asins = finder.find_brand(brand, limit=1, usage_category="debug")
 
     if not asins:
         return {"error": "No products found"}
 
-    products = service.get_products([asins[0]], "UK")
+    products = service.get_products([asins[0]], "UK", usage_category="debug")
 
     if not products:
         return {"error": "No Keepa product returned"}
@@ -423,7 +439,7 @@ def debug_mpn_check(limit: int = 5, asins: str = ""):
         }
 
     service = ProductService()
-    raw_products = service.get_products(asin_list, "UK", full=True)
+    raw_products = service.get_products(asin_list, "UK", full=True, usage_category="debug")
 
     candidate_fields = ["model", "partNumber", "manufacturerPartNumber", "mpn", "productGroup"]
     results = []

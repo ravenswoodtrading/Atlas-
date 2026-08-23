@@ -1,4 +1,5 @@
 from app.keepa.client import get_keepa_client
+from app.services.token_usage_service import TokenUsageService
 
 
 class ProductService:
@@ -16,7 +17,7 @@ class ProductService:
         }
 
     def get_products(self, asins, marketplace="UK", retries=1, full=True, stats_days=90,
-                      include_rating=False, include_offers=False):
+                      include_rating=False, include_offers=False, usage_category="other"):
         """
         `full=True` (used for UK) requests `stats_days`-day stats too
         -- needed for trend/scoring. `full=False` (used for EU price
@@ -64,6 +65,11 @@ class ProductService:
         scales with the offer count requested), not worth paying on
         every bulk scan, but a single manual Verdict Check can afford
         the accuracy.
+
+        usage_category: which Atlas feature is calling this, purely
+        for the Settings > Token Usage page (see TokenUsageEvent) --
+        has no effect on the Keepa call itself. Defaults to "other"
+        for any caller that hasn't been given a real label yet.
         """
 
         domain = self.domains.get(marketplace.upper())
@@ -89,8 +95,15 @@ class ProductService:
             query_kwargs["offers"] = 20
 
         for attempt in range(retries + 1):
+            tokens_before = self.api.tokens_left
+
             try:
-                return self.api.query(**query_kwargs)
+                result = self.api.query(**query_kwargs)
+                TokenUsageService.record_keepa_spend(
+                    usage_category, "keepa_query", tokens_before, self.api.tokens_left,
+                    marketplace=marketplace, asins_count=len(asins),
+                )
+                return result
             except Exception as exc:
                 if attempt < retries:
                     continue

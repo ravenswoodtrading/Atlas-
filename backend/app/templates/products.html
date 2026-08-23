@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
 
 {% block title %}{{ "Today's Scans" if view == "today" else "Historical Scans" }} - Atlas{% endblock %}
 
@@ -6,7 +7,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h4 class="mb-1">{{ "Today's Scans" if view == "today" else "Historical Scans" }} (latest scan per ASIN) -- {{ total_count }} total</h4>
+        <h4 class="mb-1">{{ "Today's Scans" if view == "today" else "Historical Scans" }} (latest scan per ASIN) -- {{ total_count }} total {{ help_button("products") }}</h4>
         {% if view == "today" %}
             <a href="/products" class="small"><i class="bi bi-clock-history"></i> View historical scans instead</a>
         {% else %}
@@ -67,8 +68,8 @@
                     <th>Best Source</th>
                     <th class="text-end">Source Cost</th>
                     <th class="text-end">UK Price</th>
-                    <th class="text-end">Profit/ROI (today)</th>
-                    <th class="text-end">Profit/ROI (90d)</th>
+                    <th class="text-end">ROI/Profit (today)</th>
+                    <th class="text-end">ROI/Profit (90d)</th>
                     <th>Monthly Sales</th>
                     <th>Score</th>
                     <th>Recommendation</th>
@@ -161,10 +162,12 @@
                     <td class="text-end">&pound;{{ "%.2f"|format(p.best_source_cost_gbp) }}</td>
                     <td class="text-end">&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
                     <td class="text-end {{ 'text-success' if p.profit > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
-                        &pound;{{ "%.2f"|format(p.profit) }} ({{ "%.1f"|format(p.roi) }}%)
+                        <div class="fw-bold">{{ "%.1f"|format(p.roi) }}%</div>
+                        <div class="small">&pound;{{ "%.2f"|format(p.profit) }}</div>
                     </td>
                     <td class="text-end {{ 'text-success' if p.profit_90d > 0 else 'text-danger' }}" title="{{ p.category_name }} · referral {{ '%.0f'|format(p.referral_rate_used*100) }}% · UK VAT {{ '%.0f'|format(p.uk_vat_rate_used*100) }}% · {{ p.best_source_marketplace }} VAT {{ '%.0f'|format(p.eu_vat_rate_used*100) }}%">
-                        &pound;{{ "%.2f"|format(p.profit_90d) }} ({{ "%.1f"|format(p.roi_90d) }}%)
+                        <div class="fw-bold">{{ "%.1f"|format(p.roi_90d) }}%</div>
+                        <div class="small">&pound;{{ "%.2f"|format(p.profit_90d) }}</div>
                     </td>
                     <td>
                         {% if p.monthly_sales > 0 %}
@@ -187,6 +190,10 @@
                         {% elif p.recommendation == "PEAK_WINDOW" %}
                             <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
                                 <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
+                            </span>
+                        {% elif p.recommendation == "GATED" %}
+                            <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
+                                <i class="bi bi-shield-lock"></i> GATED
                             </span>
                         {% else %}
                             <span class="badge bg-secondary">IGNORE</span>
@@ -269,5 +276,31 @@
 </div>
 
 {% endif %}
+
+{% call help_modal("products", "Products") %}
+<p>
+    A browsable, historical log of every ASIN Atlas has ever scanned -- from Discovery, the
+    Scan Queue, Watchlist, or Replen -- one row per ASIN, showing its <strong>most recent</strong>
+    scan only (re-scanning something doesn't add a second row).
+</p>
+<p>
+    <strong>Today's Scans</strong> vs. <strong>Historical Scans</strong>: "Today" is everything
+    scanned since UTC midnight; "Historical" is everything before that, including today's --
+    it's the full log, not "everything except today."
+</p>
+<p>
+    <strong>Score</strong> (0-100) is how good the opportunity is. <strong>Confidence</strong>
+    (0-100) is how much to trust that score -- docked for price swings, offer-count spikes, or
+    thin sales evidence. <strong>BUY</strong> needs score 85+ and confidence 80+;
+    <strong>CONSIDER</strong> needs 65+/60+. Rows with confirmed sales evidence and over 25% ROI
+    (today or on the 90-day typical price) are highlighted green -- see the
+    <a href="/help#star-buy">star buy</a> definition.
+</p>
+<p class="mb-0">
+    A red <strong>GATED</strong> badge means a genuinely good opportunity on a brand you're
+    currently blocked from selling -- see <a href="/help#excluded-vs-gated">Excluded vs. Gated</a>
+    and <a href="/gated-opportunities">Gated Opportunities</a>.
+</p>
+{% endcall %}
 
 {% endblock %}

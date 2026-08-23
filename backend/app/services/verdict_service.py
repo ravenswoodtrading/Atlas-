@@ -41,7 +41,7 @@ class VerdictService:
         service = ProductService()
         products = service.get_products(
             [asin], "UK", full=True, stats_days=STATS_WINDOW_DAYS,
-            include_rating=True, include_offers=True,
+            include_rating=True, include_offers=True, usage_category="verdict",
         )
 
         if not products:
@@ -119,17 +119,17 @@ class VerdictService:
             days_at_min_roi = 0
             days_at_target_roi = 0
 
-            # 10% mirrors OpportunityEngine.MIN_VIABLE_ROI (the app's
-            # absolute floor before a lead is even CONSIDER-worthy);
-            # FeeEngine.OA_TARGET_ROI_PCT (25%) mirrors is_notable's
-            # own ROI bar (what Atlas treats as a strong lead
-            # elsewhere) -- both duplicated as literals rather than
-            # imported, same reasoning as OpportunityEngine's own
-            # PEAK_SALES_DROPS_THRESHOLD: this module already sits
-            # below OpportunityEngine/ProductRepository in the
-            # dependency graph and shouldn't import back up to them
-            # just for one constant.
-            MIN_VIABLE_ROI_PCT = 10.0
+            # 17% mirrors OpportunityEngine.MIN_VIABLE_ROI (the app's
+            # absolute floor before a lead is even CONSIDER-worthy,
+            # raised from 10% 2026-08-23); FeeEngine.OA_TARGET_ROI_PCT
+            # (25%) mirrors is_notable's own ROI bar (what Atlas treats
+            # as a strong lead elsewhere) -- both duplicated as
+            # literals rather than imported, same reasoning as
+            # OpportunityEngine's own PEAK_SALES_DROPS_THRESHOLD: this
+            # module already sits below OpportunityEngine/
+            # ProductRepository in the dependency graph and shouldn't
+            # import back up to them just for one constant.
+            MIN_VIABLE_ROI_PCT = 17.0
 
             for day_price in daily_prices:
                 if not day_price:

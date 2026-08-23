@@ -1,4 +1,5 @@
 from app.keepa.client import get_keepa_client
+from app.services.token_usage_service import TokenUsageService
 
 
 class ProductFinder:
@@ -6,7 +7,8 @@ class ProductFinder:
     def __init__(self):
         self.api = get_keepa_client()
 
-    def find_brand(self, brand: str, limit: int = 100, page: int = 0, category_ids: list = None):
+    def find_brand(self, brand: str, limit: int = 100, page: int = 0, category_ids: list = None,
+                    usage_category: str = "other"):
         """
         Finds ASINs for a brand via Keepa's Product Finder.
 
@@ -96,6 +98,7 @@ class ProductFinder:
             query["rootCategory"] = [str(c) for c in category_ids]
 
         print(f"Calling Product Finder (page {page})...")
+        tokens_before = self.api.tokens_left
 
         try:
             # domain="GB" -- MUST match the marketplace every downstream
@@ -128,6 +131,11 @@ class ProductFinder:
         except Exception as exc:
             print(f"Product Finder failed: {exc}")
             return None
+
+        TokenUsageService.record_keepa_spend(
+            usage_category, "keepa_product_finder", tokens_before, self.api.tokens_left,
+            marketplace="UK", asins_count=len(products),
+        )
 
         print("Type:", type(products))
         print("Count:", len(products))
@@ -164,28 +172,36 @@ class ProductFinder:
           "price_spike" -- products whose Buy Box price has risen by
                             at least `price_spike_pct_gte` percent over
                             the last 90 days.
-                            UNVERIFIED FIELD: deltaPercent90_BUY_BOX_gte
-                            is this method's best-guess mapping of
-                            Keepa's documented web-UI "Price change %"
-                            filter, inferred from Keepa's naming
-                            convention for other delta fields (e.g.
-                            deltaPercent90_NEW) -- it has NOT been
-                            confirmed live from this environment (no
-                            Keepa/network access in this sandbox).
-                            Before trusting a single price_spike result,
-                            or before EVER putting this signal on an
-                            automatic schedule, run it manually from the
-                            /signals page's "Run now" button and
-                            spot-check a handful of the returned ASINs'
-                            actual Buy Box history on Keepa/SAS to
-                            confirm this field does what its name
-                            implies. If the field name is wrong or
-                            unsupported, Keepa will most likely reject
-                            the whole request outright (a safe,
-                            visible failure -- this method returns None,
-                            same as any other failed call, not silently
-                            wrong results) but that fallback behaviour
-                            itself hasn't been observed live either.
+                            FIELD NAME/SIGN CORRECTED 2026-08-21: the
+                            original field name here, deltaPercent90_
+                            BUY_BOX_gte, was checked against Keepa's own
+                            Product Finder API docs (keepa.com/api-docs/
+                            product-finder.html) and found to be wrong
+                            in two ways. First, "BUY_BOX" alone is not a
+                            valid <PRICE_TYPE> -- Keepa's documented
+                            price-type list only has BUY_BOX_SHIPPING
+                            (and BUY_BOX_USED_SHIPPING), so the field is
+                            actually deltaPercent90_BUY_BOX_SHIPPING_gte.
+                            Second, and much easier to get backwards:
+                            Keepa's own docs state deltaPercent90 fields
+                            are framed as "a positive value filters for
+                            prices/values that have DECREASED, and a
+                            negative value filters for INCREASED ones"
+                            -- the inverse of what the field name
+                            suggests. So finding a genuine price SPIKE
+                            (an increase) requires a NEGATIVE threshold,
+                            not the positive price_spike_pct_gte this
+                            method was passing straight through. Both
+                            are now fixed below. This is still based on
+                            reading Keepa's docs, not a live test (no
+                            Keepa/network access in this sandbox) -- run
+                            it manually from the /signals page's "Run
+                            now" button after restart and spot-check a
+                            handful of the returned ASINs' actual Buy
+                            Box history on Keepa/SAS (confirm they
+                            really went UP, not down) before trusting it
+                            or adding it to the automatic scheduler in
+                            main.py's AUTOMATED_SIGNAL_TYPES.
 
         Like find_brand(): ALWAYS requests perPage=100 (Keepa's own
         working minimum) and trims to `limit` afterward; uses
@@ -214,7 +230,13 @@ class ProductFinder:
         elif signal_type == "price_spike":
             query = {
                 "productType": ["0"],
-                "deltaPercent90_BUY_BOX_gte": price_spike_pct_gte,
+                # Negative threshold = price INCREASE, per Keepa's own
+                # (counter-intuitive) sign convention -- see this
+                # method's docstring. price_spike_pct_gte is always
+                # passed in positive (e.g. 20 for "risen 20%+"); negate
+                # it here so callers don't have to think about Keepa's
+                # inverted sign at every call site.
+                "deltaPercent90_BUY_BOX_SHIPPING_gte": -abs(price_spike_pct_gte),
                 "current_SALES_gte": 1,
                 "sort": [["current_SALES", "asc"]],
                 "perPage": 100,
@@ -229,6 +251,7 @@ class ProductFinder:
             query["rootCategory"] = [str(c) for c in category_ids]
 
         print(f"Calling Product Finder for signal '{signal_type}' (page {page})...")
+        tokens_before = self.api.tokens_left
 
         try:
             products = self.api.product_finder(query, wait=False, domain="GB")
@@ -241,6 +264,11 @@ class ProductFinder:
         except Exception as exc:
             print(f"Product Finder (signal '{signal_type}') failed: {exc}")
             return None
+
+        TokenUsageService.record_keepa_spend(
+            "signals", "keepa_product_finder", tokens_before, self.api.tokens_left,
+            marketplace="UK", asins_count=len(products),
+        )
 
         print("Type:", type(products))
         print("Count:", len(products))
