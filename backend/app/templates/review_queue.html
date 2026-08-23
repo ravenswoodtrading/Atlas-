@@ -186,10 +186,11 @@
                                         <i class="bi bi-hand-thumbs-up"></i>
                                     </button>
                                 </form>
-                                <form method="post" action="/review/set" class="flex-fill">
+                                <form method="post" action="/review/set" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
                                     <input type="hidden" name="verdict" value="down">
+                                    <input type="hidden" name="reason" value="">
                                     <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
                                         <i class="bi bi-hand-thumbs-down"></i>

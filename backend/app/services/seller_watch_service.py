@@ -858,11 +858,15 @@ class SellerWatchService:
             db.close()
 
     @staticmethod
-    def set_review(listing_id: int, verdict: str | None):
+    def set_review(listing_id: int, verdict: str | None, reason: str | None = None):
         """
         verdict: "up", "down", or None to clear. Applies to this
         specific detection row (not the underlying product generally --
         see the review column's comment on SellerNewListing).
+
+        reason: optional free-text "why not", only meaningful alongside
+        verdict="down" -- see SellerNewListing.review_reason's own
+        comment.
         """
         db = SessionLocal()
 
@@ -870,6 +874,7 @@ class SellerWatchService:
             listing = db.get(SellerNewListing, listing_id)
             if listing:
                 listing.review = verdict
+                listing.review_reason = reason
                 db.commit()
         finally:
             db.close()

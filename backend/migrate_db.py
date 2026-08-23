@@ -45,6 +45,11 @@ migrate_table("product_records", {
     "uk_vat_rate_used": "REAL DEFAULT 0.0",
     "eu_vat_rate_used": "REAL DEFAULT 0.0",
     "ean": "TEXT DEFAULT ''",
+    "review_reason": "TEXT",
+})
+
+migrate_table("leads", {
+    "decision_reason": "TEXT",
 })
 
 migrate_table("automation_settings", {
@@ -55,6 +60,7 @@ migrate_table("automation_settings", {
 migrate_table("seller_new_listings", {
     "review": "TEXT",
     "sourcing_reclassified_at": "DATETIME",
+    "review_reason": "TEXT",
 })
 
 migrate_table("oa_source_candidates", {

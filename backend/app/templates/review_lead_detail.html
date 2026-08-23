@@ -35,9 +35,10 @@
         <input type="hidden" name="return_to" value="/review/{{ lead.id }}">
         <button class="btn btn-success" type="submit"><i class="bi bi-hand-thumbs-up"></i> Approve</button>
     </form>
-    <form method="post" action="/review/decide">
+    <form method="post" action="/review/decide" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
         <input type="hidden" name="lead_id" value="{{ lead.id }}">
         <input type="hidden" name="decision" value="rejected">
+        <input type="hidden" name="reason" value="">
         <input type="hidden" name="return_to" value="/review/{{ lead.id }}">
         <button class="btn btn-danger" type="submit"><i class="bi bi-hand-thumbs-down"></i> Reject</button>
     </form>

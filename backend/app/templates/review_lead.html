@@ -117,9 +117,10 @@
                                         <i class="bi bi-hand-thumbs-up"></i>
                                     </button>
                                 </form>
-                                <form method="post" action="/review/decide" class="flex-fill">
+                                <form method="post" action="/review/decide" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
                                     <input type="hidden" name="lead_id" value="{{ lead.id }}">
                                     <input type="hidden" name="decision" value="rejected">
+                                    <input type="hidden" name="reason" value="">
                                     <input type="hidden" name="return_to" value="/review">
                                     <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Reject">
                                         <i class="bi bi-hand-thumbs-down"></i>

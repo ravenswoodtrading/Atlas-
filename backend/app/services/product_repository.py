@@ -952,11 +952,16 @@ class ProductRepository:
     # ---- Review (thumbs up/down) ----
 
     @staticmethod
-    def set_review(asin: str, verdict: str | None):
+    def set_review(asin: str, verdict: str | None, reason: str | None = None):
         """
         verdict: "up", "down", or None to clear. Applies to the MOST
         RECENT scan record for this ASIN -- the one currently being
         shown on whichever page the thumbs button was clicked from.
+
+        reason: optional free-text "why not", only meaningful alongside
+        verdict="down" -- the reject-flow field added 2026-08-23 (see
+        ProductRecord.review_reason's own comment). Passed through as
+        given; callers decide whether it's worth prompting for.
         """
         db = SessionLocal()
 
@@ -970,6 +975,7 @@ class ProductRepository:
 
             if record:
                 record.review = verdict
+                record.review_reason = reason
                 db.commit()
 
         finally:

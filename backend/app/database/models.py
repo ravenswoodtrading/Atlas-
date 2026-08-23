@@ -103,6 +103,13 @@ class ProductRecord(Base):
     # rather than carrying over a verdict based on stale data.
     review: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Optional free-text "why not" captured alongside a "down" review
+    # (2026-08-23, sourcing-agent brief section 8.4) -- the raw
+    # material a future rejection-retrieval/pattern-review step reads
+    # back, so a reject isn't just a bare verdict with no record of
+    # what was actually wrong with the lead.
+    review_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
 
 class KnownProduct(Base):
     """
@@ -464,6 +471,11 @@ class Lead(Base):
     # "approved" | "rejected", NULL until reviewed
     decision: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Optional free-text "why not" captured alongside a "rejected"
+    # decision -- same purpose as ProductRecord.review_reason, see its
+    # own comment.
+    decision_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     added_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -560,6 +572,10 @@ class SellerNewListing(Base):
     # detection that never made it through scoring still gets its own
     # reviewable row).
     review: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # Optional free-text "why not" captured alongside a "down" review --
+    # same purpose as ProductRecord.review_reason, see its own comment.
+    review_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     # When this row was last run through SellerWatchService.reclassify_all()
     # -- separate from detected_at (fixed at first detection). NULL means

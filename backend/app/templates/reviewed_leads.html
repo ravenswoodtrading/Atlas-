@@ -91,6 +91,9 @@
                         <span class="badge bg-warning text-dark" title="Added to your Watchlist -- see /watchlist"><i class="bi bi-box-seam"></i> Watching (OOS)</span>
                         {% else %}
                         <span class="badge bg-danger"><i class="bi bi-hand-thumbs-down"></i> Rejected</span>
+                        {% if lead.decision_reason %}
+                        <div class="small text-muted mt-1">{{ lead.decision_reason }}</div>
+                        {% endif %}
                         {% endif %}
                     </td>
                     <td class="small text-muted">

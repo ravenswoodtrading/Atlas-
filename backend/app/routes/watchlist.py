@@ -79,7 +79,7 @@ def gate_remove(gated_id: int = Form(...), return_to: str = Form("/exclusions"))
 
 @router.post("/review/set")
 def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int = Form(0),
-               return_to: str = Form("/products")):
+               reason: str = Form(""), return_to: str = Form("/products")):
     """
     Canonical "set review" endpoint, used by Products/Discovery/
     Watchlist/Review Queue. listing_id is optional -- only set when
@@ -88,6 +88,11 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     it also clears from the Competitors page's own unreviewed filter
     (and vice versa: reviewing it there already updates the same
     ProductRecord this route updates, via SellerWatchService.set_review).
+
+    reason: optional free-text "why not" (2026-08-23) -- the Review
+    Queue's reject button prompts for this and submits it here; other
+    callers (Products/Discovery/Watchlist thumbs, the up/oos buttons)
+    simply don't send one, which is fine, see ProductRecord.review_reason.
 
     verdict="oos" is a third bucket alongside "up"/"down" -- Amazon is
     out of stock right now, so it's not actionable this instant, but
@@ -102,10 +107,10 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     Atlas's own last scan record for this ASIN (no extra Keepa lookup
     needed here).
     """
-    ProductRepository.set_review(asin, verdict or None)
+    ProductRepository.set_review(asin, verdict or None, reason=reason or None)
 
     if listing_id:
-        SellerWatchService.set_review(listing_id, verdict or None)
+        SellerWatchService.set_review(listing_id, verdict or None, reason=reason or None)
 
     if verdict == "oos":
         record = ProductRepository.get_last_eu_check(asin)

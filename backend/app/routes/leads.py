@@ -262,6 +262,7 @@ def review_history_page(request: Request, decision: str = ""):
 def review_decide(
     lead_id: int = Form(...),
     decision: str = Form(...),
+    reason: str = Form(""),
     return_to: str = Form("/review"),
 ):
     """
@@ -272,6 +273,9 @@ def review_decide(
     (status="reviewed") -- "oos" is just a third bucket in Reviewed
     History (see reviewed_leads.html) rather than a real approve/
     reject verdict.
+
+    reason: optional free-text "why not" (2026-08-23) -- the reject
+    button prompts for this and submits it here, see Lead.decision_reason.
 
     "oos" ALSO auto-adds the ASIN to the existing Watchlist, reusing
     its already-built re-check machinery (WatchlistService.check_stale
@@ -286,6 +290,7 @@ def review_decide(
 
         if lead is not None:
             lead.decision = decision
+            lead.decision_reason = reason or None
             lead.status = "reviewed"
             lead.reviewed_at = datetime.now(timezone.utc)
             db.commit()
