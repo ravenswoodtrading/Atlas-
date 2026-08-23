@@ -198,6 +198,32 @@
     </ul>
 </div>
 
+{% if metrics.deep_dive %}
+<div class="vr-card mb-3">
+    <div class="vr-section-title"><i class="bi bi-search"></i> Deep dive (this lead cleared an initial pass, so extra evidence was pulled)</div>
+    {% if metrics.competitor_stock_levels %}
+    <div class="small mb-2" style="color:#6c7580;">Per-seller current stock -- Keepa can only confirm EXACT stock up to 10, so "10+" could be higher.</div>
+    <div class="d-flex flex-wrap gap-2 mb-2">
+        {% for s in metrics.competitor_stock_levels[:8] %}
+        <span class="vr-pill {{ 'vr-pill-risk' if s.stock >= 10 else 'vr-pill-safe' }}">
+            {{ "Amazon" if s.is_amazon else ("FBA seller" if s.is_fba else "Non-FBA seller") }}: {{ "10+" if s.stock >= 10 else s.stock }} units
+        </span>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="small mb-2" style="color:#6c7580;">No competitor stock data available from Keepa for this listing right now.</div>
+    {% endif %}
+    {% if metrics.sp_api_live_check %}
+    <div class="vr-detail-line">
+        <span class="vr-detail-label">Live SP-API price cross-check</span>
+        <span>{% if metrics.sp_api_live_check.price is not none %}&pound;{{ "%.2f"|format(metrics.sp_api_live_check.price) }}{% else %}no live offer found{% endif %} ({{ metrics.sp_api_live_check.offer_count }} offers)</span>
+    </div>
+    {% else %}
+    <div class="small" style="color:#6c7580;">Live SP-API price cross-check not available (not configured, or the live call failed).</div>
+    {% endif %}
+</div>
+{% endif %}
+
 <div class="row g-3">
     <div class="col-md-6">
         <div class="vr-card h-100">

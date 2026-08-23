@@ -30,4 +30,74 @@
 
 {% include "_verdict_metrics.html" %}
 
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-1">Bulk check</h5>
+    <div class="small text-muted mb-3">
+        One ASIN per line -- add a cost price after a comma or space (e.g. <code>B0BSCLTYJT,12.50</code>) for a Keepa-estimate ROI, or leave it off for demand/competition signals only.
+        Up to {{ max_bulk_asins }} at once. Any lead that comes back BUY or WATCH gets a second, deeper pass automatically (competitor stock levels + a live SP-API price check) before its final verdict.
+    </div>
+    <form method="post" action="/verdict/bulk">
+        <textarea class="form-control mb-3" name="asins_text" rows="6" placeholder="B0BSCLTYJT,12.50&#10;B0ABCDEFGH&#10;B0IJKLMNOP,8.00" required></textarea>
+        <button type="submit" class="btn btn-dark">
+            <i class="bi bi-clipboard-check"></i> Check batch
+        </button>
+    </form>
+</div>
+
+{% if bulk_results is not none %}
+<div class="card metric p-4 mb-4">
+    <h5 class="mb-3">Batch results ({{ bulk_results|length }})</h5>
+    {% if not bulk_results %}
+    <div class="text-muted">No valid ASINs found in the submitted text.</div>
+    {% else %}
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>ASIN</th>
+                    <th>Title</th>
+                    <th>Verdict</th>
+                    <th>Keepa estimate</th>
+                    <th>Deep dive?</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in bulk_results %}
+                <tr>
+                    <td class="small font-monospace">{{ r.asin }}</td>
+                    <td class="small">{{ r.title or "--" }}</td>
+                    <td>
+                        {% if r.error %}
+                        <span class="badge bg-secondary" title="{{ r.error }}">Failed</span>
+                        {% elif r.verdict == "BUY" %}
+                        <span class="badge bg-success">BUY</span>
+                        {% elif r.verdict == "WATCH" %}
+                        <span class="badge bg-warning text-dark">WATCH</span>
+                        {% else %}
+                        <span class="badge bg-danger">AVOID</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if r.keepa_estimate_profit is not none %}
+                        &pound;{{ "%.2f"|format(r.keepa_estimate_profit) }} ({{ "%.1f"|format(r.keepa_estimate_roi) }}%)
+                        {% else %}
+                        <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td>{% if r.deep_dive_fired %}<i class="bi bi-search" title="Deep dive ran -- this verdict includes competitor stock levels and a live SP-API price check"></i>{% endif %}</td>
+                    <td>
+                        {% if r.lead_id %}
+                        <a href="/review/{{ r.lead_id }}" class="btn btn-sm btn-outline-secondary">Details</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 {% endblock %}

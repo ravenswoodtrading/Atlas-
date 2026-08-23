@@ -17,7 +17,8 @@ class ProductService:
         }
 
     def get_products(self, asins, marketplace="UK", retries=1, full=True, stats_days=90,
-                      include_rating=False, include_offers=False, usage_category="other"):
+                      include_rating=False, include_offers=False, include_stock=False,
+                      usage_category="other"):
         """
         `full=True` (used for UK) requests `stats_days`-day stats too
         -- needed for trend/scoring. `full=False` (used for EU price
@@ -66,6 +67,17 @@ class ProductService:
         every bulk scan, but a single manual Verdict Check can afford
         the accuracy.
 
+        include_stock (default False) requests Keepa's `stock` option
+        -- per-seller current stock levels (see KeepaParser.
+        competitor_stock_levels), on top of whatever include_offers
+        already fetches (Keepa requires offers to already be requested;
+        stock alone does nothing). Confirmed live (2026-08-23): this
+        roughly doubles the already-priciest include_offers cost (~5
+        tokens/ASIN -> ~12), so it's gated behind VerdictService's own
+        "only for a promising lead" deep-dive check, not requested on
+        every verdict check by default -- see VerdictService.
+        compute_metrics' deep_dive param.
+
         usage_category: which Atlas feature is calling this, purely
         for the Settings > Token Usage page (see TokenUsageEvent) --
         has no effect on the Keepa call itself. Defaults to "other"
@@ -93,6 +105,9 @@ class ProductService:
 
         if include_offers:
             query_kwargs["offers"] = 20
+
+        if include_stock:
+            query_kwargs["stock"] = True
 
         for attempt in range(retries + 1):
             tokens_before = self.api.tokens_left

@@ -430,6 +430,62 @@ class KeepaParser:
 
         return self._last_value(series) not in (0, None)
 
+    def competitor_stock_levels(self) -> list[dict] | None:
+        """
+        Per-seller current stock, from Keepa's raw `offers` list --
+        only populated when the query requested BOTH offers AND stock
+        (see ProductService.get_products' include_offers/include_stock;
+        VerdictService's deep-dive check is the only caller of
+        include_stock today). Returns None when offers weren't
+        requested at all, or none of the returned offers carry a
+        stockCSV (stock wasn't requested, or Keepa simply has no stock
+        data for this listing yet).
+
+        Each offer's stockCSV is Keepa's raw, UNDECODED [keepaMinutes,
+        stock, keepaMinutes, stock, ...] pair series (confirmed against
+        the keepa package's own field docs, 2026-08-23 -- unlike the
+        top-level product `csv` series, the package does not convert
+        this) -- only the most recent stock value (the last element) is
+        read here; the history isn't needed for a point-in-time deep
+        dive.
+
+        stock is Keepa's own reported figure, capped: Keepa (mirroring
+        Amazon's own listing page) can only confirm EXACT stock up to
+        10 units -- a value of 10 should be read as "10 or more", never
+        as a precise count. Sorted highest-stock-first: the seller most
+        able to sustain being undercut is the real "how much room does
+        this listing have" signal a bare offer COUNT can't answer.
+        """
+        offers = self.product.get("offers")
+
+        if not offers:
+            return None
+
+        levels = []
+        for offer in offers:
+            stock_csv = offer.get("stockCSV")
+
+            if not stock_csv or len(stock_csv) < 2:
+                continue
+
+            stock = stock_csv[-1]
+
+            if stock is None or stock < 0:
+                continue
+
+            levels.append({
+                "seller_id": offer.get("sellerId") or "",
+                "is_amazon": bool(offer.get("isAmazon")),
+                "is_fba": bool(offer.get("isFBA")),
+                "stock": stock,
+            })
+
+        if not levels:
+            return None
+
+        levels.sort(key=lambda o: o["stock"], reverse=True)
+        return levels
+
     def _current_pair_price(self, csv_index: int) -> float:
         """
         Current price for a plain [time, value] PAIR-structured price

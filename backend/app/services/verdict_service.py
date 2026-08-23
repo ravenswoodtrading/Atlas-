@@ -5,6 +5,7 @@ from app.services.product_mapper import ProductMapper
 from app.services.category_survey_service import get_category_names
 from app.services.fee_engine import FeeEngine
 from app.keepa.parser import KeepaParser
+from app.sp_api.client import get_sp_api_client
 
 # Label passed as best_source_marketplace when computing a rough
 # Keepa-estimate profit for a verdict check -- not a real EU
@@ -25,7 +26,7 @@ STATS_WINDOW_DAYS = 180
 class VerdictService:
 
     @staticmethod
-    def compute_metrics(asin: str, cost_price: float | None = None) -> dict | None:
+    def compute_metrics(asin: str, cost_price: float | None = None, deep_dive: bool = False) -> dict | None:
         """
         Full Keepa-derived metric set for one ASIN (spec section 4:
         profitability, demand/competition, price history/stability).
@@ -37,11 +38,24 @@ class VerdictService:
         cost_price here; that ground truth is applied at the
         route/worker layer and must never be recomputed from Keepa
         (see Lead's docstring in app/database/models.py).
+
+        deep_dive (2026-08-23, sourcing-agent brief section 5): pulls
+        the extra evidence a promising lead deserves that a routine
+        check doesn't -- Keepa's per-seller stock levels (competitor_
+        stock_levels, requesting `stock` on top of the always-on
+        `offers`, ~2.4x the already-priciest include_offers cost,
+        confirmed live) and a free SP-API getItemOffers live price/
+        offer-count cross-check (sp_api_live_check) against Keepa's
+        potentially-stale snapshot. Callers should only pass this for a
+        lead that already looked promising on a cheap deep_dive=False
+        pass, not for every ASIN in a bulk batch -- see
+        app/routes/verdict.py's two-pass orchestration.
         """
         service = ProductService()
         products = service.get_products(
             [asin], "UK", full=True, stats_days=STATS_WINDOW_DAYS,
-            include_rating=True, include_offers=True, usage_category="verdict",
+            include_rating=True, include_offers=True, include_stock=deep_dive,
+            usage_category="verdict",
         )
 
         if not products:
@@ -153,7 +167,25 @@ class VerdictService:
 
         monthly_sales_as_of = parser.monthly_sales_as_of()
 
+        competitor_stock_levels = None
+        sp_api_live_check = None
+
+        if deep_dive:
+            competitor_stock_levels = parser.competitor_stock_levels()
+
+            sp_client = get_sp_api_client()
+            if sp_client is not None:
+                # None (not a dict) means the call itself failed to
+                # produce a usable answer -- see SPAPIClient.
+                # get_item_offers' own docstring for why that's kept
+                # distinct from "no offer" (a real dict with price=None).
+                sp_api_live_check = sp_client.get_item_offers(asin, "UK")
+
         return {
+            "deep_dive": deep_dive,
+            "competitor_stock_levels": competitor_stock_levels,
+            "sp_api_live_check": sp_api_live_check,
+
             "asin": product.asin,
             "title": product.title,
             "brand": product.brand,

@@ -119,6 +119,51 @@ def _format_metrics_summary(metrics: dict) -> str:
     )
 
 
+def _format_deep_dive_summary(metrics: dict) -> str | None:
+    """
+    Renders VerdictService.compute_metrics' deep_dive=True fields
+    (2026-08-23, sourcing-agent brief section 5) -- competitor_stock_levels
+    and sp_api_live_check -- as a labelled section, same "name the
+    figure explicitly" reasoning as _format_metrics_summary. Returns
+    None when this metrics dict wasn't a deep-dive pass at all (the
+    common case -- most bulk-checked ASINs never get this far), so
+    generate_verdict can skip the section entirely rather than print a
+    block of "not available" noise on every ordinary verdict.
+    """
+    if not metrics.get("deep_dive"):
+        return None
+
+    lines = []
+
+    stock_levels = metrics.get("competitor_stock_levels")
+    if stock_levels:
+        parts = []
+        for s in stock_levels[:8]:
+            qty = "10+ (Keepa's own cap -- real number could be higher)" if s["stock"] >= 10 else f"{s['stock']}"
+            who = "Amazon itself" if s["is_amazon"] else ("a competing FBA seller" if s["is_fba"] else "a competing non-FBA seller")
+            parts.append(f"{who}: {qty} units")
+        lines.append("Competitor stock levels, highest first: " + "; ".join(parts) + ".")
+    else:
+        lines.append("Competitor stock levels: no stock data available from Keepa for this listing right now.")
+
+    sp_check = metrics.get("sp_api_live_check")
+    if sp_check:
+        price = sp_check.get("price")
+        price_str = f"£{price:.2f}" if price is not None else "no live buyable offer found"
+        lines.append(
+            f"Live price cross-check via SP-API (free, real-time, independent of Keepa's own possibly-stale "
+            f"snapshot above): {price_str}, {sp_check.get('offer_count')} total offers, status "
+            f"{sp_check.get('status')}."
+        )
+    else:
+        lines.append("Live SP-API price cross-check: not available (not configured, or the live call failed).")
+
+    return (
+        "DEEP DIVE -- this lead already looked promising on an initial pass, so extra evidence was "
+        "pulled before this final verdict:\n" + "\n".join(lines)
+    )
+
+
 def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[str, str]:
     """
     Calls Claude with the Keepa metric set (see VerdictService.compute_metrics)
@@ -142,11 +187,15 @@ def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[
         "it's an estimate, not a verified number.\n"
     )
 
+    deep_dive_summary = _format_deep_dive_summary(metrics)
+    deep_dive_block = f"\n{deep_dive_summary}\n" if deep_dive_summary else ""
+
     prompt = (
         "You are assessing an Amazon FBA sourcing lead (OA or A2A) for a "
         "reseller deciding whether to buy stock.\n\n"
         f"{financials_block}\n"
-        f"Keepa-derived metrics:\n{_format_metrics_summary(metrics)}\n\n"
+        f"Keepa-derived metrics:\n{_format_metrics_summary(metrics)}\n"
+        f"{deep_dive_block}\n"
         "Ground every bullet in a specific figure above, and follow these "
         "rules exactly -- each one fixes a real mistake seen in a previous "
         "verdict:\n"
@@ -169,7 +218,14 @@ def generate_verdict(metrics: dict, va_financials: dict | None = None) -> tuple[
         "risk when it currently holds a high share of the buy box (the "
         "summary above states this explicitly when true).\n"
         "4. State the review count exactly as given -- never say 'no "
-        "reviews' unless the review count above is genuinely 0.\n\n"
+        "reviews' unless the review count above is genuinely 0.\n"
+        "5. When a DEEP DIVE section is present above, weigh it as real "
+        "extra evidence, not a footnote -- high stock among competing "
+        "FBA sellers is a genuine caution (they can sustain undercutting "
+        "for longer), while low/no competing stock is a genuine "
+        "supporting signal. If the SP-API live cross-check disagrees "
+        "materially with Keepa's snapshot price above, flag that "
+        "explicitly rather than silently picking one.\n\n"
         "Reply using EXACTLY this format -- the first line must be one of "
         "these three words and nothing else: BUY, WATCH, or AVOID (not a "
         "synonym like 'Pass' or 'Skip', not punctuation, not a sentence -- "
