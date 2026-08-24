@@ -7,6 +7,7 @@
 {% from "_signal_queries_content.html" import signal_queries_content %}
 {% from "_competitors_content.html" import competitors_content %}
 {% from "_competitors_sellers_content.html" import competitors_sellers_content %}
+{% from "_oa_source_discovery_content.html" import oa_source_discovery_content %}
 
 {% block title %}Leads - Atlas{% endblock %}
 
@@ -100,10 +101,7 @@
 
 {% elif group == "websourced" %}
 
-<div class="alert alert-info py-2 small">
-    <i class="bi bi-cone-striped"></i> Not inlined yet -- built in a later pass. For now:
-    <a href="/oa-discovery">OA Source Discovery</a>
-</div>
+{{ oa_source_discovery_content(oa_discovery.runs, oa_discovery.selected_run, oa_discovery.candidates, oa_discovery.preview_candidates, oa_discovery.excluded_asins, oa_discovery.serpapi_configured, oa_discovery.serpapi_searches_left) }}
 
 {% endif %}
 

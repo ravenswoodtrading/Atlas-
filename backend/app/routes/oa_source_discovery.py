@@ -16,8 +16,8 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 
-@router.get("/oa-discovery")
-def oa_discovery_page(request: Request, run_id: int = 0):
+def build_oa_discovery_context(run_id: int = 0) -> dict:
+    """Shared with the Leads hub's "Web-Sourced" group (leads_hub.py) -- see scan_queue.py's own comment for why."""
     db = SessionLocal()
 
     try:
@@ -70,19 +70,23 @@ def oa_discovery_page(request: Request, run_id: int = 0):
     serpapi_configured = bool(os.getenv("SERPAPI_API_KEY"))
     serpapi_searches_left = serpapi_client.get_account_status().get("plan_searches_left") if serpapi_configured else None
 
+    return {
+        "runs": runs,
+        "selected_run": selected_run,
+        "candidates": candidates,
+        "preview_candidates": preview_candidates,
+        "excluded_asins": excluded_asins,
+        "serpapi_configured": serpapi_configured,
+        "serpapi_searches_left": serpapi_searches_left,
+    }
+
+
+@router.get("/oa-discovery")
+def oa_discovery_page(request: Request, run_id: int = 0):
     return templates.TemplateResponse(
         request=request,
         name="oa_source_discovery.html",
-        context={
-            "request": request,
-            "runs": runs,
-            "selected_run": selected_run,
-            "candidates": candidates,
-            "preview_candidates": preview_candidates,
-            "excluded_asins": excluded_asins,
-            "serpapi_configured": serpapi_configured,
-            "serpapi_searches_left": serpapi_searches_left,
-        }
+        context={"request": request, **build_oa_discovery_context(run_id)}
     )
 
 

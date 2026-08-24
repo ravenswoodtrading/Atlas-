@@ -1,0 +1,427 @@
+{% from "_help.html" import help_button, help_modal %}
+
+{% macro oa_source_discovery_content(runs, selected_run, candidates, preview_candidates, excluded_asins, serpapi_configured, serpapi_searches_left) %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">OA Source Discovery {{ help_button("oa-source-discovery") }}</h4>
+    {% if serpapi_searches_left is not none %}
+    <span class="badge bg-light text-dark border" title="Google Shopping searches left this month on your SerpApi plan">
+        <i class="bi bi-search"></i> {{ serpapi_searches_left }} SerpApi searches left
+    </span>
+    {% endif %}
+</div>
+
+{% if not serpapi_configured %}
+<div class="alert alert-warning py-2 small mb-3">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>SERPAPI_API_KEY isn't set</strong> -- automatic price-finding is off. Every candidate will fall back to
+    the older, slower Brave-only pipeline (finds a retailer page but no price, you confirm manually below). Add a
+    key from <a href="https://serpapi.com/manage-api-key" target="_blank" rel="noopener">serpapi.com</a> to your
+    <code>.env</code> as <code>SERPAPI_API_KEY=...</code> and restart Atlas to turn this on -- the free tier is only
+    250 searches/month (one per ASIN searched), so a paid plan is worth it for anything beyond occasional testing.
+</div>
+{% endif %}
+
+<div class="alert alert-secondary py-2 small mb-4">
+    <i class="bi bi-info-circle"></i>
+    Takes competitor ASINs Atlas's own <a href="/competitors?tab=oa">Sourcing classifier</a> already tagged
+    "OA / unclear" (no recent EU or UK A2A evidence -- see the Competitors page) and tries to automatically find the
+    <strong>cheapest genuine UK retailer price</strong> for the same product via Google Shopping, cross-checked
+    against the ASIN's brand/EAN/MPN/title before it's trusted (title similarity alone is never enough -- see the
+    Match column). A trusted, auto-priced candidate that also clears 25%+ ROI is <strong>added straight to the
+    Review Queue automatically</strong> -- no further action needed. Anything found but not auto-trusted, or not
+    profitable enough, stays here for you to review: confirm the price as-is, or replace the retailer entirely with
+    a better one you find yourself (see "other retailers found" on each row) -- either way recalculates profit/ROI
+    and adds it to the Review Queue if it now qualifies. A handful of harder cases still fall back to the older
+    Brave web-search pipeline, which only finds a retailer page (no price) for you to confirm manually. Batches
+    always work through the "Next up to scan" list below in best-opportunity-first order, and each run automatically
+    stops spending SerpApi searches once your remaining monthly quota gets low (falling back to Brave instead) so
+    one big batch can't quietly burn through the whole month.
+</div>
+
+<div class="card metric p-3 mb-4">
+    <form method="post" action="/oa-discovery/run" class="d-flex align-items-end gap-2 flex-wrap">
+        <div>
+            <label class="form-label small mb-0">ASINs to check</label>
+            <input type="number" name="limit" value="20" min="1" max="200" class="form-control form-control-sm" style="width:100px;">
+        </div>
+        <button class="btn btn-dark btn-sm" type="submit">
+            <i class="bi bi-play-fill"></i> Run batch
+        </button>
+        <div class="text-muted small">
+            Spends ~1 Keepa token per ASIN (a fresh full lookup) plus 1 SerpApi Google Shopping search per ASIN, and
+            only falls back to a few extra Brave searches per ASIN when Shopping doesn't find a trusted match. A
+            100-ASIN run can take several minutes -- the page will redirect once it's done.
+        </div>
+    </form>
+</div>
+
+{% if runs %}
+<div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+    <span class="text-muted small">Past runs:</span>
+    {% for run in runs %}
+    <a href="/oa-discovery?run_id={{ run.id }}"
+       class="badge {{ 'bg-dark' if selected_run and run.id == selected_run.id else 'bg-light text-dark border' }} text-decoration-none">
+        {{ run.started_at.strftime("%d %b %H:%M") }}
+        {% if run.status == "running" %}<i class="bi bi-hourglass-split"></i>{% elif run.status == "error" %}<i class="bi bi-exclamation-triangle"></i>{% endif %}
+        <span class="badge bg-light text-dark border ms-1">{{ run.asins_targeted }}</span>
+    </a>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="mb-0">
+            Next up to scan
+            <span class="badge bg-light text-dark border">{{ preview_candidates|length }}</span>
+        </h5>
+        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#excludedAsinsList">
+            <i class="bi bi-slash-circle"></i> Excluded ASINs ({{ excluded_asins|length }})
+        </button>
+    </div>
+    <p class="text-muted small mb-2">
+        Eligible "OA / unclear" ASINs a "Run batch" click would search next, sorted by best opportunity first
+        (the price ceiling you could pay for stock and still clear 25%+ ROI). Exclude anything
+        here you don't want searched -- this only affects OA Source Discovery, not the rest of Atlas.
+    </p>
+
+    <div class="collapse mb-3" id="excludedAsinsList">
+        <div class="card metric p-3">
+            {% if not excluded_asins %}
+            <div class="text-muted small mb-0">No ASINs excluded from OA Source Discovery yet.</div>
+            {% else %}
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>ASIN</th>
+                            <th>Title</th>
+                            <th>Excluded on</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for e in excluded_asins %}
+                        <tr>
+                            <td class="small">{{ e.asin }}</td>
+                            <td class="small text-muted">{{ e.title[:60] }}{% if e.title|length > 60 %}...{% endif %}</td>
+                            <td class="small text-muted">{{ e.excluded_at.strftime("%Y-%m-%d %H:%M") if e.excluded_at else "" }}</td>
+                            <td>
+                                <form method="post" action="/oa-discovery/unexclude">
+                                    <input type="hidden" name="asin" value="{{ e.asin }}">
+                                    <button class="btn btn-sm btn-outline-dark" type="submit" title="Include again">
+                                        <i class="bi bi-arrow-counterclockwise"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if not preview_candidates %}
+    <div class="alert alert-info py-2 small mb-0">
+        No eligible "OA / unclear" ASINs waiting to be scanned right now.
+    </div>
+    {% else %}
+    <div class="card metric p-3">
+        <div class="table-responsive" style="max-height:420px;overflow-y:auto;">
+            <table class="table table-hover align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Amazon price</th>
+                        <th>Sales</th>
+                        <th>Max source cost</th>
+                        <th>Detected</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in preview_candidates %}
+                    <tr>
+                        <td style="max-width:260px;">
+                            <div class="fw-semibold small">{{ p.title[:70] }}{% if p.title|length > 70 %}...{% endif %}</div>
+                            <div class="text-muted small">
+                                {{ p.asin }}
+                                <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ p.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                                {% if p.brand %} &middot; {{ p.brand }}{% endif %}
+                            </div>
+                        </td>
+                        <td class="small">&pound;{{ "%.2f"|format(p.buy_box_now) }}</td>
+                        <td class="small">
+                            {% if p.monthly_sales > 0 %}
+                                <span class="badge bg-success">{{ p.monthly_sales }}/mo</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Drops only</span>
+                            {% endif %}
+                        </td>
+                        <td class="small text-success fw-semibold" title="Highest price payable for stock and still clear 25%+ ROI, per FeeEngine.max_source_cost">
+                            &pound;{{ "%.2f"|format(p.max_source_cost) }}
+                        </td>
+                        <td class="small text-muted">{{ p.detected_at.strftime("%d %b") if p.detected_at else "-" }}</td>
+                        <td>
+                            <form method="post" action="/oa-discovery/exclude">
+                                <input type="hidden" name="asin" value="{{ p.asin }}">
+                                <input type="hidden" name="title" value="{{ p.title }}">
+                                <button class="btn btn-sm btn-outline-danger" type="submit" title="Exclude from OA Source Discovery">
+                                    <i class="bi bi-slash-circle"></i>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{% if not selected_run %}
+<div class="alert alert-info">
+    <h5>No runs yet</h5>
+    <p class="mb-0">Click "Run batch" above to try this against your current "OA / unclear" competitor detections.</p>
+</div>
+{% else %}
+
+{% if selected_run.status == "error" %}
+<div class="alert alert-danger"><i class="bi bi-exclamation-triangle"></i> Run failed: {{ selected_run.error }}</div>
+{% elif selected_run.status == "running" %}
+<div class="alert alert-warning"><i class="bi bi-hourglass-split"></i> This run is still in progress -- refresh to check.</div>
+{% endif %}
+
+{% if selected_run.serpapi_quota_stopped %}
+<div class="alert alert-warning">
+    <i class="bi bi-shield-check"></i>
+    <strong>Stopped auto-pricing early to protect your SerpApi quota.</strong>
+    This run paused Google Shopping lookups partway through once remaining quota got low
+    ({{ selected_run.serpapi_searches_left }} left) -- the rest of this batch used the free Brave search fallback
+    instead, so nothing failed, it just won't have an auto-found price. Re-run once your quota resets, or
+    manually confirm a retailer/price on the remaining rows below.
+</div>
+{% endif %}
+
+<div class="row mb-4 g-2">
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Targeted</div>
+            <h4>{{ selected_run.asins_targeted }}</h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Searched</div>
+            <h4>{{ selected_run.asins_searched }}</h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Retailer found</div>
+            <h4>{{ selected_run.asins_with_retailer }}
+                {% if selected_run.asins_searched %}<small class="text-muted">({{ "%.0f"|format(selected_run.asins_with_retailer / selected_run.asins_searched * 100) }}%)</small>{% endif %}
+            </h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Exact EAN/MPN match</div>
+            <h4>{{ selected_run.asins_with_exact_match }}</h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small" title="Auto-priced via Google Shopping at a trusted match tier -- no manual confirm needed">Auto-priced</div>
+            <h4>{{ selected_run.asins_auto_priced }}</h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small" title="Cleared both the match-confidence bar and 25%+ ROI -- added straight to the Review Queue">Added to Review Queue</div>
+            <h4 class="{{ 'text-success' if selected_run.asins_profitable else '' }}">{{ selected_run.asins_profitable }}</h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">Brave searches / est. cost</div>
+            <h4>{{ selected_run.search_count }} <small class="text-muted">/ ${{ "%.2f"|format(selected_run.estimated_cost_usd) }}</small></h4>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card metric p-3 text-center">
+            <div class="text-muted small">SerpApi searches</div>
+            <h4>{{ selected_run.serpapi_search_count }}</h4>
+        </div>
+    </div>
+</div>
+
+{% if not candidates %}
+<div class="alert alert-info">No candidates in this run.</div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>Amazon price</th>
+                    <th>Target buy price <span class="text-muted small fw-normal">(&le;, for 25%+ ROI)</span></th>
+                    <th>EAN / MPN</th>
+                    <th>Retailer</th>
+                    <th>Confirm / change retailer</th>
+                    <th>Match</th>
+                    <th>ROI / Profit</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in candidates %}
+                <tr class="{{ 'table-success' if c.estimated_roi_pct and c.estimated_roi_pct > 25 }}">
+                    <td style="max-width:240px;">
+                        <div class="fw-semibold small">{{ c.title[:70] }}{% if c.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">
+                            {{ c.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ c.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if c.brand %} &middot; {{ c.brand }}{% endif %}
+                        </div>
+                        {% if c.competitor_count and c.competitor_count > 1 %}
+                        <span class="badge mt-1" style="background:#fdeee0;color:#b3541e;"
+                              title="{{ c.competitor_count }} of your tracked competitors have independently listed this ASIN">
+                            <i class="bi bi-fire"></i> seen from {{ c.competitor_count }} competitors
+                        </span>
+                        {% endif %}
+                        {% if c.added_to_review_queue %}
+                        <div class="mt-1"><span class="badge bg-success"><i class="bi bi-check-circle"></i> In Review Queue</span></div>
+                        {% endif %}
+                    </td>
+                    <td class="small">&pound;{{ "%.2f"|format(c.amazon_price_gbp) }}</td>
+                    <td class="small">
+                        <div class="text-success fw-semibold" title="Highest price payable for stock and still clear 25%+ ROI, based on TODAY's Amazon price -- per FeeEngine.max_source_cost">
+                            Today: &pound;{{ "%.2f"|format(c.target_price_today_gbp) }}
+                        </div>
+                        {% if c.buy_box_avg_30d_gbp %}
+                        <div class="text-muted" style="font-size:0.75rem;"
+                             title="Based on the 30-day average Amazon price (&pound;{{ '%.2f'|format(c.buy_box_avg_30d_gbp) }}) instead of today's -- a competitor may have bought based on where the price has been recently, which can be higher than today">
+                            30d avg: &pound;{{ "%.2f"|format(c.target_price_30d_avg_gbp) }}
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">
+                        {{ c.ean or "-" }}<br>
+                        {{ c.mpn or "-" }}
+                    </td>
+                    <td class="small">
+                        {% if c.outcome == "candidate_found" %}
+                            <a href="{{ c.retailer_url }}" target="_blank" rel="noopener">{{ c.retailer_domain }}</a>
+                            <div class="text-muted" style="font-size:0.75rem;max-width:200px;" title="{{ c.retailer_title }}">{{ c.retailer_title[:60] }}{% if c.retailer_title|length > 60 %}...{% endif %}</div>
+                            {% if c.price_source == "serpapi_auto" %}
+                            <span class="badge bg-light text-dark border" title="Found and priced automatically via Google Shopping, at a trusted match tier">
+                                <i class="bi bi-robot"></i> Auto-found
+                            </span>
+                            {% elif c.price_source == "manual" %}
+                            <span class="badge bg-light text-dark border" title="You confirmed or set this retailer/price yourself">
+                                <i class="bi bi-person-check"></i> You confirmed
+                            </span>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-muted">No retailer found</span>
+                        {% endif %}
+                    </td>
+                    <td class="small" style="min-width:220px;">
+                        <form method="post" action="/oa-discovery/update-candidate" class="d-flex flex-column gap-1">
+                            <input type="hidden" name="candidate_id" value="{{ c.id }}">
+                            <input type="hidden" name="run_id" value="{{ selected_run.id }}">
+                            <div class="d-flex gap-1">
+                                <input type="text" name="retailer_domain" value="{{ c.retailer_domain }}" placeholder="Retailer name" class="form-control form-control-sm" style="width:100px;">
+                                <span class="align-self-center">&pound;</span>
+                                <input type="number" step="0.01" name="retailer_price_gbp" value="{{ c.retailer_price_gbp if c.retailer_price_gbp is not none }}" class="form-control form-control-sm" style="width:75px;" placeholder="price">
+                                <button class="btn btn-sm btn-outline-dark" type="submit" title="Save this retailer/price"><i class="bi bi-check-lg"></i></button>
+                            </div>
+                            <input type="url" name="retailer_url" value="{{ c.retailer_url }}" placeholder="Retailer product URL" class="form-control form-control-sm" style="font-size:0.75rem;">
+                            <input type="hidden" name="retailer_title" value="{{ c.retailer_title }}">
+                        </form>
+                        {% if c.shopping_candidates %}
+                        <div class="mt-1">
+                            <button class="btn btn-sm btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#altRetailers{{ c.id }}">
+                                Other retailers found ({{ c.shopping_candidates|length }})
+                            </button>
+                            <div class="collapse" id="altRetailers{{ c.id }}">
+                                {% for alt in c.shopping_candidates|sort(attribute="extracted_price") %}
+                                <form method="post" action="/oa-discovery/update-candidate" class="d-flex align-items-center gap-1 mt-1">
+                                    <input type="hidden" name="candidate_id" value="{{ c.id }}">
+                                    <input type="hidden" name="run_id" value="{{ selected_run.id }}">
+                                    <input type="hidden" name="retailer_domain" value="{{ alt.source }}">
+                                    <input type="hidden" name="retailer_url" value="{{ alt.product_link }}">
+                                    <input type="hidden" name="retailer_title" value="{{ alt.title }}">
+                                    <input type="hidden" name="retailer_price_gbp" value="{{ alt.extracted_price }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary py-0" style="font-size:0.75rem;" title="{{ alt.title }}">
+                                        Use: {{ alt.source }} &pound;{{ "%.2f"|format(alt.extracted_price) }}
+                                    </button>
+                                </form>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if c.outcome == "candidate_found" %}
+                        <span class="badge {{ 'bg-success' if c.source_confidence == 'High' else ('bg-warning text-dark' if c.source_confidence == 'Medium' else 'bg-secondary') }}"
+                              title="Match tier: {{ c.match_tier }}">
+                            {{ c.match_confidence_pct }}% ({{ c.source_confidence }})
+                        </span>
+                        {% if c.match_tier == "title_only" %}
+                        <div class="text-muted" style="font-size:0.7rem;">Title-only -- not a confirmed match, verify carefully.</div>
+                        {% endif %}
+                        {% endif %}
+                    </td>
+                    <td class="{{ 'text-success' if c.estimated_profit_gbp and c.estimated_profit_gbp > 0 else ('text-danger' if c.estimated_profit_gbp is not none else 'text-muted small') }}">
+                        {% if c.estimated_profit_gbp is not none %}
+                            <div class="fw-bold">{{ "%.1f"|format(c.estimated_roi_pct) }}%</div>
+                            <div class="small">&pound;{{ "%.2f"|format(c.estimated_profit_gbp) }}</div>
+                        {% else %}
+                            <span class="small">Confirm price</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="https://www.amazon.co.uk/dp/{{ c.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener" title="Open Amazon listing"><i class="bi bi-box-arrow-up-right"></i></a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}
+
+{% call help_modal("oa-source-discovery", "OA Source Discovery") %}
+<p>
+    Automatically searches the web for a UK retailer selling products the Sourcing classifier
+    couldn't explain as A2A -- so you don't have to Google each one by hand. Checks up to
+    <strong>3 search queries</strong> and <strong>3 candidate retailers</strong> per product.
+</p>
+<p>
+    An ASIN already searched in the last <strong>7 days</strong> won't be searched again
+    automatically, to avoid wasting search budget. Atlas also skips anything with less than
+    <strong>&pound;3</strong> of theoretical margin at the usual 25% ROI bar, even if the math
+    works on paper -- not a realistic purchase once you account for real-world slippage.
+</p>
+<p>
+    Match confidence, strongest to weakest: <strong>EAN</strong> &gt; <strong>Brand+MPN</strong>
+    &gt; <strong>MPN</strong> alone &gt; <strong>Brand+Title</strong> &gt;
+    <strong>Title-only</strong>. Title-only is never a confirmed match -- always verify it
+    yourself. See <a href="/help#match-tiers">match confidence tiers</a>.
+</p>
+<p class="mb-0">
+    The SerpApi search counter (top right) shows how many Google Shopping searches remain on
+    your plan this month -- a run stops early to protect that quota if it's running low.
+</p>
+{% endcall %}
+
+{% endmacro %}

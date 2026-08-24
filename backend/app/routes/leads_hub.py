@@ -4,6 +4,7 @@ from fastapi.templating import Jinja2Templates
 from app.routes.scan_queue import build_scan_queue_context
 from app.routes.signals import build_signals_context, build_signal_queries_context
 from app.routes.competitors import build_competitors_context, build_competitors_sellers_context
+from app.routes.oa_source_discovery import build_oa_discovery_context
 
 router = APIRouter()
 
@@ -25,11 +26,13 @@ def leads_hub_page(request: Request, group: str = "manual"):
     (Option C), which the user considered and passed on given the
     added risk across 7 already-working pages.
 
-    The Automated group's context comes from the exact same build_*_
-    context() helpers each standalone route now calls (extracted from
-    those routes specifically so this hub can't silently drift out of
-    sync with them) -- default/no-filter state each time, same as
-    visiting the page fresh with no query params.
+    Automated's and Web-Sourced's context comes from the exact same
+    build_*_context() helpers each standalone route now calls
+    (extracted from those routes specifically so this hub can't
+    silently drift out of sync with them) -- default/no-filter state
+    each time, same as visiting the page fresh with no query params.
+    All three groups (Manual Search, Automated, Web-Sourced) are built
+    -- this completes the 7-page collapse.
     """
     group = group if group in ("manual", "automated", "websourced") else "manual"
 
@@ -41,5 +44,7 @@ def leads_hub_page(request: Request, group: str = "manual"):
         context["signal_queries"] = build_signal_queries_context()
         context["competitors"] = build_competitors_context()
         context["competitors_sellers"] = build_competitors_sellers_context()
+    elif group == "websourced":
+        context["oa_discovery"] = build_oa_discovery_context()
 
     return templates.TemplateResponse(request=request, name="leads_hub.html", context=context)
