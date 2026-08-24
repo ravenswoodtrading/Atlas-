@@ -196,32 +196,15 @@ def review_lead_api(lead_id: int, body: ReviewRequest):
 
 @router.get("/review")
 def review_page(request: Request):
-    db = SessionLocal()
-    try:
-        leads = (
-            db.query(Lead)
-            .filter(Lead.status == "analyzed")
-            .order_by(Lead.analyzed_at.desc())
-            .all()
-        )
-
-        rows = []
-        for lead in leads:
-            metrics = {}
-            if lead.keepa_metrics:
-                try:
-                    metrics = json.loads(lead.keepa_metrics)
-                except Exception:
-                    metrics = {}
-            rows.append({"lead": lead, "metrics": metrics})
-    finally:
-        db.close()
-
-    return templates.TemplateResponse(
-        request=request,
-        name="review_lead.html",
-        context={"request": request, "rows": rows},
-    )
+    """
+    Atlas nav consolidation Phase 1 (2026-08-24) -- the Lead Queue
+    merged into Review Queue (see ReviewQueueService._lead_dict/
+    _pending_leads). This page's own live queue view is gone; redirect
+    anything bookmarked or Discord-linked to the merged page rather
+    than 404ing. review_lead.html is now unused -- deleted alongside
+    this change.
+    """
+    return RedirectResponse(url="/review-queue", status_code=302)
 
 
 @router.get("/review/history")

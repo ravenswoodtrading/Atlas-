@@ -35,14 +35,15 @@
 {% if view == "consider" %}
 <div class="alert alert-secondary py-2 small">
     <i class="bi bi-info-circle"></i> CONSIDER-tier leads that are profitable (today's price or the 90-day typical
-    price) with some sign of real sales, but didn't clear the stricter "star buy" bar on the main tab. Thumbs up/down
-    removes a lead from here, same as the main tab -- the difference is expectation, not mechanics: this list isn't
-    meant to be cleared to zero, it's fine for a genuine backlog to sit here with newer leads landing on top. Review
-    it as you have time.
+    price) with some sign of real sales, but didn't clear the stricter "star buy" bar on the main tab -- plus any
+    WATCH-verdict lead from the <a href="/verdict">Verdict Checker</a> or <a href="/shortlist">Shortlist</a>. Thumbs
+    up/down removes a lead from here, same as the main tab -- the difference is expectation, not mechanics: this list
+    isn't meant to be cleared to zero, it's fine for a genuine backlog to sit here with newer leads landing on top.
+    Review it as you have time.
 </div>
 {% else %}
 <div class="alert alert-secondary py-2 small">
-    <i class="bi bi-info-circle"></i> Everything here is a "star buy" (confirmed sales + 25%+ ROI), a BUY recommendation, or a riskier "PEAK (risky)" lead (only profitable at a recent price peak) -- not yet reviewed, from a normal scan OR a competitor detection that's currently buyable. Reviewing something here clears it from Today's/Historical Scans and the Competitors page too, wherever else it shows up. If it's just out of stock on Amazon right now, use <strong>Amazon OOS</strong> instead of dismissing it -- that adds it to your <a href="/watchlist">Watchlist</a> so you'll catch it when it restocks.
+    <i class="bi bi-info-circle"></i> Everything here is a "star buy" (confirmed sales + 25%+ ROI), a BUY recommendation, a riskier "PEAK (risky)" lead (only profitable at a recent price peak), a buyable competitor find, or a BUY-verdict lead from the <a href="/verdict">Verdict Checker</a>/<a href="/shortlist">Shortlist</a> -- not yet reviewed. Reviewing something here clears it from Today's/Historical Scans and the Competitors page too, wherever else it shows up. A <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Conflict</span> badge means Atlas's two review systems disagree on this exact ASIN -- worth a second look before acting either way. If it's just out of stock on Amazon right now, use <strong>Amazon OOS</strong> instead of dismissing it -- that adds it to your <a href="/watchlist">Watchlist</a> so you'll catch it when it restocks.
 </div>
 {% endif %}
 
@@ -116,7 +117,11 @@
                 {% for lead in leads %}
                 <tr class="{{ 'table-success' if (lead.monthly_sales > 0 and (lead.roi > 25 or lead.roi_90d > 25)) }}">
                     <td>
+                        {% if lead.source != "lead" %}
                         <input type="checkbox" class="form-check-input lead-checkbox" value="{{ lead.asin }}::{{ lead.listing_id }}">
+                        {% else %}
+                        <span class="text-muted small" title="Verdict Checker/Shortlist leads use the thumbs up/down buttons on the right -- not yet part of bulk actions">--</span>
+                        {% endif %}
                     </td>
                     <td style="max-width:280px;">
                         <div class="fw-semibold small">{{ lead.title[:70] }}{% if lead.title|length > 70 %}...{% endif %}</div>
@@ -130,8 +135,19 @@
                         {% if lead.source == "competitor" %}
                             <span class="badge bg-info text-dark"><i class="bi bi-binoculars"></i> {{ lead.seller.nickname or lead.seller.seller_id }}</span>
                             {% if lead.currently_buyable %}<div class="mt-1"><span class="badge bg-success"><i class="bi bi-lightning-fill"></i> Buyable now</span></div>{% endif %}
+                        {% elif lead.source == "lead" %}
+                            {% if lead.lead_subsource == "shortlist" %}
+                            <span class="badge bg-dark"><i class="bi bi-lightning-charge"></i> Shortlist</span>
+                            {% elif lead.lead_subsource == "sheet" %}
+                            <span class="badge bg-primary"><i class="bi bi-file-earmark-spreadsheet"></i> VA Sheet</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-clipboard-check"></i> Manual</span>
+                            {% endif %}
                         {% else %}
                             <span class="badge bg-secondary"><i class="bi bi-search"></i> Scan</span>
+                        {% endif %}
+                        {% if lead.conflict_note %}
+                        <div class="mt-1"><span class="badge bg-warning text-dark" title="{{ lead.conflict_note }}"><i class="bi bi-exclamation-triangle"></i> Conflict</span></div>
                         {% endif %}
                     </td>
                     <td class="fw-semibold">{{ lead.best_source_marketplace }}</td>
@@ -155,6 +171,8 @@
                     <td>
                         {% if lead.recommendation == "BUY" %}
                             <span class="badge bg-success">BUY</span>
+                        {% elif lead.recommendation == "WATCH" %}
+                            <span class="badge bg-info text-dark" title="Verdict Checker/Shortlist WATCH -- worth a look, not a confirmed strong buy">WATCH</span>
                         {% elif lead.recommendation == "CONSIDER" %}
                             <span class="badge bg-warning text-dark">CONSIDER</span>
                         {% elif lead.recommendation == "PEAK_WINDOW" %}
@@ -171,11 +189,40 @@
                     </td>
                     <td>
                         <div class="d-flex flex-column gap-1" style="min-width:150px;">
-                            {% if lead.parsed_report or lead.reasoning %}
+                            {% if lead.parsed_report or lead.reasoning or lead.rationale %}
                             <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#why-{{ loop.index }}">
                                 <i class="bi bi-info-circle"></i> Why?
                             </button>
                             {% endif %}
+                            {% if lead.source == "lead" %}
+                            <div class="d-flex gap-1">
+                                <form method="post" action="/review/decide" class="flex-fill">
+                                    <input type="hidden" name="lead_id" value="{{ lead.lead_id }}">
+                                    <input type="hidden" name="decision" value="approved">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-success w-100" type="submit" title="Good opportunity">
+                                        <i class="bi bi-hand-thumbs-up"></i>
+                                    </button>
+                                </form>
+                                <form method="post" action="/review/decide" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
+                                    <input type="hidden" name="lead_id" value="{{ lead.lead_id }}">
+                                    <input type="hidden" name="decision" value="rejected">
+                                    <input type="hidden" name="reason" value="">
+                                    <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
+                                    <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
+                                        <i class="bi bi-hand-thumbs-down"></i>
+                                    </button>
+                                </form>
+                            </div>
+                            <form method="post" action="/review/decide">
+                                <input type="hidden" name="lead_id" value="{{ lead.lead_id }}">
+                                <input type="hidden" name="decision" value="oos">
+                                <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
+                                <button class="btn btn-sm btn-outline-warning w-100" type="submit" title="Amazon is out of stock right now -- not actionable this instant, but watch for it to restock">
+                                    <i class="bi bi-box-seam"></i> Amazon OOS
+                                </button>
+                            </form>
+                            {% else %}
                             <div class="d-flex gap-1">
                                 <form method="post" action="/review/set" class="flex-fill">
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
@@ -206,6 +253,7 @@
                                     <i class="bi bi-box-seam"></i> Amazon OOS
                                 </button>
                             </form>
+                            {% endif %}
                             <div class="d-flex gap-1">
                                 {% if lead.asin in watched_asins %}
                                 <form method="post" action="/watch/remove" class="flex-fill">
@@ -240,9 +288,26 @@
                         </div>
                     </td>
                 </tr>
-                {% if lead.parsed_report or lead.reasoning %}
+                {% if lead.parsed_report or lead.reasoning or lead.rationale %}
                 <tr class="collapse" id="why-{{ loop.index }}">
                     <td colspan="11" class="bg-light">
+                        {% if lead.rationale %}
+                        <ul class="list-unstyled small mb-0 py-2">
+                            {% for line in lead.rationale.split("\n") %}
+                                {% set raw = line.strip() %}
+                                {% if raw.startswith("+") %}
+                                    {% set css, icon, point = "text-success", "bi-check-circle-fill", raw[1:].strip() %}
+                                {% elif raw.startswith("!") %}
+                                    {% set css, icon, point = "text-danger", "bi-exclamation-triangle-fill", raw[1:].strip() %}
+                                {% else %}
+                                    {% set css, icon, point = "", "bi-dot", raw.lstrip("-*").strip() %}
+                                {% endif %}
+                                {% if point %}
+                                <li class="{{ css }} mb-1"><i class="bi {{ icon }}"></i> {{ point | highlight_figures }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
                         {% if lead.recommendation == "PEAK_WINDOW" and lead.parsed_report.peak_profit %}
                         <div class="alert py-2 px-3 small mb-2" style="background:#fdf3e0;border-color:#f3ddab;color:#96660a;">
                             <i class="bi bi-exclamation-triangle"></i>
@@ -404,26 +469,36 @@
 
 {% call help_modal("review-queue", "Review Queue") %}
 <p>
-    Your single unified action list -- every star buy, BUY recommendation, riskier PEAK lead
-    that clears a stricter bar, and currently-buyable competitor find that you haven't yet given
-    a thumbs up or down.
+    Your single unified action list, merging two different systems (2026-08-24): Atlas's own
+    deterministic scan scoring (star buys, BUY/CONSIDER/PEAK, competitor finds) AND the AI-judged
+    leads from the <a href="/verdict">Verdict Checker</a> and <a href="/shortlist">Shortlist</a>
+    (BUY/WATCH verdicts, with a written rationale under "Why?"). Same page, same thumbs up/down
+    habit, whichever system found it.
 </p>
 <p>
     <strong>Buy / Star buys</strong> tab: confirmed sales evidence and over 25% ROI (today's or
     the 90-day typical price) -- see <a href="/help#star-buy">star buy</a>. A PEAK lead only
     makes it into this tab if its peak ROI is 35%+ or its score is 65+ -- a stricter bar than
     what earned it the PEAK tag in the first place (10% peak ROI), so some weaker PEAK
-    opportunities are filtered out before you ever see them.
+    opportunities are filtered out before you ever see them. A BUY-verdict lead lands here too.
 </p>
 <p>
     <strong>Consider</strong> tab: profitable leads (today's or 90-day price) with some sign of
-    real sales, but not clearing the stricter star-buy bar above. This list isn't meant to be
-    cleared to zero -- browse it as you have time.
+    real sales, but not clearing the stricter star-buy bar above -- plus any WATCH-verdict lead.
+    This list isn't meant to be cleared to zero -- browse it as you have time. An AVOID-verdict
+    lead is excluded from both tabs entirely, same treatment IGNORE already gets.
+</p>
+<p>
+    A <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Conflict</span>
+    badge means the two systems disagree on this exact ASIN -- e.g. Atlas's scan pipeline marks it
+    IGNORE while a Verdict Check came back BUY, or vice versa. Worth a second look before acting
+    either way; Atlas doesn't pick a side for you.
 </p>
 <p class="mb-0">
     "Sourcing reasoning" numbers on competitor-sourced rows are Atlas's best GUESS at how a
     competitor sourced something, inferred from price history alone -- never a confirmed fact.
-    Reviewing (thumbs up/down) removes a lead from whichever tab it's in.
+    Reviewing (thumbs up/down) removes a lead from whichever tab it's in. Verdict Checker/Shortlist
+    leads don't yet support the bulk checkbox actions -- use their own thumbs up/down/OOS buttons.
 </p>
 {% endcall %}
 

@@ -1,8 +1,20 @@
 import json
 from datetime import datetime
 
+from app.database.database import SessionLocal
+from app.database.models import Lead, ProductRecord
 from app.services.product_repository import ProductRepository
 from app.services.seller_watch_service import SellerWatchService
+
+# Atlas nav consolidation, Phase 1 (2026-08-24) -- the Lead Queue's
+# BUY/WATCH/AVOID verdicts don't line up with a score/confidence tier,
+# so this is the one real judgment call in the merge, confirmed with
+# the user before building: BUY reads as "main tab" (same trust level
+# as a star buy/BUY recommendation), WATCH reads as "Consider tab"
+# (worth a look, not yet clearly-worth-it), AVOID is excluded from the
+# live queue entirely -- same treatment IGNORE already gets today.
+LEAD_MAIN_VERDICTS = ("BUY",)
+LEAD_CONSIDER_VERDICTS = ("WATCH",)
 
 # Comfortably covers any realistic unreviewed-notable backlog -- same
 # pragmatic-cap pattern SellerWatchService.list_detections already
@@ -33,13 +45,34 @@ MAX_CONSIDER_LEADS = 150
 PEAK_WORTH_IT_ROI = 35
 PEAK_WORTH_IT_SCORE = 65
 
+def _sort_when(lead) -> datetime:
+    """
+    "when" now comes from three different columns across two tables
+    (ProductRecord.scanned_at/SellerNewListing.detected_at, both
+    naive, and Lead.analyzed_at) -- confirmed live 2026-08-24 that a
+    tz-aware value slipping in anywhere crashes the whole page
+    (`can't compare offset-naive and offset-aware datetimes`).
+    Normalizes to naive UTC (dropping tzinfo, not converting -- every
+    value in this app is already UTC in practice, see
+    Lead.added_at/analyzed_at's own `datetime.now(timezone.utc)`
+    default) so the merged sort can never crash on this again,
+    regardless of which table a given row's timestamp came from.
+    """
+    when = lead["when"]
+
+    if when is None:
+        return datetime.min
+
+    return when.replace(tzinfo=None) if when.tzinfo else when
+
+
 # Mirrors ProductRepository.SORT_OPTIONS' shape (lambda + reverse flag)
 # but keyed on the merged lead dict, since scan and competitor leads
 # don't share a single ORM model to sort in the DB -- this list is
 # already fully in memory by the time sorting happens.
 SORT_OPTIONS = {
-    "when_desc": (lambda lead: lead["when"] or datetime.min, True),
-    "when_asc": (lambda lead: lead["when"] or datetime.min, False),
+    "when_desc": (_sort_when, True),
+    "when_asc": (_sort_when, False),
     "score_desc": (lambda lead: lead["score"] or 0, True),
     "score_asc": (lambda lead: lead["score"] or 0, False),
 }
@@ -86,11 +119,137 @@ class ReviewQueueService:
             "when": record.scanned_at,
             "parsed_report": parsed_report,
             "reasoning": {},
+            "rationale": None,
             "sourcing_tag": None,
             "currently_buyable": False,
             "seller": None,
             "listing_id": 0,
+            "conflict_note": None,
         }
+
+    @staticmethod
+    def _lead_dict(lead) -> dict:
+        """
+        Row shape for a Verdict Checker / VA sheet / Shortlist lead
+        (the `Lead` model), normalized into the exact same dict shape
+        _scan_lead_dict produces -- see LEAD_MAIN_VERDICTS/
+        LEAD_CONSIDER_VERDICTS above for the verdict->tab mapping.
+
+        Fields with no real Lead equivalent (score, sourcing
+        reasoning breakdown) are left at a neutral default rather than
+        guessed -- `rationale` carries the actual Claude-written
+        reasoning instead, rendered in its own "Why?" panel by the
+        template rather than forced into parsed_report's differently-
+        keyed shape.
+        """
+        metrics = {}
+        if lead.keepa_metrics:
+            try:
+                metrics = json.loads(lead.keepa_metrics)
+            except Exception:
+                metrics = {}
+
+        profit = lead.va_profit if lead.va_profit is not None else metrics.get("keepa_estimate_profit")
+        roi = lead.va_roi if lead.va_roi is not None else metrics.get("keepa_estimate_roi")
+
+        return {
+            "source": "lead",
+            "lead_subsource": lead.source,  # "manual" | "sheet" | "shortlist"
+            "lead_id": lead.id,
+            "asin": lead.asin,
+            "title": metrics.get("title") or lead.asin,
+            "brand": metrics.get("brand") or "",
+            "best_source_marketplace": lead.source_detail or lead.sourcing_type or "",
+            "best_source_cost_gbp": lead.va_cost_price or 0.0,
+            "profit": profit or 0.0,
+            "roi": roi or 0.0,
+            "profit_90d": metrics.get("keepa_estimate_profit_90d") or 0.0,
+            "roi_90d": metrics.get("keepa_estimate_roi_90d") or 0.0,
+            "score": 0,
+            "recommendation": lead.verdict,  # "BUY" | "WATCH" (AVOID never reaches here)
+            "monthly_sales": metrics.get("monthly_sales") or 0,
+            "when": lead.analyzed_at,
+            "parsed_report": {},
+            "reasoning": {},
+            "rationale": lead.rationale,
+            "sourcing_tag": lead.sourcing_type,
+            "currently_buyable": False,
+            "seller": None,
+            "listing_id": 0,
+            "conflict_note": None,
+        }
+
+    @staticmethod
+    def _pending_leads(verdicts: tuple) -> list:
+        """Unreviewed Lead rows (status='analyzed', decision not yet set) with a verdict in `verdicts`."""
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Lead)
+                .filter(Lead.status == "analyzed", Lead.decision.is_(None), Lead.verdict.in_(verdicts))
+                .order_by(Lead.analyzed_at.desc())
+                .all()
+            )
+            return [ReviewQueueService._lead_dict(lead) for lead in rows]
+        finally:
+            db.close()
+
+    @staticmethod
+    def _flag_conflicts(leads: list) -> None:
+        """
+        Roadmap item 12 -- the same ASIN can carry a BUY Lead verdict
+        while its most recent scan record is IGNORE/GATED (or vice
+        versa: a notable scan record while a Lead marked it AVOID),
+        with nothing today surfacing that disagreement. Mutates each
+        affected dict's conflict_note in place rather than returning a
+        new structure, since this only ever adds a note to rows
+        already being displayed -- it never changes which rows appear.
+
+        Deliberately bounded to the ASINs already in `leads` (not a
+        scan of every Lead/ProductRecord in the database) -- two small
+        lookups by ASIN list, not a full cross-reference.
+        """
+        lead_asins = {row["asin"] for row in leads if row["source"] == "lead"}
+        scan_asins = {row["asin"] for row in leads if row["source"] != "lead"}
+
+        if not lead_asins and not scan_asins:
+            return
+
+        db = SessionLocal()
+        try:
+            conflicting_records = {}
+            if lead_asins:
+                records = (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.asin.in_(lead_asins))
+                    .order_by(ProductRecord.scanned_at.desc())
+                    .all()
+                )
+                for record in records:
+                    if record.asin not in conflicting_records and record.recommendation in ("IGNORE", "GATED"):
+                        conflicting_records[record.asin] = record.recommendation
+
+            conflicting_leads = {}
+            if scan_asins:
+                lead_rows = (
+                    db.query(Lead)
+                    .filter(Lead.asin.in_(scan_asins), Lead.verdict == "AVOID")
+                    .order_by(Lead.analyzed_at.desc())
+                    .all()
+                )
+                for lead in lead_rows:
+                    conflicting_leads.setdefault(lead.asin, lead.verdict)
+        finally:
+            db.close()
+
+        for row in leads:
+            if row["source"] == "lead" and row["asin"] in conflicting_records:
+                row["conflict_note"] = (
+                    f"Atlas's own scan pipeline currently marks this ASIN "
+                    f"{conflicting_records[row['asin']]} -- worth a second look before acting."
+                )
+            elif row["source"] != "lead" and row["asin"] in conflicting_leads:
+                row["conflict_note"] = "A Verdict Check on this exact ASIN came back AVOID -- worth a second look before acting."
 
     @staticmethod
     def list_leads(sort: str = "when_desc") -> list:
@@ -162,11 +321,17 @@ class ReviewQueueService:
                 "when": listing.detected_at,
                 "parsed_report": parsed_report,
                 "reasoning": reasoning,
+                "rationale": None,
                 "sourcing_tag": listing.sourcing_tag,
                 "currently_buyable": listing.currently_buyable,
                 "seller": seller,
                 "listing_id": listing.id,
+                "conflict_note": None,
             })
+
+        leads.extend(ReviewQueueService._pending_leads(LEAD_MAIN_VERDICTS))
+
+        ReviewQueueService._flag_conflicts(leads)
 
         # "when"/"score" fallbacks -- "when" can be None (report_json/
         # scanned_at gaps are pre-existing edge cases elsewhere too)
@@ -205,6 +370,9 @@ class ReviewQueueService:
         )
 
         leads = [ReviewQueueService._scan_lead_dict(record) for record in records]
+        leads.extend(ReviewQueueService._pending_leads(LEAD_CONSIDER_VERDICTS))
+
+        ReviewQueueService._flag_conflicts(leads)
 
         key, reverse = SORT_OPTIONS.get(sort, SORT_OPTIONS["when_desc"])
         leads.sort(key=key, reverse=reverse)
@@ -252,15 +420,24 @@ class ReviewQueueService:
 
         Each lead is counted in exactly one bucket, in the same
         priority a person reading the page would use to describe it:
-        competitor find > PEAK (risky) > BUY > star buy.
+        competitor find > PEAK (risky) > verdict-checked BUY lead >
+        scan BUY > star buy. "leads" (2026-08-24 nav consolidation) is
+        counted separately from "buys" even though both currently
+        render the same BUY badge -- a verdict-checked lead is an AI
+        judgment call (Verdict Checker/Shortlist), not the same thing
+        as OpportunityEngine's deterministic BUY recommendation, and
+        collapsing them into one bucket would misrepresent the
+        Dashboard's own "BUY recommendation" wording.
         """
         leads = ReviewQueueService.list_leads()
 
-        star_buys = buys = peak = competitor = 0
+        star_buys = buys = peak = competitor = lead_buys = 0
 
         for lead in leads:
             if lead["source"] == "competitor":
                 competitor += 1
+            elif lead["source"] == "lead":
+                lead_buys += 1
             elif lead["recommendation"] == "PEAK_WINDOW":
                 peak += 1
             elif lead["recommendation"] == "BUY":
@@ -274,4 +451,5 @@ class ReviewQueueService:
             "buys": buys,
             "peak": peak,
             "competitor": competitor,
+            "leads": lead_buys,
         }

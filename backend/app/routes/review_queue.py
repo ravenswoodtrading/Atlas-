@@ -3,10 +3,16 @@ from fastapi.templating import Jinja2Templates
 
 from app.services.review_queue_service import ReviewQueueService
 from app.services.product_repository import ProductRepository
+from app.routes.verdict import highlight_figures
 
 router = APIRouter()
 
 templates = Jinja2Templates(directory="app/templates")
+# review_queue.html's merged "Why?" panel renders Lead-sourced
+# rationale bullets with this filter (same reason leads.py needed it
+# registered too -- each route module owns its own Jinja2Templates
+# instance in this codebase, see that fix's own comment).
+templates.env.filters["highlight_figures"] = highlight_figures
 
 
 @router.get("/review-queue")
