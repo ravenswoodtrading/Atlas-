@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}Reviewed Leads - Atlas{% endblock %}
+{% block title %}Reviewed History - Atlas{% endblock %}
 
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">Reviewed Leads ({{ total_count }})</h4>
-    <a href="/review" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Lead Queue</a>
+    <h4 class="mb-0">Reviewed History ({{ total_count }})</h4>
+    <a href="/review-queue" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Review Queue</a>
 </div>
 
 <div class="alert alert-secondary py-2 small mb-4">
-    <i class="bi bi-info-circle"></i> Every lead you've approved, rejected, or flagged as Amazon OOS from the <a href="/review">Lead Queue</a>, newest decision first -- so you can look back on what you decided and why. OOS leads are also sitting on your <a href="/watchlist">Watchlist</a>, watching for restock.
+    <i class="bi bi-info-circle"></i> Everything you've approved, rejected, or flagged as Amazon OOS from the <a href="/review-queue">Review Queue</a> -- scan finds, competitor detections, and Verdict Checker/Shortlist leads together, newest decision first. OOS items are also sitting on your <a href="/watchlist">Watchlist</a>, watching for restock.
 </div>
 
 <div class="mb-3">
@@ -31,7 +31,7 @@
 {% if not rows %}
 <div class="alert alert-info">
     <h5>Nothing reviewed yet</h5>
-    <p class="mb-0">Approve or reject leads from the <a href="/review">Lead Queue</a> and they'll show up here.</p>
+    <p class="mb-0">Approve or reject leads from the <a href="/review-queue">Review Queue</a> and they'll show up here.</p>
 </div>
 {% else %}
 <div class="card metric p-3">
@@ -40,9 +40,10 @@
             <thead>
                 <tr>
                     <th>Product</th>
+                    <th>Source</th>
                     <th>Category</th>
                     <th>UK Price</th>
-                    <th>Verdict</th>
+                    <th>Verdict / Recommendation</th>
                     <th>Decision</th>
                     <th>Reviewed</th>
                     <th></th>
@@ -50,64 +51,84 @@
             </thead>
             <tbody>
                 {% for row in rows %}
-                {% set lead = row.lead %}
-                {% set m = row.metrics %}
                 <tr>
                     <td style="max-width:260px;">
-                        {% if m.title %}
-                        <div class="fw-semibold small">{{ m.title }}</div>
+                        {% if row.title %}
+                        <div class="fw-semibold small">{{ row.title }}</div>
                         <div class="text-muted small">
-                            {{ lead.asin }}
-                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
-                            {% if m.brand %} &middot; {{ m.brand }}{% endif %}
+                            {{ row.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ row.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            {% if row.brand %} &middot; {{ row.brand }}{% endif %}
                         </div>
                         {% else %}
-                        <div class="fw-semibold small text-muted">{{ lead.asin }}</div>
+                        <div class="fw-semibold small text-muted">{{ row.asin }}</div>
                         <div class="text-muted small">
-                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ lead.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ row.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
                             No title data
                         </div>
                         {% endif %}
-                        {% if lead.source_detail %}
-                        <div class="text-muted small"><i class="bi bi-shop"></i> {{ lead.source_detail }}</div>
-                        {% endif %}
                     </td>
-                    <td class="small">{{ m.category_name or "-" }}</td>
                     <td class="small">
-                        {% if m.buy_box_now %}&pound;{{ "%.2f"|format(m.buy_box_now) }}{% else %}-{% endif %}
+                        {% if row.source == "competitor" %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-binoculars"></i> {{ row.seller.nickname or row.seller.seller_id if row.seller else "Competitor" }}</span>
+                        {% elif row.source == "lead" %}
+                            {% if row.lead_subsource == "shortlist" %}
+                            <span class="badge bg-dark"><i class="bi bi-lightning-charge"></i> Shortlist</span>
+                            {% elif row.lead_subsource == "sheet" %}
+                            <span class="badge bg-primary"><i class="bi bi-file-earmark-spreadsheet"></i> VA Sheet</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-clipboard-check"></i> Manual</span>
+                            {% endif %}
+                        {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-search"></i> Scan</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">{{ row.category_name or "-" }}</td>
+                    <td class="small">
+                        {% if row.buy_box_now %}&pound;{{ "%.2f"|format(row.buy_box_now) }}{% else %}-{% endif %}
                     </td>
                     <td>
-                        {% if lead.verdict == "BUY" %}
+                        {% if row.recommendation == "BUY" %}
                             <span class="badge bg-success">BUY</span>
-                        {% elif lead.verdict == "WATCH" %}
-                            <span class="badge bg-warning text-dark">WATCH</span>
-                        {% elif lead.verdict == "AVOID" %}
+                        {% elif row.recommendation == "WATCH" %}
+                            <span class="badge bg-info text-dark">WATCH</span>
+                        {% elif row.recommendation == "AVOID" %}
                             <span class="badge bg-danger">AVOID</span>
+                        {% elif row.recommendation == "CONSIDER" %}
+                            <span class="badge bg-warning text-dark">CONSIDER</span>
+                        {% elif row.recommendation == "PEAK_WINDOW" %}
+                            <span class="badge" style="background:#96660a;color:#fff;">PEAK (risky)</span>
+                        {% elif row.recommendation == "GATED" %}
+                            <span class="badge bg-danger">GATED</span>
+                        {% elif row.recommendation %}
+                            <span class="badge bg-secondary">{{ row.recommendation }}</span>
                         {% else %}
-                            <span class="badge bg-secondary" title="{{ lead.rationale or 'No reason recorded' }}">Analysis failed</span>
+                            <span class="badge bg-secondary" title="No verdict recorded">Analysis failed</span>
                         {% endif %}
                     </td>
                     <td>
-                        {% if lead.decision == "approved" %}
+                        {% if row.decision == "approved" %}
                         <span class="badge bg-success"><i class="bi bi-hand-thumbs-up"></i> Approved</span>
-                        {% elif lead.decision == "oos" %}
+                        {% elif row.decision == "oos" %}
                         <span class="badge bg-warning text-dark" title="Added to your Watchlist -- see /watchlist"><i class="bi bi-box-seam"></i> Watching (OOS)</span>
                         {% else %}
                         <span class="badge bg-danger"><i class="bi bi-hand-thumbs-down"></i> Rejected</span>
-                        {% if lead.decision_reason %}
-                        <div class="small text-muted mt-1">{{ lead.decision_reason }}</div>
+                        {% if row.decision_reason %}
+                        <div class="small text-muted mt-1">{{ row.decision_reason }}</div>
                         {% endif %}
                         {% endif %}
                     </td>
                     <td class="small text-muted">
-                        {% if lead.reviewed_at %}{{ lead.reviewed_at.strftime("%d %b %Y %H:%M") }}{% else %}-{% endif %}
+                        {% if row.reviewed_at %}{{ row.reviewed_at.strftime("%d %b %Y %H:%M") }}{% if row.reviewed_at_is_approx %} <span title="No exact review timestamp is stored for scan/competitor rows -- this is the scan/detection date instead">*</span>{% endif %}{% else %}-{% endif %}
                     </td>
                     <td>
                         <div class="d-flex flex-column gap-1" style="min-width:130px;">
-                            <a href="https://www.amazon.co.uk/dp/{{ lead.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open listing</a>
-                            <a href="/review/{{ lead.id }}" class="btn btn-sm btn-outline-secondary">
+                            <a href="https://www.amazon.co.uk/dp/{{ row.asin }}" class="btn btn-sm btn-outline-dark" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i> Open listing</a>
+                            {% if row.detail_url %}
+                            <a href="{{ row.detail_url }}" class="btn btn-sm btn-outline-secondary">
                                 <i class="bi bi-info-circle"></i> Details
                             </a>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>

@@ -2,9 +2,16 @@ import json
 from datetime import datetime
 
 from app.database.database import SessionLocal
-from app.database.models import Lead, ProductRecord
+from app.database.models import Lead, ProductRecord, SellerNewListing, TrackedSeller
 from app.services.product_repository import ProductRepository
 from app.services.seller_watch_service import SellerWatchService
+
+# Nav consolidation fast-follow (2026-08-24) -- Reviewed History was
+# Lead-only; there was no equivalent history view for scan/competitor
+# reviews at all (Products just shows everything unfiltered, reviewed
+# or not -- confirmed live, not something this merges INTO). Mirrors
+# leads.py's old Lead-only history cap.
+HISTORY_LIMIT = 300
 
 # Atlas nav consolidation, Phase 1 (2026-08-24) -- the Lead Queue's
 # BUY/WATCH/AVOID verdicts don't line up with a score/confidence tier,
@@ -452,4 +459,163 @@ class ReviewQueueService:
             "peak": peak,
             "competitor": competitor,
             "leads": lead_buys,
+        }
+
+    # "up"/"down" (ProductRecord/SellerNewListing's own vocabulary) ->
+    # the Lead Queue's "approved"/"rejected" -- a shared 3-value
+    # decision vocabulary for the merged history view. "oos" already
+    # matches on both sides.
+    _SCAN_DECISION_MAP = {"up": "approved", "down": "rejected", "oos": "oos"}
+
+    @staticmethod
+    def _scan_history_dict(record) -> dict:
+        return {
+            "source": "scan",
+            "lead_subsource": None,
+            "asin": record.asin,
+            "title": record.title,
+            "brand": record.brand,
+            "category_name": record.category_name,
+            "buy_box_now": record.buy_box_now,
+            "recommendation": record.recommendation,
+            "decision": ReviewQueueService._SCAN_DECISION_MAP.get(record.review, record.review),
+            "decision_reason": record.review_reason,
+            # No dedicated "reviewed at" column on ProductRecord (only
+            # scanned_at) -- reviewed_at_is_approx tells the template
+            # to label this honestly rather than imply precision that
+            # isn't there.
+            "reviewed_at": record.scanned_at,
+            "reviewed_at_is_approx": True,
+            "detail_url": None,
+        }
+
+    @staticmethod
+    def _competitor_history_dict(listing, record, seller) -> dict:
+        return {
+            "source": "competitor",
+            "lead_subsource": None,
+            "asin": listing.asin,
+            "title": record.title if record else listing.asin,
+            "brand": record.brand if record else "",
+            "category_name": record.category_name if record else "",
+            "buy_box_now": record.buy_box_now if record else 0,
+            "recommendation": record.recommendation if record else None,
+            "decision": ReviewQueueService._SCAN_DECISION_MAP.get(listing.review, listing.review),
+            "decision_reason": listing.review_reason,
+            "reviewed_at": listing.detected_at,
+            "reviewed_at_is_approx": True,
+            "seller": seller,
+            "detail_url": None,
+        }
+
+    @staticmethod
+    def _lead_history_dict(lead) -> dict:
+        metrics = {}
+        if lead.keepa_metrics:
+            try:
+                metrics = json.loads(lead.keepa_metrics)
+            except Exception:
+                metrics = {}
+
+        return {
+            "source": "lead",
+            "lead_subsource": lead.source,
+            "asin": lead.asin,
+            "title": metrics.get("title") or lead.asin,
+            "brand": metrics.get("brand") or "",
+            "category_name": metrics.get("category_name") or "",
+            "buy_box_now": metrics.get("buy_box_now"),
+            "recommendation": lead.verdict,
+            "decision": lead.decision,
+            "decision_reason": lead.decision_reason,
+            "reviewed_at": lead.reviewed_at,
+            "reviewed_at_is_approx": False,
+            "detail_url": f"/review/{lead.id}",
+        }
+
+    @staticmethod
+    def list_reviewed_history(decision_filter: str = "") -> dict:
+        """
+        Merged reviewed history across all three sources (nav
+        consolidation fast-follow, 2026-08-24) -- previously Lead-only
+        (see leads.py's old review_history_page). Products/Discovery/
+        Watchlist's own thumbs-reviewed ProductRecord rows, buyable
+        competitor detections, and reviewed Leads, normalized into one
+        shape and one timeline. Counts are exact (COUNT queries, not
+        loaded rows); the displayed list is capped at HISTORY_LIMIT
+        per source before merging -- generous enough that a genuine
+        "show me everything" browse never needs more, without loading
+        an unbounded, ever-growing history table into memory.
+        """
+        db = SessionLocal()
+        try:
+            counts = {"approved": 0, "rejected": 0, "oos": 0}
+
+            # A reviewed competitor listing's underlying ProductRecord
+            # gets counted via the SellerNewListing branch below, not
+            # here -- same one-decision-one-row reasoning as the
+            # covered_record_ids dedup further down, applied to the
+            # totals too so the tab badges don't overcount.
+            competitor_covered_ids = db.query(SellerNewListing.product_record_id).filter(
+                SellerNewListing.review.isnot(None), SellerNewListing.product_record_id.isnot(None)
+            )
+
+            for raw, mapped in (("up", "approved"), ("down", "rejected"), ("oos", "oos")):
+                counts[mapped] += (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.review == raw, ProductRecord.id.notin_(competitor_covered_ids))
+                    .count()
+                )
+                counts[mapped] += db.query(SellerNewListing).filter(SellerNewListing.review == raw).count()
+
+            for decision in ("approved", "rejected", "oos"):
+                counts[decision] += db.query(Lead).filter(Lead.status == "reviewed", Lead.decision == decision).count()
+
+            rows = []
+
+            # Reviewing a competitor-sourced row marks BOTH its
+            # SellerNewListing.review AND the underlying ProductRecord.
+            # review in one click (see /review/set's own docstring) --
+            # so the same physical decision would otherwise show up as
+            # two separate history rows. Built first so the scan query
+            # below can exclude whichever ProductRecords a competitor
+            # listing already accounts for.
+            listing_query = db.query(SellerNewListing).filter(SellerNewListing.review.isnot(None))
+            if decision_filter in ("approved", "rejected", "oos"):
+                raw = {v: k for k, v in ReviewQueueService._SCAN_DECISION_MAP.items()}[decision_filter]
+                listing_query = listing_query.filter(SellerNewListing.review == raw)
+            listings = listing_query.order_by(SellerNewListing.detected_at.desc()).limit(HISTORY_LIMIT).all()
+            covered_record_ids = {listing.product_record_id for listing in listings if listing.product_record_id}
+
+            for listing in listings:
+                record = db.get(ProductRecord, listing.product_record_id) if listing.product_record_id else None
+                seller = db.get(TrackedSeller, listing.tracked_seller_id)
+                rows.append(ReviewQueueService._competitor_history_dict(listing, record, seller))
+
+            scan_query = db.query(ProductRecord).filter(ProductRecord.review.isnot(None))
+            if covered_record_ids:
+                scan_query = scan_query.filter(ProductRecord.id.notin_(covered_record_ids))
+            if decision_filter in ("approved", "rejected", "oos"):
+                raw = {v: k for k, v in ReviewQueueService._SCAN_DECISION_MAP.items()}[decision_filter]
+                scan_query = scan_query.filter(ProductRecord.review == raw)
+            for record in scan_query.order_by(ProductRecord.scanned_at.desc()).limit(HISTORY_LIMIT).all():
+                rows.append(ReviewQueueService._scan_history_dict(record))
+
+            lead_query = db.query(Lead).filter(Lead.status == "reviewed")
+            if decision_filter in ("approved", "rejected", "oos"):
+                lead_query = lead_query.filter(Lead.decision == decision_filter)
+            for lead in lead_query.order_by(Lead.reviewed_at.desc()).limit(HISTORY_LIMIT).all():
+                rows.append(ReviewQueueService._lead_history_dict(lead))
+        finally:
+            db.close()
+
+        rows.sort(key=lambda r: _sort_when({"when": r["reviewed_at"]}), reverse=True)
+        rows = rows[:HISTORY_LIMIT]
+
+        return {
+            "rows": rows,
+            "approved_count": counts["approved"],
+            "rejected_count": counts["rejected"],
+            "oos_count": counts["oos"],
+            "total_count": counts["approved"] + counts["rejected"] + counts["oos"],
         }

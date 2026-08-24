@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.database.database import SessionLocal
 from app.database.models import Lead
 from app.services.product_repository import ProductRepository
+from app.services.review_queue_service import ReviewQueueService
 from app.routes.verdict import highlight_figures
 
 router = APIRouter()
@@ -210,52 +211,25 @@ def review_page(request: Request):
 @router.get("/review/history")
 def review_history_page(request: Request, decision: str = ""):
     """
-    Browsable history of every reviewed lead (approved AND rejected),
-    newest-decided first -- previously reviewing a lead just made it
-    vanish from /review with no way to look back at what was decided
-    or why. Same Product/Category/Price/Sales-evidence enrichment as
-    the Lead Queue table itself, built from the same keepa_metrics
-    JSON every analyzed lead already carries (see VerdictService/
-    LeadAnalysisService) -- no new Keepa lookups here, this is pure
-    history browsing.
+    Merged reviewed history (nav consolidation fast-follow, 2026-08-24)
+    -- was Lead-only; now also covers Products/Discovery/Watchlist's
+    own reviewed scan records and buyable competitor detections, the
+    same merge the live queue got in Phase 1. See
+    ReviewQueueService.list_reviewed_history for the actual query/merge.
     """
-    db = SessionLocal()
-    try:
-        base_query = db.query(Lead).filter(Lead.status == "reviewed")
-
-        approved_count = base_query.filter(Lead.decision == "approved").count()
-        rejected_count = base_query.filter(Lead.decision == "rejected").count()
-        oos_count = base_query.filter(Lead.decision == "oos").count()
-
-        query = base_query
-        if decision in ("approved", "rejected", "oos"):
-            query = query.filter(Lead.decision == decision)
-
-        leads = query.order_by(Lead.reviewed_at.desc()).limit(300).all()
-
-        rows = []
-        for lead in leads:
-            metrics = {}
-            if lead.keepa_metrics:
-                try:
-                    metrics = json.loads(lead.keepa_metrics)
-                except Exception:
-                    metrics = {}
-            rows.append({"lead": lead, "metrics": metrics})
-    finally:
-        db.close()
+    history = ReviewQueueService.list_reviewed_history(decision_filter=decision)
 
     return templates.TemplateResponse(
         request=request,
         name="reviewed_leads.html",
         context={
             "request": request,
-            "rows": rows,
+            "rows": history["rows"],
             "decision": decision,
-            "approved_count": approved_count,
-            "rejected_count": rejected_count,
-            "oos_count": oos_count,
-            "total_count": approved_count + rejected_count + oos_count,
+            "approved_count": history["approved_count"],
+            "rejected_count": history["rejected_count"],
+            "oos_count": history["oos_count"],
+            "total_count": history["total_count"],
         }
     )
 
