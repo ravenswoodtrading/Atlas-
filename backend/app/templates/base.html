@@ -203,31 +203,15 @@ ATLAS
 
 <a href="/" title="Dashboard"><i class="bi bi-speedometer2"></i> <span class="link-text">Dashboard</span></a>
 
-<a href="/review-queue" title="Review Queue"><i class="bi bi-flag-fill"></i> <span class="link-text">Review Queue</span></a>
-
-<a href="/signals" title="Signals"><i class="bi bi-broadcast"></i> <span class="link-text">Signals</span>{% if request and request.state.new_signals_count %} <span class="badge bg-success ms-1">{{ request.state.new_signals_count }}</span>{% endif %}</a>
-
-<div class="sidebar-section-label">Scanning &amp; Results</div>
-
 <a href="/products/today" title="Today's Scans"><i class="bi bi-calendar2-check"></i> <span class="link-text">Today's Scans</span></a>
 
 <a href="/products" title="Historical Scans"><i class="bi bi-clock-history"></i> <span class="link-text">Historical Scans</span></a>
 
-<a href="/scan-queue" title="Scan Queue"><i class="bi bi-list-ol"></i> <span class="link-text">Scan Queue</span></a>
+<div class="sidebar-section-label">Leads</div>
 
-<a href="/watchlist" title="Watchlist"><i class="bi bi-star"></i> <span class="link-text">Watchlist</span></a>
+<a href="/review-queue" title="Review Queue"><i class="bi bi-flag-fill"></i> <span class="link-text">Review Queue</span></a>
 
-<a href="/replen" title="Replen"><i class="bi bi-arrow-repeat"></i> <span class="link-text">Replen</span></a>
-
-<div class="sidebar-section-label">Discovery &amp; Tools</div>
-
-<a href="/leads-hub" title="Leads Hub"><i class="bi bi-grid-1x2"></i> <span class="link-text">Leads Hub</span></a>
-
-<a href="/discovery" title="Discovery"><i class="bi bi-search"></i> <span class="link-text">Discovery</span></a>
-
-<a href="/categories" title="Categories"><i class="bi bi-tags"></i> <span class="link-text">Categories</span></a>
-
-<a href="/oa-lookup" title="OA Lookup"><i class="bi bi-upc-scan"></i> <span class="link-text">OA Lookup</span></a>
+<a href="/leads-hub" title="Leads Hub"><i class="bi bi-grid-1x2"></i> <span class="link-text">Leads Hub</span>{% if request and request.state.new_signals_count %} <span class="badge bg-success ms-1" title="New Signals waiting in the Automated tab">{{ request.state.new_signals_count }}</span>{% endif %}</a>
 
 <a href="/verdict" title="Verdict Checker"><i class="bi bi-clipboard-check"></i> <span class="link-text">Verdict Checker</span></a>
 
@@ -235,17 +219,19 @@ ATLAS
 
 <a href="/criteria/review" title="Criteria Review"><i class="bi bi-journal-text"></i> <span class="link-text">Criteria Review</span></a>
 
-<a href="/oa-discovery" title="OA Source Discovery"><i class="bi bi-compass"></i> <span class="link-text">OA Source Discovery</span></a>
+<div class="sidebar-section-label">Inventory &amp; Replen</div>
 
-<div class="sidebar-section-label">Competitors</div>
+<a href="/watchlist" title="Watchlist"><i class="bi bi-star"></i> <span class="link-text">Watchlist</span></a>
 
-<a href="/competitors" title="Competitors"><i class="bi bi-binoculars"></i> <span class="link-text">Competitors</span></a>
+<a href="/replen" title="Replen"><i class="bi bi-arrow-repeat"></i> <span class="link-text">Replen</span></a>
+
+<div class="sidebar-section-label">Sourcing Setup</div>
+
+<a href="/exclusions" title="Exclusions"><i class="bi bi-x-circle"></i> <span class="link-text">Exclusions</span></a>
 
 <a href="/gated-opportunities" title="Gated Brand Opportunities"><i class="bi bi-shield-lock"></i> <span class="link-text">Gated Opportunities</span></a>
 
 <div class="sidebar-section-label">Settings</div>
-
-<a href="/exclusions" title="Exclusions"><i class="bi bi-x-circle"></i> <span class="link-text">Exclusions</span></a>
 
 <a href="#" title="Finance"><i class="bi bi-currency-pound"></i> <span class="link-text">Finance</span></a>
 
