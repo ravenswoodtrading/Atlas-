@@ -234,24 +234,24 @@ def review_history_page(request: Request, decision: str = ""):
     )
 
 
-@router.post("/review/decide")
-def review_decide(
-    lead_id: int = Form(...),
-    decision: str = Form(...),
-    reason: str = Form(""),
-    return_to: str = Form("/review"),
-):
+def apply_lead_decision(lead: Lead, decision: str, reason: str | None = None) -> None:
     """
+    What "deciding" a lead actually means -- shared by /review/decide
+    (a human using Atlas's own UI) and the sheet-decision webhook (a
+    human's decision arriving from the VA sheet instead), so the two
+    entry points can't drift apart on what a decision does. Caller owns
+    the db session/commit; this only mutates the passed-in lead.
+
     decision: "approved" | "rejected" | "oos" (Amazon out of stock
     right now -- not actionable this instant, but worth catching WHEN
-    it restocks rather than losing it entirely to a plain reject).
-    All three clear the lead from the pending Lead Queue the same way
+    it restocks rather than losing it entirely to a plain reject). All
+    three clear the lead from the pending Lead Queue the same way
     (status="reviewed") -- "oos" is just a third bucket in Reviewed
     History (see reviewed_leads.html) rather than a real approve/
     reject verdict.
 
-    reason: optional free-text "why not" (2026-08-23) -- the reject
-    button prompts for this and submits it here, see Lead.decision_reason.
+    reason: optional free-text "why not" (2026-08-23) -- see
+    Lead.decision_reason.
 
     "oos" ALSO auto-adds the ASIN to the existing Watchlist, reusing
     its already-built re-check machinery (WatchlistService.check_stale
@@ -260,36 +260,163 @@ def review_decide(
     come from the lead's own keepa_metrics (see VerdictService/
     LeadAnalysisService), so no extra Keepa lookup is needed here.
     """
+    lead.decision = decision
+    lead.decision_reason = reason or None
+    lead.status = "reviewed"
+    lead.reviewed_at = datetime.now(timezone.utc)
+
+    if decision == "oos":
+        title, brand = "", ""
+
+        if lead.keepa_metrics:
+            try:
+                metrics = json.loads(lead.keepa_metrics)
+                title = metrics.get("title") or ""
+                brand = metrics.get("brand") or ""
+            except Exception:
+                pass
+
+        ProductRepository.add_watch(
+            lead.asin, title=title, brand=brand,
+            note="Amazon OOS at review -- watching for restock",
+        )
+
+
+@router.post("/review/decide")
+def review_decide(
+    lead_id: int = Form(...),
+    decision: str = Form(...),
+    reason: str = Form(""),
+    return_to: str = Form("/review"),
+):
     db = SessionLocal()
     try:
         lead = db.get(Lead, lead_id)
 
         if lead is not None:
-            lead.decision = decision
-            lead.decision_reason = reason or None
-            lead.status = "reviewed"
-            lead.reviewed_at = datetime.now(timezone.utc)
+            apply_lead_decision(lead, decision, reason)
             db.commit()
-
-            if decision == "oos":
-                title, brand = "", ""
-
-                if lead.keepa_metrics:
-                    try:
-                        metrics = json.loads(lead.keepa_metrics)
-                        title = metrics.get("title") or ""
-                        brand = metrics.get("brand") or ""
-                    except Exception:
-                        pass
-
-                ProductRepository.add_watch(
-                    lead.asin, title=title, brand=brand,
-                    note="Amazon OOS at review -- watching for restock",
-                )
     finally:
         db.close()
 
     return RedirectResponse(url=return_to, status_code=303)
+
+
+class SheetLeadDecisionRequest(BaseModel):
+    asin: str
+    decision: str  # "approved" | "rejected" | "oos"
+    reason: str | None = None
+
+
+@router.post("/api/webhook/sheet-lead-decision")
+def sheet_lead_decision_webhook(body: SheetLeadDecisionRequest, x_webhook_secret: str = Header(default=None)):
+    """
+    VA sheet -> Atlas half of the bidirectional review sync (2026-08-24)
+    -- fires when a VA marks a lead's status/comment directly on the
+    sheet (their thumbs up/down + "why not" column), instead of Atlas's
+    own Review Queue UI. Applies the exact same apply_lead_decision the
+    UI path uses, so a sheet-side review and an Atlas-side review are
+    indistinguishable once recorded -- same OOS-auto-watch behavior,
+    same Reviewed History bucket.
+
+    Only ever matches the most recent UNDECIDED sheet-sourced lead for
+    this ASIN -- if nothing matches (already decided by someone, on
+    either side, or this ASIN was never sent to Atlas at all), this is
+    a deliberate no-op rather than an error: "first decision wins" is
+    the whole point of this sync (see the user's own "don't want to
+    review the same lead twice" requirement), so a sheet edit arriving
+    after Atlas already decided it should do nothing, not overwrite it.
+
+    synced_to_sheet_at is stamped immediately, not left for the
+    Atlas->sheet pull to find -- this decision's origin IS the sheet,
+    it already has this information, there's nothing to push back.
+    """
+    expected_secret = os.getenv("ATLAS_WEBHOOK_SECRET")
+
+    if not expected_secret or x_webhook_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing webhook secret")
+
+    if body.decision not in ("approved", "rejected", "oos"):
+        raise HTTPException(status_code=400, detail="decision must be 'approved', 'rejected', or 'oos'")
+
+    asin = body.asin.strip().upper()
+
+    db = SessionLocal()
+    try:
+        lead = (
+            db.query(Lead)
+            .filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None))
+            .order_by(Lead.added_at.desc())
+            .first()
+        )
+
+        if lead is None:
+            return {"updated": False, "reason": "No pending sheet-sourced lead found for this ASIN"}
+
+        apply_lead_decision(lead, body.decision, body.reason)
+        lead.synced_to_sheet_at = datetime.now(timezone.utc)
+        db.commit()
+
+        return {"updated": True, "lead_id": lead.id}
+    finally:
+        db.close()
+
+
+@router.get("/api/leads/pending-sheet-sync")
+def pending_sheet_sync(x_webhook_secret: str = Header(default=None)):
+    """
+    Atlas -> VA sheet half of the bidirectional review sync (2026-08-24)
+    -- polled periodically by an Apps Script time trigger. Returns
+    every sheet-sourced lead that was decided in Atlas's OWN Review
+    Queue UI (not via the sheet, which stamps synced_to_sheet_at itself
+    at decide-time -- see sheet_lead_decision_webhook) and hasn't been
+    pushed back to the sheet yet.
+
+    Deliberately does NOT return leads that only have an AI verdict
+    (BUY/WATCH/AVOID) with no human decision yet -- decision IS NOT
+    NULL is the filter, not verdict. The user was explicit about this:
+    only a real human decision should ever reach the sheet, never
+    Atlas's own unreviewed AI judgment.
+
+    Marks every returned lead's synced_to_sheet_at immediately, in the
+    same request, rather than waiting for a separate "ack" call from
+    the Apps Script side -- simpler, and consistent with every other
+    best-effort integration in this codebase. The tradeoff: if the
+    Apps Script fetch succeeds but then fails to actually write the
+    row before finishing, that lead won't be retried on the next poll.
+    Acceptable here (low-stakes internal tool, small batches, visible
+    failures) -- a two-phase ack would close that gap at real added
+    complexity for a lot of code that's likely to run more or less
+    unattended.
+    """
+    expected_secret = os.getenv("ATLAS_WEBHOOK_SECRET")
+
+    if not expected_secret or x_webhook_secret != expected_secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing webhook secret")
+
+    db = SessionLocal()
+    try:
+        leads = (
+            db.query(Lead)
+            .filter(Lead.source == "sheet", Lead.decision.isnot(None), Lead.synced_to_sheet_at.is_(None))
+            .order_by(Lead.reviewed_at.asc())
+            .all()
+        )
+
+        results = [
+            {"asin": lead.asin, "decision": lead.decision, "decision_reason": lead.decision_reason}
+            for lead in leads
+        ]
+
+        now = datetime.now(timezone.utc)
+        for lead in leads:
+            lead.synced_to_sheet_at = now
+
+        db.commit()
+
+        return {"leads": results}
+    finally:
+        db.close()
 
 
 @router.get("/review/{lead_id}")

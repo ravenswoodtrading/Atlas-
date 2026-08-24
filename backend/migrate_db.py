@@ -51,6 +51,7 @@ migrate_table("product_records", {
 migrate_table("leads", {
     "decision_reason": "TEXT",
     "source_detail": "TEXT",
+    "synced_to_sheet_at": "DATETIME",
 })
 
 migrate_table("automation_settings", {

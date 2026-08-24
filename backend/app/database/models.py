@@ -482,13 +482,25 @@ class Lead(Base):
     # human sees it instead of it vanishing from the queue silently.
     analysis_attempts: Mapped[int] = mapped_column(Integer, default=0)
 
-    # "approved" | "rejected", NULL until reviewed
+    # "approved" | "rejected" | "oos", NULL until reviewed
     decision: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     # Optional free-text "why not" captured alongside a "rejected"
     # decision -- same purpose as ProductRecord.review_reason, see its
     # own comment.
     decision_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # VA sheet <-> Atlas decision sync (2026-08-24). NULL means "Atlas's
+    # own UI decided this and the sheet doesn't know yet" -- the
+    # periodic pull (GET /api/leads/pending-sheet-sync) picks it up,
+    # writes it into the sheet's status/comment columns, and stamps
+    # this at the same time so it isn't sent again. A decision that
+    # arrived FROM the sheet (POST /api/webhook/sheet-lead-decision)
+    # stamps this immediately at write time instead -- the sheet
+    # already has that information, there's nothing to push back.
+    # Only ever meaningful for source="sheet" leads; NULL forever on
+    # manual/shortlist leads, which have no sheet row to sync to.
+    synced_to_sheet_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
     added_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
