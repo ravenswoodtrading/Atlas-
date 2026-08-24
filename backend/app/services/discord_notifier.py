@@ -269,19 +269,21 @@ class DiscordNotifier:
         result this is meant to fix. So: an optional short ping-only
         message first (mention + a one-line summary, so the phone's
         notification banner still shows useful context), then the
-        real message, whose `content` is ONLY the ASIN in backticks --
-        nothing else in that message's plain text, so "Copy Text"
-        cannot return anything but the ASIN. The embed (full details,
-        links, the visual ASIN field) rides along on this second
-        message.
+        real message, whose `content` is the bare ASIN and nothing
+        else, so "Copy Text" cannot return anything but the ASIN. The
+        embed (full details, links, the visual ASIN field) rides along
+        on this second message.
 
-        Not verified live against a real Discord mobile client from
-        this environment (no network access here) -- this is built
-        from how Discord's mobile "Copy Text" action is documented/
-        known to behave (message content only, not embed fields).
-        Please confirm on your phone after this ships, the same way
-        you'd spot-check anything else Keepa/Discord-side in this
-        codebase that couldn't be tested live.
+        Confirmed live on a real phone (2026-08-24): the content field
+        was originally wrapped in backticks (`` `ASIN` ``) for visual
+        code-block styling, on the assumption "Copy Text" would strip
+        markdown syntax and hand back the rendered text. It doesn't --
+        it copies the raw message content verbatim, backticks
+        included, so the user was getting the ASIN wrapped in what
+        read as stray punctuation. Content is now the bare ASIN with
+        no markdown at all; the visual code-block styling still exists
+        (see _build_embed's own ASIN field), just not duplicated here
+        where it actively broke the one thing this message exists for.
         """
         asin = product_dict.get("asin") or ""
 
@@ -306,9 +308,12 @@ class DiscordNotifier:
         embed = DiscordNotifier._build_embed(product_dict, report_dict, source_label)
 
         payload = {
-            # ONLY the ASIN, in backticks, and nothing else -- see this
-            # method's docstring for why the mention can't live here too.
-            "content": f"`{asin}`",
+            # ONLY the bare ASIN, no markdown, and nothing else -- see
+            # this method's docstring for why (backticks here used to
+            # come back as part of "Copy Text" on mobile, confirmed
+            # live) and for why the mention can't live in this same
+            # message either.
+            "content": asin,
             "embeds": [embed],
         }
 
@@ -392,7 +397,7 @@ class DiscordNotifier:
                 return {"sent": False, "reason": f"Discord rejected the ping message: {exc}"}
 
         payload = {
-            "content": f"`{sample_product['asin']}`",
+            "content": sample_product["asin"],
             "embeds": [embed],
         }
 
