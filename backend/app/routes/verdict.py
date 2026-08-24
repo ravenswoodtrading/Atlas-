@@ -34,7 +34,15 @@ def highlight_figures(text: str) -> Markup:
     `| safe` (via Markup) in the template.
     """
     escaped = str(escape(text))
-    highlighted = _FIGURE_PATTERN.sub(r"<strong class=\"vr-figure\">\1</strong>", escaped)
+    # Single-quoted attribute deliberately -- r"...\"..." in a raw
+    # string literal keeps the backslash IN the resulting string
+    # (Python's raw-string rule only stops it from ending the string
+    # early, it doesn't strip it), so a double-quoted version here
+    # would insert a literal backslash before each quote in the actual
+    # HTML output. Confirmed live 2026-08-24: every consumer of this
+    # filter (Verdict Checker, Lead detail, the merged Review Queue)
+    # was rendering `class=\"vr-figure\"` instead of `class="vr-figure"`.
+    highlighted = _FIGURE_PATTERN.sub(r"<strong class='vr-figure'>\1</strong>", escaped)
     return Markup(highlighted)
 
 
