@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_discovery_content.html" import discovery_content %}
+{% from "_categories_content.html" import categories_content %}
+{% from "_oa_lookup_content.html" import oa_lookup_content %}
+
+{% block title %}Leads - Atlas{% endblock %}
+
+{% block content %}
+
+<h4 class="mb-3">Leads</h4>
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if group == 'manual' }}" href="/leads-hub?group=manual">Manual Search</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if group == 'automated' }}" href="/leads-hub?group=automated">Automated</a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if group == 'websourced' }}" href="/leads-hub?group=websourced">Web-Sourced</a>
+    </li>
+</ul>
+
+{% if group == "manual" %}
+
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Discovery, Categories, and OA Lookup, together. Each tool below still runs on its own page once you actually search/survey/look up -- this just gives you one place to start from.
+</div>
+
+<ul class="nav nav-pills mb-3" id="manual-search-pills" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pane-discovery" type="button">Discovery</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-categories" type="button">Categories</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-oa-lookup" type="button">OA Lookup</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="pane-discovery">
+        {{ discovery_content("", 20, true, false, 0, none, false, [], {}, [], [], {}) }}
+    </div>
+    <div class="tab-pane fade" id="pane-categories">
+        {{ categories_content("", 100, none) }}
+    </div>
+    <div class="tab-pane fade" id="pane-oa-lookup">
+        {{ oa_lookup_content("", none, "", false, "", none, none) }}
+    </div>
+</div>
+
+{% elif group == "automated" %}
+
+<div class="alert alert-info py-2 small">
+    <i class="bi bi-cone-striped"></i> Not inlined yet -- built in a later pass. For now:
+    <a href="/scan-queue">Scan Queue</a> &middot; <a href="/signals">Signals</a> &middot;
+    <a href="/signals/queries">Signal Queries</a> &middot; <a href="/competitors">Competitors</a> &middot;
+    <a href="/competitors/sellers">Competitors Sellers</a>
+</div>
+
+{% elif group == "websourced" %}
+
+<div class="alert alert-info py-2 small">
+    <i class="bi bi-cone-striped"></i> Not inlined yet -- built in a later pass. For now:
+    <a href="/oa-discovery">OA Source Discovery</a>
+</div>
+
+{% endif %}
+
+{% endblock %}
