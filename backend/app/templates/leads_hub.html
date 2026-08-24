@@ -2,6 +2,11 @@
 {% from "_discovery_content.html" import discovery_content %}
 {% from "_categories_content.html" import categories_content %}
 {% from "_oa_lookup_content.html" import oa_lookup_content %}
+{% from "_scan_queue_content.html" import scan_queue_content %}
+{% from "_signals_content.html" import signals_content %}
+{% from "_signal_queries_content.html" import signal_queries_content %}
+{% from "_competitors_content.html" import competitors_content %}
+{% from "_competitors_sellers_content.html" import competitors_sellers_content %}
 
 {% block title %}Leads - Atlas{% endblock %}
 
@@ -53,11 +58,44 @@
 
 {% elif group == "automated" %}
 
-<div class="alert alert-info py-2 small">
-    <i class="bi bi-cone-striped"></i> Not inlined yet -- built in a later pass. For now:
-    <a href="/scan-queue">Scan Queue</a> &middot; <a href="/signals">Signals</a> &middot;
-    <a href="/signals/queries">Signal Queries</a> &middot; <a href="/competitors">Competitors</a> &middot;
-    <a href="/competitors/sellers">Competitors Sellers</a>
+<div class="alert alert-secondary py-2 small">
+    <i class="bi bi-info-circle"></i> Scan Queue, Signals, Signal Queries, Competitors, and Tracked Sellers, together. Each tool below still runs on its own page once you act on a row -- this just gives you one place to check them all from. Note: Scan Queue's own page auto-refreshes every 20s; that doesn't happen here on the hub, since it would also reset whichever tab you're on.
+</div>
+
+<ul class="nav nav-pills mb-3" id="automated-pills" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#pane-scan-queue" type="button">Scan Queue</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-signals" type="button">Signals</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-signal-queries" type="button">Signal Queries</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-competitors" type="button">Competitors</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="pill" data-bs-target="#pane-competitors-sellers" type="button">Tracked Sellers</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="pane-scan-queue">
+        {{ scan_queue_content(scan_queue['items'], scan_queue.performance, scan_queue.cadence, scan_queue.paused, scan_queue.is_busy, scan_queue.tick_result) }}
+    </div>
+    <div class="tab-pane fade" id="pane-signals">
+        {{ signals_content(signals.rows, signals.queries, signals.total_count, signals.counts_by_type, signals.categories_seen, signals.signal_type, signals.category, signals.sort, signals.sort_options, signals.signal_type_labels, signals.target_roi_pct, signals.check_result) }}
+    </div>
+    <div class="tab-pane fade" id="pane-signal-queries">
+        {{ signal_queries_content(signal_queries.queries, signal_queries.signal_types, signal_queries.signal_type_labels, signal_queries.check_result) }}
+    </div>
+    <div class="tab-pane fade" id="pane-competitors">
+        {{ competitors_content(competitors.sellers, competitors.detections, competitors.tab, competitors.tab_order, competitors.tab_labels, competitors.tab_counts, competitors.unscored_count, competitors.categories, competitors.category, competitors.buyable_only, competitors.review_filter, competitors.since_days, competitors.check_result, competitors.watched_asins, competitors.FILTERED_REASON_LABELS) }}
+    </div>
+    <div class="tab-pane fade" id="pane-competitors-sellers">
+        {{ competitors_sellers_content(competitors_sellers.sellers, competitors_sellers.stats, competitors_sellers.check_result) }}
+    </div>
 </div>
 
 {% elif group == "websourced" %}

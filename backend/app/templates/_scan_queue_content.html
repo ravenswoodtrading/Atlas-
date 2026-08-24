@@ -1,0 +1,194 @@
+{% macro scan_queue_content(items, performance, cadence, paused, is_busy, tick_result) %}
+
+{% if tick_result %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ tick_result }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Automated Scan Queue</h4>
+    <div class="d-flex gap-2">
+        <form method="post" action="/scan-queue/run-now">
+            <button class="btn btn-outline-dark btn-sm" type="submit">
+                <i class="bi bi-play-fill"></i> Run one now
+            </button>
+        </form>
+        {% if paused %}
+        <form method="post" action="/scan-queue/resume">
+            <button class="btn btn-success btn-sm" type="submit">
+                <i class="bi bi-play-circle"></i> Resume automated scanning
+            </button>
+        </form>
+        {% else %}
+        <form method="post" action="/scan-queue/pause">
+            <button class="btn btn-warning btn-sm" type="submit">
+                <i class="bi bi-pause-circle"></i> Pause automated scanning
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="alert {{ 'alert-warning' if paused else ('alert-primary' if is_busy else 'alert-success') }} py-2">
+    {% if paused %}
+        <i class="bi bi-pause-circle"></i> Automated scanning is <strong>paused</strong> -- nothing in this queue will run until you resume it. Manual scans on Discovery are unaffected either way.
+    {% elif is_busy %}
+        <i class="bi bi-arrow-repeat"></i> <strong>A scan is running right now</strong> -- either an automated tick or a manual scan elsewhere in the app (they never run at the same time -- see priority note below).
+    {% else %}
+        <i class="bi bi-check-circle"></i> Automated scanning is <strong>active</strong>, currently idle -- the background scheduler checks in every minute and cycles through this queue, brand by brand, spending whatever Keepa tokens happen to be available. Every brand keeps being rescanned on a loop indefinitely -- nothing here ever "finishes"; remove a brand below if you don't want it tracked any more. This page refreshes itself every 20s.
+    {% endif %}
+</div>
+
+{% if cadence.item_count %}
+<div class="alert alert-{{ cadence.level }} py-2 small">
+    <i class="bi bi-speedometer2"></i>
+    <strong>{{ cadence.item_count }} brand{{ "s" if cadence.item_count != 1 }} in the queue</strong> -- with the scheduler taking one turn per brand each minute, that's roughly every <strong>{{ cadence.revisit_minutes }} minute{{ "s" if cadence.revisit_minutes != 1 }}</strong> per brand. {{ cadence.label }}
+    {% if cadence.level in ("warning", "danger") %}
+        Check the Hit rate column below and consider removing your weakest performers to free up more frequent turns for the rest.
+    {% endif %}
+    This is a best case -- Competitor Watch, Lead Analysis, and any manual scans you run all draw from the same token budget and can stretch the real gap further.
+</div>
+{% endif %}
+
+<div class="card metric p-4 mb-4">
+    <div class="text-muted small mb-2">
+        Add a brand to the queue. Optionally restrict it to specific Keepa categories (comma-separated IDs -- find these on the
+        <a href="/categories">Categories</a> page). It'll be added to the bottom of the priority list and scanned on a continuous loop from then on.
+    </div>
+    <form method="post" action="/scan-queue/add" class="row g-3 align-items-end">
+        <div class="col-md-5">
+            <label class="form-label">Brand</label>
+            <input type="text" class="form-control" name="brand" placeholder="e.g. philips" required>
+        </div>
+        <div class="col-md-5">
+            <label class="form-label">Category IDs (optional)</label>
+            <input type="text" class="form-control" name="category_ids" placeholder="e.g. 340831031, 192413031">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark w-100">
+                <i class="bi bi-plus-lg"></i> Add to queue
+            </button>
+        </div>
+    </form>
+</div>
+
+<div class="card metric p-4 mb-4">
+    <button class="btn btn-outline-dark btn-sm mb-3" type="button" data-bs-toggle="collapse" data-bs-target="#bulk-add-brands" style="width:fit-content;">
+        <i class="bi bi-list-check"></i> Add multiple brands at once
+    </button>
+    <div class="collapse" id="bulk-add-brands">
+        <div class="text-muted small mb-2">
+            Paste a list of brands -- one per line, or comma-separated. The same category filter applies to all of them; each becomes its own queue item at the bottom of the priority list.
+        </div>
+        <form method="post" action="/scan-queue/add-bulk" class="row g-3 align-items-end">
+            <div class="col-md-7">
+                <label class="form-label">Brands (one per line, or comma-separated)</label>
+                <textarea class="form-control" name="brands" rows="4" placeholder="philips&#10;braun&#10;bosch" required></textarea>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Category IDs (optional)</label>
+                <input type="text" class="form-control" name="category_ids" placeholder="e.g. 340831031, 192413031">
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-dark w-100">
+                    <i class="bi bi-plus-lg"></i> Add all
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if items %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Brand</th>
+                    <th>Categories</th>
+                    <th>Status</th>
+                    <th>Found (Buy / Consider)</th>
+                    <th>Hit rate</th>
+                    <th>Last run</th>
+                    <th>Reorder</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                {% set perf = performance.get(item.brand, {}) %}
+                <tr>
+                    <td class="text-muted">{{ loop.index }}</td>
+                    <td class="fw-semibold">{{ item.brand }}</td>
+                    <td class="small text-muted">{{ item.category_ids or "All categories" }}</td>
+                    <td>
+                        {% if item.status == "gated" %}
+                            <span class="badge bg-danger" title="On the Gated Brands list -- no tokens spent searching for more of it. Remove it from Gated Brands on the Exclusions page to resume.">
+                                <i class="bi bi-slash-circle"></i> Gated brand -- skipped
+                            </span>
+                        {% elif item.status != "in_progress" %}
+                            <span class="badge bg-light text-dark border">Not started yet</span>
+                        {% elif item.exhausted %}
+                            <span class="badge bg-success">Cycling (completed a lap)</span>
+                        {% else %}
+                            <span class="badge bg-primary">First lap in progress</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if perf.scanned %}
+                            {{ perf.buy }} / {{ perf.consider }}
+                            <span class="text-muted">(of {{ perf.scanned }} scanned)</span>
+                        {% else %}
+                            <span class="text-muted">No data yet</span>
+                        {% endif %}
+                    </td>
+                    <td class="small">
+                        {% if perf.hit_rate is not none %}
+                            {{ perf.hit_rate }}%
+                        {% else %}
+                            <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td class="small text-muted">{{ item.last_run_at.strftime("%Y-%m-%d %H:%M") if item.last_run_at else "Never" }}</td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            <form method="post" action="/scan-queue/move">
+                                <input type="hidden" name="item_id" value="{{ item.id }}">
+                                <input type="hidden" name="direction" value="up">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" {{ "disabled" if loop.first }}>
+                                    <i class="bi bi-arrow-up"></i>
+                                </button>
+                            </form>
+                            <form method="post" action="/scan-queue/move">
+                                <input type="hidden" name="item_id" value="{{ item.id }}">
+                                <input type="hidden" name="direction" value="down">
+                                <button class="btn btn-sm btn-outline-secondary" type="submit" {{ "disabled" if loop.last }}>
+                                    <i class="bi bi-arrow-down"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                    <td>
+                        <form method="post" action="/scan-queue/delete">
+                            <input type="hidden" name="item_id" value="{{ item.id }}">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    Nothing queued yet -- add a brand above to get started.
+</div>
+{% endif %}
+
+{% endmacro %}

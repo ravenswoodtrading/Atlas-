@@ -139,16 +139,12 @@ def _eu_history_view(eu_history_json: str, target_roi_pct: float) -> dict:
     }
 
 
-@router.get("/signals")
-def signals_page(request: Request, signal_type: str = "", category: str = "",
-                  sort: str = "newest", check_result: str = ""):
+def build_signals_context(signal_type: str = "", category: str = "",
+                           sort: str = "newest", check_result: str = "") -> dict:
     """
-    The day-to-day Signals feed -- every non-dismissed SignalMatch
-    across all enabled SignalQuery definitions, newest first by
-    default. See SignalService for the cost model (a single UK-only
-    Keepa lookup per NEW candidate, no EU tokens spent building this
-    list at all) and app/database/models.py's SignalMatch/SignalQuery/
-    CeilingRejected docstrings for the full design.
+    Shared with the Leads hub's "Automated" group (leads_hub.py) --
+    see build_scan_queue_context's own comment for why this is split
+    out rather than duplicated.
     """
     queries = ProductRepository.list_signal_queries()
     matches = ProductRepository.list_signal_matches(include_dismissed=False, limit=500)
@@ -190,25 +186,48 @@ def signals_page(request: Request, signal_type: str = "", category: str = "",
             "eu_history": _eu_history_view(m.eu_history_json, SignalService.TARGET_ROI_PCT),
         })
 
+    return {
+        "rows": rows,
+        "queries": queries,
+        "total_count": len(matches),
+        "counts_by_type": counts_by_type,
+        "categories_seen": sorted(categories_seen),
+        "signal_type": signal_type,
+        "category": category,
+        "sort": sort,
+        "sort_options": SORT_OPTIONS,
+        "signal_type_labels": SIGNAL_TYPE_LABELS,
+        "target_roi_pct": SignalService.TARGET_ROI_PCT,
+        "check_result": check_result,
+    }
+
+
+@router.get("/signals")
+def signals_page(request: Request, signal_type: str = "", category: str = "",
+                  sort: str = "newest", check_result: str = ""):
+    """
+    The day-to-day Signals feed -- every non-dismissed SignalMatch
+    across all enabled SignalQuery definitions, newest first by
+    default. See SignalService for the cost model (a single UK-only
+    Keepa lookup per NEW candidate, no EU tokens spent building this
+    list at all) and app/database/models.py's SignalMatch/SignalQuery/
+    CeilingRejected docstrings for the full design.
+    """
     return templates.TemplateResponse(
         request=request,
         name="signals.html",
-        context={
-            "request": request,
-            "rows": rows,
-            "queries": queries,
-            "total_count": len(matches),
-            "counts_by_type": counts_by_type,
-            "categories_seen": sorted(categories_seen),
-            "signal_type": signal_type,
-            "category": category,
-            "sort": sort,
-            "sort_options": SORT_OPTIONS,
-            "signal_type_labels": SIGNAL_TYPE_LABELS,
-            "target_roi_pct": SignalService.TARGET_ROI_PCT,
-            "check_result": check_result,
-        }
+        context={"request": request, **build_signals_context(signal_type, category, sort, check_result)}
     )
+
+
+def build_signal_queries_context(check_result: str = "") -> dict:
+    """Shared with the Leads hub's "Automated" group (leads_hub.py)."""
+    return {
+        "queries": ProductRepository.list_signal_queries(),
+        "signal_types": SIGNAL_TYPES,
+        "signal_type_labels": SIGNAL_TYPE_LABELS,
+        "check_result": check_result,
+    }
 
 
 @router.get("/signals/queries")
@@ -222,18 +241,10 @@ def signal_queries_page(request: Request, check_result: str = ""):
     all you need, since it just cycles through Atlas's own
     CeilingRejected pool.
     """
-    queries = ProductRepository.list_signal_queries()
-
     return templates.TemplateResponse(
         request=request,
         name="signal_queries.html",
-        context={
-            "request": request,
-            "queries": queries,
-            "signal_types": SIGNAL_TYPES,
-            "signal_type_labels": SIGNAL_TYPE_LABELS,
-            "check_result": check_result,
-        }
+        context={"request": request, **build_signal_queries_context(check_result)}
     )
 
 

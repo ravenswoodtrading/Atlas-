@@ -50,24 +50,33 @@ def _describe_tick(result: dict) -> str:
     return "Nothing to report."
 
 
-@router.get("/scan-queue")
-def scan_queue_page(request: Request, tick_result: str = ""):
+def build_scan_queue_context(tick_result: str = "") -> dict:
+    """
+    Shared with the Leads hub's "Automated" group (leads_hub.py) --
+    keeps the hub's tab and this page's own route reading from exactly
+    the same logic, so a future change here can't silently drift out
+    of sync between the two.
+    """
     items = ScanQueueService.list_items()
     performance = ProductRepository.get_brand_performance([item.brand for item in items])
     cadence = ScanQueueService.estimate_cadence(len(items))
 
+    return {
+        "items": items,
+        "performance": performance,
+        "cadence": cadence,
+        "paused": ScanQueueService.is_paused(),
+        "is_busy": ScanCoordinator.is_busy(),
+        "tick_result": tick_result,
+    }
+
+
+@router.get("/scan-queue")
+def scan_queue_page(request: Request, tick_result: str = ""):
     return templates.TemplateResponse(
         request=request,
         name="scan_queue.html",
-        context={
-            "request": request,
-            "items": items,
-            "performance": performance,
-            "cadence": cadence,
-            "paused": ScanQueueService.is_paused(),
-            "is_busy": ScanCoordinator.is_busy(),
-            "tick_result": tick_result,
-        }
+        context={"request": request, **build_scan_queue_context(tick_result)}
     )
 
 

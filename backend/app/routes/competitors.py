@@ -54,18 +54,10 @@ def _google_search_urls(title: str, ean: str) -> dict:
     }
 
 
-@router.get("/competitors")
-def competitors_page(request: Request, tab: str = "", buyable_only: bool = False,
-                      review_filter: str = "", category: str = "", since_days: int = 0,
-                      check_result: str = ""):
-    """
-    Detections feed -- the day-to-day working page. Tracked-seller
-    management (add/pause/remove, "Check now") lives on its own page,
-    /competitors/sellers, linked from the summary line below -- this
-    page was getting long with both on it at once, and the two are
-    genuinely different tasks (set up sellers occasionally vs. work
-    through detections often).
-    """
+def build_competitors_context(tab: str = "", buyable_only: bool = False,
+                               review_filter: str = "", category: str = "", since_days: int = 0,
+                               check_result: str = "") -> dict:
+    """Shared with the Leads hub's "Automated" group (leads_hub.py) -- see scan_queue.py's own comment for why."""
     tab = tab if tab in SOURCING_TAG_BY_TAB else DEFAULT_TAB
     sourcing_tag = SOURCING_TAG_BY_TAB[tab]
 
@@ -136,28 +128,53 @@ def competitors_page(request: Request, tab: str = "", buyable_only: bool = False
                 )
                 entry["oa_price_guide"] = {"target": target, "breakeven": breakeven}
 
+    return {
+        "sellers": sellers,
+        "detections": detections,
+        "tab": tab,
+        "tab_order": TAB_ORDER,
+        "tab_labels": TAB_LABELS,
+        "tab_counts": tab_counts,
+        "unscored_count": unscored_count,
+        "categories": SellerWatchService.list_detection_categories(),
+        "category": category,
+        "buyable_only": buyable_only,
+        "review_filter": review_filter,
+        "since_days": since_days,
+        "check_result": check_result,
+        "watched_asins": ProductRepository.get_watched_asins(),
+        "FILTERED_REASON_LABELS": FILTERED_REASON_LABELS,
+    }
+
+
+@router.get("/competitors")
+def competitors_page(request: Request, tab: str = "", buyable_only: bool = False,
+                      review_filter: str = "", category: str = "", since_days: int = 0,
+                      check_result: str = ""):
+    """
+    Detections feed -- the day-to-day working page. Tracked-seller
+    management (add/pause/remove, "Check now") lives on its own page,
+    /competitors/sellers, linked from the summary line below -- this
+    page was getting long with both on it at once, and the two are
+    genuinely different tasks (set up sellers occasionally vs. work
+    through detections often).
+    """
     return templates.TemplateResponse(
         request=request,
         name="competitors.html",
-        context={
-            "request": request,
-            "sellers": sellers,
-            "detections": detections,
-            "tab": tab,
-            "tab_order": TAB_ORDER,
-            "tab_labels": TAB_LABELS,
-            "tab_counts": tab_counts,
-            "unscored_count": unscored_count,
-            "categories": SellerWatchService.list_detection_categories(),
-            "category": category,
-            "buyable_only": buyable_only,
-            "review_filter": review_filter,
-            "since_days": since_days,
-            "check_result": check_result,
-            "watched_asins": ProductRepository.get_watched_asins(),
-            "FILTERED_REASON_LABELS": FILTERED_REASON_LABELS,
-        }
+        context={"request": request, **build_competitors_context(
+            tab, buyable_only, review_filter, category, since_days, check_result
+        )}
     )
+
+
+def build_competitors_sellers_context(check_result: str = "") -> dict:
+    """Shared with the Leads hub's "Automated" group (leads_hub.py)."""
+    return {
+        "sellers": SellerWatchService.list_tracked_sellers(),
+        "stats": SellerWatchService.get_seller_stats(),
+        "check_result": check_result,
+    }
 
 
 @router.get("/competitors/sellers")
@@ -168,18 +185,10 @@ def competitors_sellers_page(request: Request, check_result: str = ""):
     docstring) since this is an occasional setup task, not something
     you look at every session the way the detections feed is.
     """
-    sellers = SellerWatchService.list_tracked_sellers()
-    stats = SellerWatchService.get_seller_stats()
-
     return templates.TemplateResponse(
         request=request,
         name="competitors_sellers.html",
-        context={
-            "request": request,
-            "sellers": sellers,
-            "stats": stats,
-            "check_result": check_result,
-        }
+        context={"request": request, **build_competitors_sellers_context(check_result)}
     )
 
 
