@@ -200,14 +200,33 @@
     </div>
 </div>
 
-<!-- Purchasing Today / Amazon Sales Today (section 22/23) -- deliberately
-     OMITTED. Confirmed via inspection: Atlas has no purchasing/spend-
-     tracking feature anywhere (no route, service, or nav item), and
-     SPAPIClient.get_fba_fulfilled_shipments_units only returns UNIT
-     counts, never revenue -- so neither section can be built from real
-     data without either a new integration (out of scope for this UI
-     task) or showing fabricated numbers (explicitly disallowed). See
-     the implementation report for the full finding. -->
+<!-- TODAY'S BUYING PERFORMANCE (2026-09-03, second UI pass) -- Atlas has
+     no purchasing/spend-tracking integration yet (confirmed: no live
+     Google Sheets access, no route/service/table for it -- see the
+     buy-sheet CSV parser in replen_service.py, which only feeds the
+     Replen watchlist and doesn't persist raw purchase rows anywhere
+     queryable). Rather than invent numbers, this is honestly rendered
+     as "Not connected yet" -- Tamara confirmed this is the right
+     interim state (2026-09-03) while we decide how to wire up real
+     data (manual CSV upload / sheet webhook / live Sheets API pull are
+     the three real options). Swap `purchasing_connected` in
+     dashboard.py to True once real figures exist here. -->
+<div class="card metric p-3 mb-3">
+    <div class="fw-bold mb-2"><i class="bi bi-cart3"></i> Today's Buying Performance</div>
+    <div class="row g-3">
+        {% for label, icon in [("Units purchased", "bi-box-seam"), ("Amount spent", "bi-cash-stack"), ("Expected ROI", "bi-graph-up-arrow"), ("Amazon sales today", "bi-bag-check")] %}
+        <div class="col-6 col-md-3">
+            <div class="text-muted small"><i class="bi {{ icon }}"></i> {{ label }}</div>
+            {% if purchasing_connected %}
+                <h4 class="mb-0">--</h4>
+            {% else %}
+                <div class="fw-semibold text-muted">Not connected yet</div>
+                <div class="text-muted" style="font-size:.75rem;">No purchasing data source connected</div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
 
 <!-- Shared detail panel + undo toast (same as review_queue.html) -- the
      Buy Now table above also opens item detail/quick-reject from here. -->
@@ -232,10 +251,21 @@
 
 <hr class="my-4">
 
-<div class="d-flex align-items-center mb-3">
-    <h5 class="mb-0 text-muted">More detail</h5>
-    {{ help_button("dashboard") }}
-</div>
+<!-- ATLAS PERFORMANCE & SYSTEM STATUS (2026-09-03, second UI pass) --
+     same content as the old "More detail" section, just restyled as a
+     collapsible card with a Show/Hide toggle to match the mock-up.
+     Nothing inside changed -- same real fields as before. -->
+<div class="card metric p-3 mb-3">
+    <div class="d-flex align-items-center justify-content-between">
+        <div class="fw-bold"><i class="bi bi-speedometer2"></i> Atlas Performance &amp; System Status</div>
+        <div class="d-flex align-items-center" style="gap:1rem;">
+            {{ help_button("dashboard") }}
+            <a href="#atlas-status-body" class="small text-decoration-none atlas-status-toggle" data-bs-toggle="collapse" role="button" aria-expanded="false" aria-controls="atlas-status-body">
+                <span class="atlas-status-toggle-label">Show details</span> <i class="bi bi-chevron-down"></i>
+            </a>
+        </div>
+    </div>
+    <div class="collapse mt-3" id="atlas-status-body">
 
 <div class="row mb-3">
     <div class="col-md-3">
@@ -373,6 +403,19 @@
         </div>
     </div>
 </div>
+
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var body = document.getElementById('atlas-status-body');
+    var label = document.querySelector('.atlas-status-toggle-label');
+    if (!body || !label) return;
+    body.addEventListener('show.bs.collapse', function () { label.textContent = 'Hide details'; });
+    body.addEventListener('hide.bs.collapse', function () { label.textContent = 'Show details'; });
+});
+</script>
 
 {# The three alert banners that used to live here (Review Queue summary,
    Consider backlog, VA/manual leads waiting) are superseded by the

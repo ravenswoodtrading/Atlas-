@@ -63,6 +63,15 @@ ACTIVITY_LABELS = {
 # what /review-queue itself is for).
 COMMAND_CENTRE_PREVIEW_SIZE = 5
 
+# Today's Buying Performance (2026-09-03, second UI pass) -- no
+# purchasing/spend integration exists yet (confirmed: no live Google
+# Sheets access, no route/service/table for it -- see dashboard.html's
+# own comment on this section). False shows an honest "Not connected
+# yet" state instead of fabricated numbers; flip to True once a real
+# data source (manual CSV upload / sheet webhook / live Sheets API
+# pull -- Tamara to decide) actually feeds real figures in.
+PURCHASING_CONNECTED = False
+
 
 def _command_centre():
     """
@@ -349,6 +358,7 @@ def dashboard(request: Request):
             "greeting": _greeting(),
             "last_updated": datetime.now().strftime("%H:%M"),
             "quick_reject_reasons": QUICK_REJECT_REASONS,
+            "purchasing_connected": PURCHASING_CONNECTED,
             # review_queue_summary/consider_summary intentionally no
             # longer computed here (2026-09-03, Command Centre UI
             # build) -- they were only ever used by the three alert
