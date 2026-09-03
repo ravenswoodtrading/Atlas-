@@ -1,0 +1,215 @@
+{% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
+
+<!-- Summary cards (Competitor Watch redesign, 2026-09-03) -- real
+     counts: buy_now/needs_attention reuse the SAME already-tested
+     SellerWatchService.list_notable_buyable/list_historical_a2a_not_buyable
+     Review Queue itself is built on; oa_investigate is the NEW
+     price-guide-filtered count (see list_oa_worth_investigating --
+     deliberately NOT the raw "OA / unclear" tag count); recent is a
+     plain 7-day tally across every tag. -->
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <a href="/competitors?tab=opportunities&view=buy_now&source={{ source }}" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #198754;">
+                <div class="small fw-bold text-uppercase text-success"><i class="bi bi-cart-check-fill"></i> Buy Now</div>
+                <h2 class="mb-0">{{ counts.buy_now }}</h2>
+                <div class="small text-muted">Currently buyable, clears the usual bar</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/competitors?tab=opportunities&view=needs_attention&source={{ source }}" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
+                <div class="small fw-bold text-uppercase text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</div>
+                <h2 class="mb-0">{{ counts.needs_attention }}</h2>
+                <div class="small text-muted">Historical A2A, no current buy</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/competitors?tab=opportunities&view=oa_investigate&source={{ source }}" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
+                <div class="small fw-bold text-uppercase" style="color:#fd7e14;"><i class="bi bi-question-diamond-fill"></i> OA &mdash; Worth Investigating</div>
+                <h2 class="mb-0">{{ counts.oa_investigate }}</h2>
+                <div class="small text-muted">Clears the OA price guide's own breakeven</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/competitors?tab=opportunities&view=all&source=all" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
+                <div class="small fw-bold text-uppercase text-primary"><i class="bi bi-clock-history"></i> Recent Discoveries</div>
+                <h2 class="mb-0">{{ counts.recent }}</h2>
+                <div class="small text-muted">Any source, last 7 days</div>
+            </div>
+        </a>
+    </div>
+</div>
+
+{% if selected_seller_name %}
+<div class="alert alert-secondary py-2 small d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-funnel"></i> Showing opportunities from <strong>{{ selected_seller_name }}</strong> only</span>
+    <a href="/competitors?tab=opportunities&view={{ view }}&source={{ source }}" class="small">Clear &times;</a>
+</div>
+{% endif %}
+
+<form method="get" action="/competitors" class="row g-2 align-items-center mb-3">
+    <input type="hidden" name="tab" value="opportunities">
+    <input type="hidden" name="view" value="{{ view }}">
+    {% if seller_id %}<input type="hidden" name="seller_id" value="{{ seller_id }}">{% endif %}
+    <div class="col-12 col-md-4">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+            <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search ASIN or product name...">
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
+            {% for value, label in source_labels.items() %}
+            <option value="{{ value }}" {{ "selected" if source == value }}>Source: {{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-3">
+        <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+            {% for value, label in sort_labels.items() %}
+            <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-md-2 d-grid">
+        <button type="submit" class="btn btn-sm btn-outline-dark">Apply</button>
+    </div>
+</form>
+
+{% if view != "all" %}
+<div class="mb-3 small">
+    <span class="badge bg-light text-dark border">{{ view_labels.get(view, view) }}</span>
+    <a href="/competitors?tab=opportunities&source={{ source }}" class="text-decoration-none ms-1">Clear filter &times;</a>
+</div>
+{% endif %}
+
+{% if not items %}
+<div class="card metric p-4 text-center text-muted">
+    <i class="bi bi-check2-circle" style="font-size:2rem;"></i>
+    <div class="mt-2">Nothing here right now.</div>
+</div>
+{% endif %}
+
+{% for entry in items %}
+{% set listing = entry.listing %}
+{% set record = entry.record %}
+{% set seller = entry.seller %}
+{% set reasoning = entry.reasoning %}
+{% set has_historical = reasoning.get("guessed_buy_date") and listing.sourcing_tag in ("EU A2A", "UK A2A") %}
+<div class="card mb-2 qi-row" style="border-radius:12px;" data-row-asin="{{ listing.asin }}">
+    <div class="card-body py-3 px-3">
+        <div class="d-flex justify-content-between align-items-start flex-wrap" style="gap:.5rem;">
+            <div class="qi-open-btn" data-asin="{{ listing.asin }}" style="cursor:pointer;">
+                <div class="fw-semibold">
+                    {{ record.title[:75] if record and record.title else listing.asin }}{% if record and record.title and record.title|length > 75 %}...{% endif %}
+                </div>
+                <div class="text-muted small">
+                    {{ listing.asin }}
+                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ listing.asin }}" title="Copy ASIN" onclick="event.stopPropagation();"><i class="bi bi-clipboard"></i></button>
+                    &middot; via {{ seller.nickname or seller.seller_id }}
+                    &middot; {{ listing.detected_at.strftime("%d %b") if listing.detected_at else "" }}
+                </div>
+            </div>
+            <div>
+                {% if entry.opp_view == "buy_now" %}
+                    <span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
+                {% elif entry.opp_view == "needs_attention" %}
+                    <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;">A2A &mdash; HISTORICAL ONLY</span>
+                    <span class="badge bg-danger">NEEDS ATTENTION</span>
+                {% elif entry.opp_view == "oa_investigate" %}
+                    <span class="badge bg-light text-dark border">OA &mdash; SOURCE UNKNOWN</span>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if has_historical %}
+        <div class="row mt-3 small align-items-center">
+            <div class="col-5 col-md-3">
+                <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;">Historical discovery</div>
+                <div class="fw-semibold">{{ flags.get(reasoning.marketplace, "") }} {{ reasoning.marketplace or listing.sourcing_tag }}</div>
+                <div>&pound;{{ "%.2f"|format(reasoning.guessed_buy_price_gbp or 0) }}</div>
+                <div class="text-muted">{{ reasoning.guessed_buy_date | days_ago }}</div>
+            </div>
+            <div class="col-2 col-md-1 text-center text-muted"><i class="bi bi-arrow-right"></i></div>
+            <div class="col-5 col-md-3">
+                <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;">Current source</div>
+                {% if listing.currently_buyable and record %}
+                    <div class="fw-semibold">{{ flags.get(record.best_source_marketplace, "") }} {{ record.best_source_marketplace }}</div>
+                    <div>&pound;{{ "%.2f"|format(record.best_source_cost_gbp or 0) }}</div>
+                    <div class="text-success">still viable</div>
+                {% else %}
+                    <div class="text-muted">No current buyable offer</div>
+                {% endif %}
+            </div>
+            <div class="col-2 col-md-1 text-center text-muted d-none d-md-block"><i class="bi bi-arrow-right"></i></div>
+            <div class="col-12 col-md-4 mt-2 mt-md-0">
+                <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;">Amazon</div>
+                <div class="fw-semibold">&pound;{{ "%.2f"|format(record.buy_box_now or 0) if record else "--" }}</div>
+            </div>
+        </div>
+        {% elif entry.opp_view == "oa_investigate" %}
+        <div class="row mt-3 small">
+            <div class="col-6 col-md-4">
+                <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;">Likely source</div>
+                <div class="fw-semibold">OA &mdash; unconfirmed</div>
+                <div class="text-muted">No EU/UK A2A margin, no wholesale signal</div>
+            </div>
+            <div class="col-6 col-md-4">
+                <div class="text-muted" style="font-size:.7rem;text-transform:uppercase;">Amazon</div>
+                <div class="fw-semibold">&pound;{{ "%.2f"|format(record.buy_box_now or 0) if record else "--" }}</div>
+            </div>
+            {% if entry.oa_price_guide %}
+            <div class="col-12 col-md-4 mt-2 mt-md-0">
+                <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;" title="Highest OA buy price that still clears a 25%+ ROI, based on today's Amazon price/fees (breakeven shown alongside)">
+                    buy &le; &pound;{{ "%.2f"|format(entry.oa_price_guide.target) }} <span class="fw-normal">(breakeven &pound;{{ "%.2f"|format(entry.oa_price_guide.breakeven) }})</span>
+                </span>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div class="d-flex justify-content-between align-items-center mt-3 pt-2" style="border-top:1px dashed #e4e8f0;">
+            {% if record and record.buy_box_now and (has_historical or entry.opp_view == "buy_now") %}
+            <div>
+                <span class="{{ 'text-success' if (record.profit or 0) > 0 else 'text-danger' }} fw-semibold">&pound;{{ "%.2f"|format(record.profit or 0) }} profit</span>
+                <span class="text-muted">&middot; {{ "%.0f"|format(record.roi or 0) }}% ROI</span>
+            </div>
+            {% else %}
+            <div class="text-muted small">
+                {% if listing.sourcing_tag == "Wholesale (likely)" %}Structural wholesale signal only -- see detail for reasoning{% else %}Structural checks only so far{% endif %}
+            </div>
+            {% endif %}
+
+            <div class="d-flex" style="gap:.35rem;">
+                {% if entry.opp_view == "buy_now" %}
+                    <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ listing.asin }}"><i class="bi bi-check-lg"></i> Buy</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ listing.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
+                {% elif entry.opp_view == "needs_attention" %}
+                    <button type="button" class="btn btn-sm btn-outline-warning qi-watch-btn" data-asin="{{ listing.asin }}"><i class="bi bi-eye"></i> Watch</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ listing.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
+                {% elif entry.opp_view == "oa_investigate" %}
+                    <a href="/competitors?tab=source_finder&asin={{ listing.asin }}" class="btn btn-sm btn-dark"><i class="bi bi-search"></i> Find Source</a>
+                    <div class="dropdown">
+                        <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">Google</button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ entry.google_urls.title }}" target="_blank" rel="noopener">Product title</a></li>
+                            {% if entry.google_urls.title_ean %}
+                            <li><a class="dropdown-item" href="{{ entry.google_urls.title_ean }}" target="_blank" rel="noopener">Title + EAN</a></li>
+                            {% endif %}
+                            <li><a class="dropdown-item" href="{{ entry.google_urls.asin_title }}" target="_blank" rel="noopener">ASIN + title</a></li>
+                        </ul>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ listing.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
+                {% endif %}
+                <button type="button" class="btn btn-sm btn-outline-secondary qi-open-btn" data-asin="{{ listing.asin }}"><i class="bi bi-three-dots"></i></button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}

@@ -1,0 +1,129 @@
+{% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
+
+{% if not item or not competitor_source %}
+<div class="text-muted">
+    This item is no longer outstanding -- it may have just been reviewed (from another tab, or a moment ago).
+</div>
+{% else %}
+
+<!-- PRODUCT -->
+<div class="mb-3">
+    <div class="fw-semibold">{{ item.title or asin }}</div>
+    <div class="text-muted small">
+        {{ asin }}
+        <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+    </div>
+</div>
+
+<!-- CURRENT OPPORTUNITY -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-cart-check-fill text-success"></i> Current Opportunity</div>
+    <div class="p-2 rounded border">
+        <div class="row small g-2">
+            <div class="col-6"><div class="text-muted">Source</div><div>{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }}</div></div>
+            <div class="col-6"><div class="text-muted">Buy price</div><div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div></div>
+            <div class="col-6"><div class="text-muted">Amazon price</div><div>&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div></div>
+            <div class="col-6"><div class="text-muted">Profit</div><div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">&pound;{{ "%.2f"|format(item.profit or 0) }}</div></div>
+            <div class="col-6"><div class="text-muted">ROI</div><div>{{ "%.0f"|format(item.roi or 0) }}%</div></div>
+            <div class="col-6"><div class="text-muted">Recommendation</div><div>{{ item.strongest_recommendation or "--" }}</div></div>
+        </div>
+        {% if "BUY_NOW" in item.views %}
+        <div class="mt-2"><span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span></div>
+        {% elif not competitor_source.currently_buyable %}
+        <div class="mt-2 text-muted small">No current buyable offer.</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- COMPETITOR EVIDENCE -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-shop"></i> Competitor Evidence</div>
+    <div class="p-2 rounded border">
+        <div class="row small g-2">
+            <div class="col-6"><div class="text-muted">Competitor</div><div class="fw-semibold">{{ competitor_source.seller.nickname or competitor_source.seller.seller_id if competitor_source.seller else "--" }}</div></div>
+            <div class="col-6"><div class="text-muted">Discovery date</div><div>{{ competitor_source.when.strftime("%d %b %Y") if competitor_source.when else "--" }}</div></div>
+            {% if competitor_source.reasoning.get("guessed_buy_date") %}
+            <div class="col-6"><div class="text-muted">Historical source</div><div>{{ flags.get(competitor_source.reasoning.marketplace, "") }} {{ competitor_source.reasoning.marketplace or competitor_source.sourcing_tag }}</div></div>
+            <div class="col-6"><div class="text-muted">Historical price</div><div>&pound;{{ "%.2f"|format(competitor_source.reasoning.guessed_buy_price_gbp or 0) }} &middot; {{ competitor_source.reasoning.guessed_buy_date | days_ago }}</div></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- MARKETPLACE EVIDENCE -->
+{% set hist = item.historical_sourcing_evidence.get("competitor", {}) %}
+{% set eu_evidence = hist.get("eu_a2a") if hist.get("eu_a2a") is mapping else {} %}
+{% set uk_evidence = hist.get("uk_a2a") %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-globe-europe-africa"></i> Marketplace Evidence</div>
+    <div class="d-flex flex-wrap" style="gap:.5rem;">
+        <div class="text-center p-2 rounded border {{ 'bg-success bg-opacity-10 border-success' if uk_evidence }}" style="min-width:56px;">
+            <div>🇬🇧</div><div class="small">UK</div>
+            <div class="small">{{ "£%.2f"|format(uk_evidence.best_buy_price) if uk_evidence and uk_evidence.best_buy_price else "--" }}</div>
+        </div>
+        {% for mkt in ["DE", "FR", "ES", "IT"] %}
+        {% set ev = eu_evidence.get(mkt) %}
+        <div class="text-center p-2 rounded border {{ 'bg-success bg-opacity-10 border-success' if ev }}" style="min-width:56px;">
+            <div>{{ flags[mkt] }}</div><div class="small">{{ mkt }}</div>
+            <div class="small">{{ "£%.2f"|format(ev.best_buy_price) if ev and ev.best_buy_price else "--" }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- SOURCE TYPE -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-tag"></i> Source Type</div>
+    <div class="small">
+        {% if competitor_source.sourcing_tag in ("EU A2A", "UK A2A") %}
+            <span class="badge bg-success">{{ competitor_source.sourcing_tag }}</span> evidence-based (30-day recent-window price spread), not a confirmed purchase.
+        {% elif competitor_source.sourcing_tag == "OA / unclear" %}
+            <span class="badge bg-light text-dark border">OA &mdash; source unknown</span> no recent EU/UK margin, no wholesale structural signal.
+        {% elif competitor_source.sourcing_tag == "Wholesale (likely)" %}
+            <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;">Wholesale &mdash; likely</span> structural inference (small seller count / recurring brand / multipack), not confirmed.
+        {% else %}
+            <span class="badge bg-secondary">Unscored</span> not yet classified.
+        {% endif %}
+    </div>
+</div>
+
+<!-- SOURCES -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">Sources</div>
+    {% for src in ["scan", "competitor", "lead"] %}
+    <div class="d-flex justify-content-between border-bottom py-1 small">
+        <span>{{ {"scan": "Atlas", "competitor": "Competitor", "lead": "VA"}[src] }}</span>
+        <span>{% if src in item.sources %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-muted">--</span>{% endif %}</span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- NEXT ACTION -->
+<div class="mb-2">
+    <div class="text-uppercase text-muted small fw-bold mb-2">Next Action</div>
+    <div class="d-grid gap-2">
+        {% if "BUY_NOW" in item.views %}
+            <button type="button" class="btn btn-success qi-buy-btn" data-asin="{{ asin }}"><i class="bi bi-check-circle-fill"></i> Buy</button>
+            <button type="button" class="btn btn-warning qi-watch-btn" data-asin="{{ asin }}"><i class="bi bi-eye-fill"></i> Watch</button>
+            <button type="button" class="btn btn-danger qi-reject-btn" data-asin="{{ asin }}"><i class="bi bi-x-circle-fill"></i> Reject</button>
+        {% elif competitor_source.sourcing_tag == "OA / unclear" %}
+            <a href="/competitors?tab=source_finder&asin={{ asin }}" class="btn btn-dark"><i class="bi bi-search"></i> Find Source</a>
+            <div class="dropdown d-grid">
+                <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">Google</button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="{{ google_urls.title }}" target="_blank" rel="noopener">Product title</a></li>
+                    {% if google_urls.title_ean %}
+                    <li><a class="dropdown-item" href="{{ google_urls.title_ean }}" target="_blank" rel="noopener">Title + EAN</a></li>
+                    {% endif %}
+                    <li><a class="dropdown-item" href="{{ google_urls.asin_title }}" target="_blank" rel="noopener">ASIN + title</a></li>
+                </ul>
+            </div>
+            <button type="button" class="btn btn-danger qi-reject-btn" data-asin="{{ asin }}"><i class="bi bi-x-circle-fill"></i> Reject</button>
+        {% else %}
+            <button type="button" class="btn btn-warning qi-watch-btn" data-asin="{{ asin }}"><i class="bi bi-eye-fill"></i> Watch</button>
+            <button type="button" class="btn btn-danger qi-reject-btn" data-asin="{{ asin }}"><i class="bi bi-x-circle-fill"></i> Reject</button>
+        {% endif %}
+    </div>
+</div>
+
+{% endif %}

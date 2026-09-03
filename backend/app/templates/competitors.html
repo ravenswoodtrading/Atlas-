@@ -1,8 +1,131 @@
 {% extends "base.html" %}
-{% from "_competitors_content.html" import competitors_content %}
 
-{% block title %}Competitors - Atlas{% endblock %}
+{% block title %}Competitor Watch - Atlas{% endblock %}
 
 {% block content %}
-{{ competitors_content(sellers, detections, tab, tab_order, tab_labels, tab_counts, unscored_count, categories, category, buyable_only, review_filter, since_days, check_result, watched_asins, FILTERED_REASON_LABELS) }}
+{% from "_help.html" import help_button %}
+
+<div class="d-flex justify-content-between align-items-start mb-1">
+    <div>
+        <h4 class="mb-0">Competitor Watch {{ help_button("competitors") }}</h4>
+        <div class="text-muted">Turn competitor activity into sourcing opportunities.</div>
+    </div>
+    <a href="/competitors-legacy" class="small text-muted text-decoration-none" title="The previous flat detections table, kept while this redesign beds in">
+        Old detections table &rarr;
+    </a>
+</div>
+
+{% if check_result %}
+<div class="alert alert-info alert-dismissible fade show py-2 mt-3">
+    <i class="bi bi-info-circle"></i> {{ check_result }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<ul class="nav nav-pills my-3" style="gap:.35rem;">
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if tab == 'opportunities' }}" href="/competitors?tab=opportunities">
+            <i class="bi bi-cart-check-fill"></i> Opportunities
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if tab == 'source_finder' }}" href="/competitors?tab=source_finder">
+            <i class="bi bi-search"></i> Source Finder
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {{ 'active' if tab == 'competitors' }}" href="/competitors?tab=competitors">
+            <i class="bi bi-people-fill"></i> Competitors
+        </a>
+    </li>
+</ul>
+
+{% include content_template %}
+
+<!-- Shared detail drawer + undo toast (Competitor Watch redesign, 2026-09-03) --
+     same offcanvas/toast pattern Review Queue already uses, content loaded per-item
+     from /competitors/opportunity/{asin} (a Competitor-Watch-specific partial, since
+     the Next Action buttons differ from Review Queue's own -- see that route). -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="qi-detail-panel" style="width:480px;">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title">Opportunity</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="qi-detail-body">
+        <div class="text-muted">Loading...</div>
+    </div>
+</div>
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1090;">
+    <div id="qi-toast" class="toast align-items-center text-bg-dark border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body" id="qi-toast-body">Reviewed.</div>
+            <button type="button" class="btn btn-sm btn-link text-white me-1" id="qi-toast-undo">Undo</button>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+
+<script>
+// Same qi-buy-btn/qi-reject-btn/qi-open-btn/resolve+undo pattern as
+// review_queue.html/dashboard.html -- see review_queue.html's own
+// script block for the full DOMContentLoaded/bootstrap-timing comment.
+// Duplicated inline rather than a shared static file, consistent with
+// the rest of this codebase (each template owns its own script block).
+document.addEventListener('DOMContentLoaded', function () {
+    var panelEl = document.getElementById('qi-detail-panel');
+    var panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+    var body = document.getElementById('qi-detail-body');
+    var toastEl = document.getElementById('qi-toast');
+    var toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    var toastBody = document.getElementById('qi-toast-body');
+    var toastUndoBtn = document.getElementById('qi-toast-undo');
+
+    function openAsin(asin) {
+        if (!panel || !body) return;
+        body.innerHTML = '<div class="text-muted">Loading...</div>';
+        panel.show();
+        fetch('/competitors/opportunity/' + encodeURIComponent(asin))
+            .then(function (r) { return r.text(); })
+            .then(function (html) { body.innerHTML = html; })
+            .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
+    }
+
+    function resolve(asin, decision, reasonCategory) {
+        var params = new URLSearchParams({asin: asin, decision: decision, reason: '', reason_category: reasonCategory || ''});
+        fetch('/review-queue/resolve', {method: 'POST', body: params})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
+                if (panel) panel.hide();
+                showUndo(asin, data.resolved, decision);
+            })
+            .catch(function () { alert('Could not save this decision -- please try again.'); });
+    }
+
+    function showUndo(asin, resolved, decision) {
+        if (!toast) return;
+        toastBody.textContent = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
+        toastUndoBtn.onclick = function () {
+            var params = new URLSearchParams({
+                asin: asin, scan: resolved.scan ? '1' : '',
+                competitor: (resolved.competitor || []).join(','), lead: (resolved.lead || []).join(','),
+            });
+            fetch('/review-queue/undo', {method: 'POST', body: params}).then(function () { location.reload(); });
+        };
+        toast.show();
+    }
+
+    document.addEventListener('click', function (e) {
+        var openBtn = e.target.closest('.qi-open-btn');
+        if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
+        var buyBtn = e.target.closest('.qi-buy-btn');
+        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null); return; }
+        var watchBtn = e.target.closest('.qi-watch-btn');
+        if (watchBtn) { resolve(watchBtn.dataset.asin, 'watch', null); return; }
+        var rejectBtn = e.target.closest('.qi-reject-btn');
+        if (rejectBtn) { resolve(rejectBtn.dataset.asin, 'rejected', null); return; }
+    });
+});
+</script>
+
 {% endblock %}

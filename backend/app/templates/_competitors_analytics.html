@@ -1,0 +1,112 @@
+{% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="mb-0">Tracked competitors</h5>
+    <a href="/competitors/sellers" class="btn btn-sm btn-outline-dark"><i class="bi bi-gear"></i> Manage sellers</a>
+</div>
+
+<div class="card metric p-3 mb-3">
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Competitor</th><th class="text-end">Total</th><th class="text-end">A2A</th>
+                    <th class="text-end">OA</th><th class="text-end">Wholesale</th><th class="text-end">Unscored</th>
+                    <th class="text-end">Last 7d</th><th class="text-end">Last 30d</th><th class="text-end">BUY found</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for row in seller_rows %}
+                <tr class="{{ 'table-active' if seller_id == row.seller.id }}" style="cursor:pointer;" onclick="window.location='/competitors?tab=competitors&seller_id={{ row.seller.id }}'">
+                    <td class="fw-semibold">{{ row.seller.nickname or row.seller.seller_id }}</td>
+                    <td class="text-end">{{ row.total }}</td>
+                    <td class="text-end">{{ row.eu_a2a + row.uk_a2a }}</td>
+                    <td class="text-end">{{ row.oa }}</td>
+                    <td class="text-end">{{ row.wholesale }}</td>
+                    <td class="text-end text-muted">{{ row.unscored }}</td>
+                    <td class="text-end">{{ row.last_7d }}</td>
+                    <td class="text-end">{{ row.last_30d }}</td>
+                    <td class="text-end"><span class="badge bg-success">{{ row.buy_opportunities }}</span></td>
+                    <td class="text-end"><i class="bi bi-chevron-right text-muted"></i></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+{% if selected %}
+<div class="card metric p-4">
+    <div class="d-flex justify-content-between align-items-start flex-wrap">
+        <div>
+            <h4 class="mb-0">{{ selected.seller.nickname or selected.seller.seller_id }}</h4>
+            <div class="text-muted">{{ selected.total }} product{{ "s" if selected.total != 1 }} discovered</div>
+        </div>
+        <a href="/competitors?tab=opportunities&seller_id={{ selected.seller.id }}" class="btn btn-dark"><i class="bi bi-cart-check-fill"></i> View Discoveries</a>
+    </div>
+
+    <div class="d-flex flex-wrap mt-3" style="gap:.6rem;">
+        <div class="px-3 py-2 rounded" style="background:#eaf6ec;">
+            <div class="fs-5 fw-bold text-success">{{ selected.eu_a2a + selected.uk_a2a }}</div>
+            <div class="small text-muted">EU/UK A2A</div>
+        </div>
+        <div class="px-3 py-2 rounded" style="background:#fff8e6;">
+            <div class="fs-5 fw-bold" style="color:#8a6d1f;">{{ selected.oa }}</div>
+            <div class="small text-muted">OA / unclear</div>
+        </div>
+        <div class="px-3 py-2 rounded bg-light">
+            <div class="fs-5 fw-bold">{{ selected.wholesale }}</div>
+            <div class="small text-muted">Wholesale</div>
+        </div>
+        <div class="px-3 py-2 rounded bg-light">
+            <div class="fs-5 fw-bold text-muted">{{ selected.unscored }}</div>
+            <div class="small text-muted">Unscored</div>
+        </div>
+        <div class="px-3 py-2 rounded bg-light">
+            <div class="fs-5 fw-bold">{{ selected.last_7d }}</div>
+            <div class="small text-muted">Last 7 days</div>
+        </div>
+        <div class="px-3 py-2 rounded bg-light">
+            <div class="fs-5 fw-bold">{{ selected.last_30d }}</div>
+            <div class="small text-muted">Last 30 days</div>
+        </div>
+        <div class="px-3 py-2 rounded bg-light">
+            <div class="fs-5 fw-bold">{{ selected.buy_opportunities }}</div>
+            <div class="small text-muted">BUY opportunities</div>
+        </div>
+    </div>
+
+    <div class="row mt-4 g-3">
+        <div class="col-md-6">
+            <div class="p-3 rounded border">
+                <div class="text-uppercase text-muted small fw-bold mb-1">Sourcing pattern</div>
+                {% if selected.marketplace_pattern %}
+                <div>Most common marketplace: {{ flags.get(selected.marketplace_pattern.marketplace, "") }} {{ selected.marketplace_pattern.marketplace }}
+                    <span class="text-muted small">({{ selected.marketplace_pattern.count }} of {{ selected.marketplace_pattern.of_total }} EU A2A finds)</span>
+                </div>
+                <div class="text-muted small mt-1"><i class="bi bi-info-circle"></i> Atlas inference -- from price-history evidence, not a confirmed sourcing relationship.</div>
+                {% else %}
+                <div class="text-muted small fst-italic">Not enough EU A2A evidence yet to infer a pattern.</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="p-3 rounded border">
+                <div class="text-uppercase text-muted small fw-bold mb-1">OA retailer patterns</div>
+                {% if selected.oa_retailer_patterns %}
+                <ul class="list-unstyled mb-0">
+                    {% for r in selected.oa_retailer_patterns %}
+                    <li>{{ r.domain }} <span class="text-muted small">({{ r.count }} match{{ "es" if r.count != 1 }})</span></li>
+                    {% endfor %}
+                </ul>
+                <div class="text-muted small mt-1"><i class="bi bi-info-circle"></i> Atlas inference -- only from OA finds Source Finder has actually searched.</div>
+                {% else %}
+                <div class="text-muted small fst-italic">Not yet investigated -- none of this competitor's OA finds have been run through Source Finder yet.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="text-muted small">Select a competitor above for a full drill-down.</div>
+{% endif %}

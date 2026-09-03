@@ -1,0 +1,145 @@
+{% if not serpapi_configured %}
+<div class="alert alert-warning py-2 small">
+    <i class="bi bi-exclamation-triangle"></i> SerpApi isn't configured -- Source Finder falls back to the slower Brave-only pipeline (no automatic price on a found retailer, human confirmation needed either way).
+</div>
+{% elif serpapi_searches_left is not none %}
+<div class="text-muted small mb-2"><i class="bi bi-info-circle"></i> SerpApi searches left this period: {{ serpapi_searches_left }}</div>
+{% endif %}
+
+{% if not asin %}
+<!-- Standalone Source Finder -- preview of OA opportunities worth
+     investigating (Competitor Watch redesign, 2026-09-03). Reuses
+     SellerWatchService.list_oa_worth_investigating -- the SAME
+     price-guide-filtered list the Opportunities tab's "OA -- Worth
+     Investigating" card counts, so the two can't disagree. -->
+<h5 class="mb-3">OA opportunities worth investigating</h5>
+
+{% if not preview %}
+<div class="card metric p-4 text-center text-muted">
+    <i class="bi bi-check2-circle" style="font-size:2rem;"></i>
+    <div class="mt-2">Nothing clears the OA price guide's breakeven right now.</div>
+</div>
+{% endif %}
+
+{% for entry in preview %}
+{% set listing = entry.listing %}
+{% set record = entry.record %}
+<div class="card mb-2 p-3" style="border-radius:12px;">
+    <div class="d-flex justify-content-between align-items-center flex-wrap" style="gap:.5rem;">
+        <div>
+            <div class="fw-semibold">{{ record.title[:70] if record and record.title else listing.asin }}{% if record and record.title and record.title|length > 70 %}...{% endif %}</div>
+            <div class="text-muted small">{{ listing.asin }} &middot; via {{ entry.seller.nickname or entry.seller.seller_id }} &middot; {{ listing.detected_at.strftime("%d %b") if listing.detected_at else "" }}</div>
+        </div>
+        <div class="text-end">
+            <div class="small text-muted">Amazon &pound;{{ "%.2f"|format(record.buy_box_now or 0) if record else "--" }}</div>
+            <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;">buy &le; &pound;{{ "%.2f"|format(entry.oa_price_guide.target) }}</span>
+        </div>
+        <a href="/competitors?tab=source_finder&asin={{ listing.asin }}" class="btn btn-sm btn-dark"><i class="bi bi-search"></i> Open</a>
+    </div>
+</div>
+{% endfor %}
+
+{% else %}
+<!-- Pre-loaded for one ASIN -->
+{% if not loaded_item %}
+<div class="alert alert-warning">No competitor detection found for ASIN {{ asin }}.</div>
+{% else %}
+{% set listing = loaded_item.listing %}
+{% set record = loaded_item.record %}
+{% set reasoning = loaded_item.reasoning %}
+<div class="card metric p-3 mb-3">
+    <div class="fw-semibold fs-5">{{ record.title if record and record.title else asin }}</div>
+    <div class="text-muted small">
+        {{ asin }}
+        {% if record and record.ean %} &middot; EAN {{ record.ean }}{% else %} &middot; <span class="fst-italic">no EAN on record</span>{% endif %}
+    </div>
+    <div class="row mt-3 g-3">
+        <div class="col-6 col-md-3">
+            <div class="text-muted small text-uppercase" style="font-size:.7rem;">Amazon price</div>
+            <div class="fw-semibold">&pound;{{ "%.2f"|format(record.buy_box_now or 0) if record else "--" }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="text-muted small text-uppercase" style="font-size:.7rem;">Competitor</div>
+            <div class="fw-semibold">{{ loaded_item.seller.nickname or loaded_item.seller.seller_id }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="text-muted small text-uppercase" style="font-size:.7rem;">Discovered</div>
+            <div class="fw-semibold">{{ listing.detected_at.strftime("%d %b %Y") if listing.detected_at else "--" }}</div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="text-muted small text-uppercase" style="font-size:.7rem;">Potential opportunity</div>
+            {% if loaded_item.oa_price_guide %}
+            <div class="fw-semibold">buy &le; &pound;{{ "%.2f"|format(loaded_item.oa_price_guide.target) }} <span class="text-muted fw-normal">(25%+ ROI)</span></div>
+            {% else %}
+            <div class="text-muted">Amazon's own fees exceed this price</div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if reasoning.note %}
+    <div class="alert alert-secondary py-2 small mt-3 mb-0"><i class="bi bi-info-circle"></i> Existing evidence: {{ reasoning.note }}</div>
+    {% endif %}
+
+    <div class="d-flex align-items-center mt-3" style="gap:.75rem;">
+        <form method="post" action="/competitors/find-source" onsubmit="return confirm('This spends real Keepa + SerpApi/Brave resources to search for a UK retailer. Continue?');">
+            <input type="hidden" name="asin" value="{{ asin }}">
+            <button type="submit" class="btn btn-dark"><i class="bi bi-play-fill"></i> Run Source Search</button>
+        </form>
+        <span class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Spends Keepa + SerpApi/Brave tokens -- an explicit action, never automatic.</span>
+    </div>
+</div>
+
+{% if candidates %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr><th>Retailer</th><th>Match</th><th>Confidence</th><th>Price</th><th>Run</th><th></th></tr>
+            </thead>
+            <tbody>
+            {% for c in candidates %}
+                <tr>
+                    <td>
+                        {% if c.retailer_domain %}
+                        <a href="{{ c.retailer_url }}" target="_blank" rel="noopener">{{ c.retailer_domain }}</a>
+                        {% else %}
+                        <span class="text-muted">No retailer found</span>
+                        {% endif %}
+                    </td>
+                    <td><code class="small">{{ c.match_tier or "--" }}</code></td>
+                    <td>
+                        {% if c.source_confidence %}
+                        <span class="badge {{ 'bg-success' if c.source_confidence == 'High' else ('bg-warning text-dark' if c.source_confidence == 'Medium' else 'bg-secondary') }}">{{ c.source_confidence }}</span>
+                        {% else %}
+                        <span class="text-muted">--</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ "£%.2f"|format(c.retailer_price_gbp) if c.retailer_price_gbp else "--" }}</td>
+                    <td class="text-muted small">Run #{{ c.run_id }}</td>
+                    <td>
+                        {% if c.retailer_domain %}
+                        <a href="/oa-discovery?run_id={{ c.run_id }}" class="btn btn-sm btn-outline-secondary">View in Source Discovery</a>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="text-muted small mt-2">
+        <i class="bi bi-info-circle"></i> A trusted, auto-priced result that also clears the ROI bar is promoted straight to the Review Queue -- same path <a href="/oa-discovery">OA Source Discovery</a> already uses, not a new mechanism.
+    </div>
+</div>
+{% else %}
+<div class="card metric p-4 text-center text-muted">
+    <i class="bi bi-search" style="font-size:1.5rem;"></i>
+    <div class="mt-2">No source search has been run for this ASIN yet.</div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endif %}
+
+<div class="mt-3">
+    <a href="/oa-discovery" class="small text-decoration-none"><i class="bi bi-arrow-up-right"></i> Full OA Source Discovery workspace (batch runs, run history, exclusions)</a>
+</div>

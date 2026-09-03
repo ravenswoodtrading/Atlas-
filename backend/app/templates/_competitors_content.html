@@ -56,9 +56,9 @@
 <h5 class="mb-3">Detections</h5>
 
 {% set base_qs = "&category=" ~ (category|urlencode) ~ "&since_days=" ~ since_days ~ "&review_filter=" ~ (review_filter|urlencode) ~ "&buyable_only=" ~ (buyable_only|lower) %}
-{% set return_to = "/competitors?tab=" ~ tab ~ base_qs %}
+{% set return_to = "/competitors-legacy?tab=" ~ tab ~ base_qs %}
 
-<form method="get" action="/competitors" class="card p-3 mb-3">
+<form method="get" action="/competitors-legacy" class="card p-3 mb-3">
     <input type="hidden" name="tab" value="{{ tab }}">
     <div class="row g-2 align-items-end">
         <div class="col-md-3">
@@ -99,7 +99,7 @@
 <ul class="nav nav-tabs mb-3">
     {% for t in tab_order %}
     <li class="nav-item">
-        <a class="nav-link {{ 'active' if tab == t }}" href="/competitors?tab={{ t }}{{ base_qs }}">
+        <a class="nav-link {{ 'active' if tab == t }}" href="/competitors-legacy?tab={{ t }}{{ base_qs }}">
             {{ tab_labels[t] }}
             <span class="badge {{ 'bg-success' if t in ('eu_a2a', 'uk_a2a') else ('bg-warning text-dark' if t == 'wholesale' else 'bg-secondary') }} ms-1">{{ tab_counts.get(t, 0) }}</span>
         </a>
@@ -362,7 +362,7 @@
 </p>
 <p>
     <i class="bi bi-exclamation-triangle"></i> Every tag here is inferred from
-    <strong>price history alone, over the last 10 days</strong> -- never a confirmed fact,
+    <strong>price history alone, over the last 30 days</strong> -- never a confirmed fact,
     since Keepa has no visibility into anyone's real purchase history. See
     <a href="/help#sourcing-tags">sourcing tags</a> for the full caveat.
 </p>

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 
 from app.database.database import SessionLocal
-from app.database.models import TrackedSeller, SellerNewListing, ProductRecord
+from app.database.models import TrackedSeller, SellerNewListing, ProductRecord, OaSourceCandidate
 from app.keepa.client import get_keepa_client
 from app.models.product import Product
 from app.services.brand_scan_service import BrandScanService
@@ -12,6 +12,7 @@ from app.services.product_repository import ProductRepository
 from app.services.sourcing_classifier import SourcingClassifier
 from app.services.activity_log import ActivityLog
 from app.services.token_usage_service import TokenUsageService
+from app.services.fee_engine import FeeEngine
 
 # How many DISTINCT ASINs to send to BrandScanService.scan() per Keepa
 # call within one reclassify_all() run -- same chunking spirit as
@@ -1000,5 +1001,219 @@ class SellerWatchService:
                     listing.review = verdict
 
             db.commit()
+        finally:
+            db.close()
+
+    # ---- Competitor Watch redesign (2026-09-03) -- Opportunities feed,
+    # Source Finder and Competitor drill-down additions. Every method
+    # below is a pure read/aggregation over existing SellerNewListing/
+    # ProductRecord/OaSourceCandidate rows -- no schema change, no new
+    # classification logic, no write to any of them. ----
+
+    @staticmethod
+    def list_oa_worth_investigating(limit: int = 200):
+        """
+        OA/unclear detections where the SAME OA price-guide economics
+        the old Competitors page already computed per-row (FeeEngine.
+        max_source_cost against today's Amazon price/fees -- see
+        competitors.py's build_competitors_context) show a genuine
+        breakeven: Amazon's own price and fees leave ANY room to source
+        this profitably via OA at all. This is what "OA -- worth
+        investigating" means for the Opportunities feed's summary card
+        -- deliberately NOT the raw OA/unclear count (585 detections
+        today, most of which Amazon's own fees already rule out before
+        a human ever needs to look).
+
+        No new profitability calculation -- FeeEngine.max_source_cost
+        is the exact same function/call already trusted elsewhere.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(SellerNewListing, TrackedSeller, ProductRecord)
+                .join(TrackedSeller, SellerNewListing.tracked_seller_id == TrackedSeller.id)
+                .join(ProductRecord, SellerNewListing.product_record_id == ProductRecord.id)
+                .filter(SellerNewListing.sourcing_tag == "OA / unclear")
+                .filter(SellerNewListing.dismissed == False)
+                .filter(SellerNewListing.review.is_(None))
+                .filter(ProductRecord.review.is_(None))
+                .filter(ProductRecord.buy_box_now > 0)
+                .order_by(SellerNewListing.detected_at.desc())
+                .limit(max(limit * 3, limit))  # over-fetch: not every row clears breakeven, trimmed below
+                .all()
+            )
+
+            result = []
+            for listing, seller, record in rows:
+                breakeven = FeeEngine.max_source_cost(
+                    record.buy_box_now, record.category_name, record.fba_fee, target_roi_pct=0.0,
+                )
+                if breakeven <= 0:
+                    continue
+                target = FeeEngine.max_source_cost(
+                    record.buy_box_now, record.category_name, record.fba_fee,
+                    target_roi_pct=FeeEngine.OA_TARGET_ROI_PCT,
+                )
+                result.append({
+                    "listing": listing, "seller": seller, "record": record,
+                    "oa_price_guide": {"target": target, "breakeven": breakeven},
+                })
+                if len(result) >= limit:
+                    break
+
+            return result
+        finally:
+            db.close()
+
+    @staticmethod
+    def count_recent_detections(days: int = 7) -> int:
+        """Non-dismissed detections first seen in the last `days` days, across every sourcing tag."""
+        db = SessionLocal()
+
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
+            return (
+                db.query(SellerNewListing)
+                .filter(SellerNewListing.dismissed == False)
+                .filter(SellerNewListing.detected_at >= cutoff)
+                .count()
+            )
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_seller_breakdown() -> dict:
+        """
+        {tracked_seller_id: {total, eu_a2a, uk_a2a, wholesale, oa,
+        unscored, last_7d, last_30d, buy_opportunities}} -- richer
+        per-seller rollup for the Competitors drill-down, additive
+        alongside get_seller_stats (total/last_24h, used elsewhere and
+        left completely unchanged). buy_opportunities counts
+        currently_buyable rows -- the exact same flag the existing
+        per-row "BUY" badge already uses (see _competitors_content.html),
+        not a new/stronger bar. One pass over non-dismissed
+        SellerNewListing rows, same cost profile as get_seller_stats.
+        """
+        db = SessionLocal()
+
+        try:
+            cutoff7 = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None)
+            cutoff30 = (datetime.now(timezone.utc) - timedelta(days=30)).replace(tzinfo=None)
+
+            rows = (
+                db.query(
+                    SellerNewListing.tracked_seller_id, SellerNewListing.sourcing_tag,
+                    SellerNewListing.detected_at, SellerNewListing.currently_buyable,
+                )
+                .filter(SellerNewListing.dismissed == False)
+                .all()
+            )
+
+            breakdown = {}
+            tag_key = {
+                "EU A2A": "eu_a2a", "UK A2A": "uk_a2a",
+                "Wholesale (likely)": "wholesale", "OA / unclear": "oa",
+            }
+
+            for tracked_seller_id, tag, detected_at, buyable in rows:
+                entry = breakdown.setdefault(tracked_seller_id, {
+                    "total": 0, "eu_a2a": 0, "uk_a2a": 0, "wholesale": 0, "oa": 0,
+                    "unscored": 0, "last_7d": 0, "last_30d": 0, "buy_opportunities": 0,
+                })
+                entry["total"] += 1
+                entry[tag_key.get(tag, "unscored")] += 1
+
+                if detected_at and detected_at >= cutoff7:
+                    entry["last_7d"] += 1
+                if detected_at and detected_at >= cutoff30:
+                    entry["last_30d"] += 1
+                if buyable:
+                    entry["buy_opportunities"] += 1
+
+            return breakdown
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_seller_marketplace_pattern(tracked_seller_id: int) -> dict | None:
+        """
+        Most common EU A2A source marketplace among this seller's
+        CURRENT EU-A2A-tagged detections (reasoning.marketplace, set by
+        SourcingClassifier -- see that module) -- an ATLAS INFERENCE
+        from price-history evidence, never a confirmed sourcing
+        relationship. None if this seller has no EU A2A detections to
+        infer anything from (shown as "not enough evidence" by the
+        template, never guessed).
+        """
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(SellerNewListing.sourcing_reasoning_json)
+                .filter(SellerNewListing.tracked_seller_id == tracked_seller_id)
+                .filter(SellerNewListing.sourcing_tag == "EU A2A")
+                .filter(SellerNewListing.dismissed == False)
+                .all()
+            )
+
+            counts = {}
+            for (reasoning_json,) in rows:
+                if not reasoning_json:
+                    continue
+                try:
+                    reasoning = json.loads(reasoning_json)
+                except Exception:
+                    continue
+                marketplace = reasoning.get("marketplace")
+                if marketplace:
+                    counts[marketplace] = counts.get(marketplace, 0) + 1
+
+            if not counts:
+                return None
+
+            best_marketplace, best_count = max(counts.items(), key=lambda kv: kv[1])
+            return {"marketplace": best_marketplace, "count": best_count, "of_total": sum(counts.values())}
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_seller_oa_retailer_patterns(tracked_seller_id: int) -> list:
+        """
+        Retailer domains OA Source Discovery has ACTUALLY found for
+        this seller's OA/unclear detections -- joins on ASIN against
+        OaSourceCandidate, which only has rows for ASINs a Source
+        Finder run has genuinely searched (see OaSourceDiscoveryService.
+        run_batch). Empty list -- never fabricated -- for a seller whose
+        OA finds haven't been investigated yet; the template shows "Not
+        yet investigated" for that case rather than implying Atlas has
+        looked at every OA discovery.
+        """
+        db = SessionLocal()
+
+        try:
+            oa_asins = [
+                row[0] for row in
+                db.query(SellerNewListing.asin)
+                .filter(SellerNewListing.tracked_seller_id == tracked_seller_id)
+                .filter(SellerNewListing.sourcing_tag == "OA / unclear")
+                .filter(SellerNewListing.dismissed == False)
+                .distinct()
+                .all()
+            ]
+
+            if not oa_asins:
+                return []
+
+            rows = (
+                db.query(OaSourceCandidate.retailer_domain, func.count(OaSourceCandidate.id))
+                .filter(OaSourceCandidate.asin.in_(oa_asins))
+                .filter(OaSourceCandidate.retailer_domain != "")
+                .group_by(OaSourceCandidate.retailer_domain)
+                .order_by(func.count(OaSourceCandidate.id).desc())
+                .all()
+            )
+
+            return [{"domain": domain, "count": count} for domain, count in rows]
         finally:
             db.close()
