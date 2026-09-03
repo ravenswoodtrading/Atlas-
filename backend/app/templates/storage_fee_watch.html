@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
+
+{% block title %}Storage Fee Watch - Atlas{% endblock %}
+
+{% block content %}
+
+{% if message %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Storage Fee Watch {{ help_button("storage_fee_watch") }}</h4>
+    <form method="post" action="/storage-fee-watch/refresh-now" id="refreshNowForm">
+        <button class="btn btn-dark btn-sm" type="submit" id="refreshNowBtn">
+            <i class="bi bi-arrow-repeat"></i> Refresh now
+        </button>
+    </form>
+</div>
+
+<script>
+(function() {
+    var form = document.getElementById('refreshNowForm');
+    var btn = document.getElementById('refreshNowBtn');
+    form.addEventListener('submit', function() {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Pulling live storage fee data from Amazon -- this can take a minute or two...';
+    });
+})();
+</script>
+
+<p class="text-muted">
+    Every FBA SKU currently showing a storage fee or an aged-inventory surcharge, ranked by this month's storage
+    fee (highest first). <span class="badge bg-danger">Surcharge</span> means Amazon is already charging extra
+    for how long this has sat in a fulfilment centre. <span class="badge bg-warning text-dark">Consider
+    shifting</span> means the storage fee is high relative to how little of it has sold in the last
+    {{ sell_through_days }} days. This page is read-only -- Atlas never acts on any of this automatically, it's
+    a ranked view for you to work from manually in Seller Central.
+</p>
+
+{% if rows %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th class="text-end">Qty on hand</th>
+                    <th class="text-end">Storage fee</th>
+                    <th>Month</th>
+                    <th class="text-end">Units sold ({{ sell_through_days }}d)</th>
+                    <th>Last sale</th>
+                    <th>Surcharge tier</th>
+                    <th>Flags</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in rows %}
+                <tr>
+                    <td style="max-width:260px;">
+                        <div class="fw-semibold small">{{ item.title[:70] if item.title else item.sku }}{% if item.title and item.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">{{ item.asin }}</div>
+                    </td>
+                    <td class="small">{{ item.sku }}</td>
+                    <td class="text-end">{{ item.average_quantity_on_hand }}</td>
+                    <td class="text-end">{{ "%.2f"|format(item.storage_fee_amount) }} {{ item.currency }}</td>
+                    <td class="small text-muted">{{ item.month_of_charge or "--" }}</td>
+                    <td class="text-end">{{ item.recent_units_shipped }}</td>
+                    <td class="small text-muted">{{ item.last_shipment_date or "--" }}</td>
+                    <td class="small">
+                        {% if item.ltsf_surcharge_age_tier %}{{ item.ltsf_surcharge_age_tier }} days
+                        {% else %}--{% endif %}
+                    </td>
+                    <td class="small">
+                        {% if item.has_ltsf_surcharge %}<span class="badge bg-danger">Surcharge</span>{% endif %}
+                        {% if item.should_consider_shifting %}<span class="badge bg-warning text-dark">Consider shifting</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    Nothing to show yet -- click "Refresh now" to pull live storage fee data from Amazon, or wait for tonight's
+    automatic sweep.
+</div>
+{% endif %}
+
+{% call help_modal("storage_fee_watch", "Storage Fee Watch") %}
+<p>
+    Pulls Amazon's monthly storage-fee report and long-term/aged-inventory surcharge report for every FBA SKU,
+    joins in current stock and recent units sold, and ranks everything by this month's storage fee -- highest
+    first.
+</p>
+<p>
+    <strong>Surcharge</strong> means Amazon's long-term storage fee report shows a nonzero charge for this SKU
+    right now -- it's already sat in a fulfilment centre long enough to cost extra, however Amazon currently
+    defines that threshold. Atlas deliberately never hardcodes a day count here, since Amazon's own rules for
+    this have changed more than once -- whichever charge bucket the live report shows is what's shown.
+</p>
+<p class="mb-0">
+    <strong>Consider shifting</strong> means the storage fee is high relative to how little has actually sold in
+    the recent lookback window -- a candidate for a price drop, a promotion, or removal, rather than paying to
+    keep it sitting in a fulfilment centre. This page never acts on any of this automatically -- it's a ranked
+    view to work from manually in Seller Central.
+</p>
+{% endcall %}
+
+{% endblock %}

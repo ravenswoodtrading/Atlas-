@@ -1,7 +1,47 @@
-import threading
 from contextlib import contextmanager
 
 from app.services.scan_coordinator import ScanCoordinator
+
+
+class ScanBusyError(RuntimeError):
+    """
+    Raised by high_priority(timeout=...) when an in-flight scan still
+    held ScanCoordinator's lock after the wait expired. Distinct from
+    KeepaTokensExhaustedError (which means Keepa itself said no) --
+    this one is purely local contention and is always worth retrying
+    shortly.
+    """
+
+
+# How long a high-priority caller waits for an in-flight low-priority
+# scan to yield before giving up (2026-08-27). Marking active is
+# supposed to bound this to about one Keepa call (see the class
+# docstring below), but "about one Keepa call" is not a guarantee --
+# a Product Finder page fetch can run long, and the Verdict Checker
+# blocking behind it with no output was indistinguishable from the app
+# being broken. Generous enough that a normal yield never trips it.
+#
+# This is the SYNCHRONOUS-caller figure: someone is watching a request
+# and would rather see "try again in a minute" than a dead tab. A
+# background batch should use BATCH_WAIT_SECONDS instead.
+DEFAULT_WAIT_SECONDS = 90
+
+# How long a BACKGROUND run waits (2026-08-28). Much longer, because
+# the tradeoff is completely different once the work isn't inside the
+# user's own request: nobody is staring at a hanging page, the results
+# page just says "running", so waiting is nearly free while giving up
+# costs the user their whole batch. Observed live: a 30-ASIN batch hit
+# the 90s synchronous timeout and reported "0 of 30 checked" purely
+# because an automated brand scan happened to be mid-tick -- the
+# batch's own tokens and credits were fine.
+#
+# Still bounded rather than None so a genuinely stuck lock surfaces as
+# a run-level error the user can see and re-run, instead of a thread
+# parked forever. With the automated ticks now standing down for a
+# waiting high-priority caller (see
+# ScanCoordinator.try_acquire_for_automated_tick), the realistic wait
+# is one in-flight chunk, not this.
+BATCH_WAIT_SECONDS = 900
 
 
 class KeepaPriority:
@@ -24,38 +64,52 @@ class KeepaPriority:
     scan's chunk loop sees the flag and exits within one more Keepa call --
     so the wait high_priority() actually incurs is bounded to about one
     Keepa HTTP call, not a whole scan.
-    """
 
-    _lock = threading.Lock()
-    _active_count = 0
+    The marked-active flag is stored on ScanCoordinator (2026-08-28) so
+    that try_acquire_for_automated_tick can also consult it and decline
+    to START a tick while a high-priority caller is waiting -- without
+    that, a non-blocking acquire barges straight past a blocked waiter
+    and starves it. See ScanCoordinator's own docstring.
+    """
 
     @staticmethod
     def mark_active():
-        with KeepaPriority._lock:
-            KeepaPriority._active_count += 1
+        ScanCoordinator.mark_high_priority_waiting()
 
     @staticmethod
     def mark_done():
-        with KeepaPriority._lock:
-            KeepaPriority._active_count = max(0, KeepaPriority._active_count - 1)
+        ScanCoordinator.clear_high_priority_waiting()
 
     @staticmethod
     def has_pending() -> bool:
-        with KeepaPriority._lock:
-            return KeepaPriority._active_count > 0
+        return ScanCoordinator.has_high_priority_pending()
 
     @staticmethod
     @contextmanager
-    def high_priority():
+    def high_priority(timeout: float | None = None):
         """
         Wraps a high-priority Keepa call site (manual verdict check, queued
         lead analysis) -- used instead of ScanCoordinator.acquire_for_manual_scan()
         directly, so the mark happens first and any in-flight scan yields
         before the (now bounded) blocking acquire below actually waits.
+
+        timeout (seconds) caps that wait and raises ScanBusyError instead
+        of blocking indefinitely. Synchronous callers should pass
+        DEFAULT_WAIT_SECONDS, background runs BATCH_WAIT_SECONDS; leaving
+        it None keeps the original wait-forever behaviour.
+
+        mark_done() stays in the outer finally either way -- the yield
+        signal must be withdrawn even when the acquire never succeeded,
+        or the low-priority scan keeps politely standing aside for a
+        caller that already gave up.
         """
         KeepaPriority.mark_active()
         try:
-            ScanCoordinator.acquire_for_manual_scan()
+            if not ScanCoordinator.acquire_for_manual_scan(timeout=timeout):
+                raise ScanBusyError(
+                    "A Keepa scan is running right now and didn't finish in time. "
+                    "Nothing was checked -- try again in a minute."
+                )
             try:
                 yield
             finally:

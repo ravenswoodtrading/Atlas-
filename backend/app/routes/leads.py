@@ -12,6 +12,7 @@ from app.database.models import Lead
 from app.services.product_repository import ProductRepository
 from app.services.review_queue_service import ReviewQueueService
 from app.routes.verdict import highlight_figures
+from app.services.verdict_service import resolve_source_marketplace
 
 router = APIRouter()
 
@@ -52,6 +53,13 @@ VA_SALE_PRICE_ALIASES = ["sale_price", "sale price", "sell price", "selling pric
 # has no matching column, same graceful-miss behaviour as every other
 # alias list here.
 SOURCE_DETAIL_ALIASES = ["source", "sourced from", "retailer", "supplier", "store", "url", "link"]
+# Which EU Amazon an A2A row would be BOUGHT from, if the sheet says so
+# in a column of its own. Usually it does not -- see
+# _extract_source_marketplace for the fallbacks that matter more.
+SOURCE_MARKETPLACE_ALIASES = [
+    "source_marketplace", "source marketplace", "marketplace", "source country",
+    "country", "buy from", "source market",
+]
 
 
 def _extract(payload: dict, aliases: list) -> str | None:
@@ -86,6 +94,30 @@ def _normalize_sourcing_type(value) -> str | None:
     return text or None
 
 
+def _extract_source_marketplace(payload: dict) -> str | None:
+    """
+    Which EU Amazon this row would actually be bought from -- what
+    VerdictService.check_source_marketplace needs before it can confirm
+    the lead is buyable (Amazon or FBA on the buy box, Amazon in stock)
+    rather than just profitable.
+
+    Tried in descending order of trustworthiness: an explicit
+    marketplace/country column, then the source/link column, which in
+    practice holds the amazon.de|fr|es|it product URL the VA actually
+    sourced from. The sheet's "Sourcing Method" column is deliberately
+    NOT used as a fallback: its "EUA2A" value says the lead is EU A2A
+    but not WHICH EU marketplace, and guessing one would spend a Keepa
+    call producing a confident answer about the wrong country.
+
+    None means "skip the check", never "assume DE" -- see
+    resolve_source_marketplace.
+    """
+    return resolve_source_marketplace(
+        _extract(payload, SOURCE_MARKETPLACE_ALIASES),
+        _extract(payload, SOURCE_DETAIL_ALIASES),
+    )
+
+
 def _stringify(value) -> str | None:
     """A sheet cell can come through as any JSON type -- coerce to a plain string for a String column."""
     return str(value).strip() or None if value is not None else None
@@ -115,21 +147,47 @@ def sheet_lead_webhook(payload: dict, x_webhook_secret: str = Header(default=Non
     if not asin:
         raise HTTPException(status_code=400, detail="Payload has no recognizable ASIN column")
 
+    asin = str(asin).strip().upper()
+
     db = SessionLocal()
     try:
-        lead = Lead(
-            asin=str(asin).strip().upper(),
-            source="sheet",
-            sourcing_type=_normalize_sourcing_type(_extract(payload, SOURCING_TYPE_ALIASES)),
-            raw_sheet_data=json.dumps(payload),
-            va_roi=_extract_float(payload, VA_ROI_ALIASES),
-            va_profit=_extract_float(payload, VA_PROFIT_ALIASES),
-            va_cost_price=_extract_float(payload, VA_COST_PRICE_ALIASES),
-            va_sale_price=_extract_float(payload, VA_SALE_PRICE_ALIASES),
-            source_detail=_stringify(_extract(payload, SOURCE_DETAIL_ALIASES)),
-            status="queued",
+        # UPDATES an existing still-pending (decision IS NULL) sheet
+        # lead for this ASIN in place rather than always inserting a new
+        # row (2026-09-02, fixing a real duplicate-Review-Queue bug -- a
+        # VA sheet re-sending the same still-unreviewed ASIN on a later
+        # day's sync created a fresh row every time instead of
+        # recognizing it was already queued; two real ASINs each got
+        # duplicated this way across consecutive daily syncs). Reset
+        # back to "queued" (verdict/rationale/keepa_metrics cleared, see
+        # LeadAnalysisService.process_queued_batch) so it gets
+        # re-analyzed with whatever changed in this newer submission,
+        # rather than leaving a stale verdict from the earlier one
+        # showing in the queue.
+        lead = (
+            db.query(Lead)
+            .filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None))
+            .order_by(Lead.id.desc())
+            .first()
         )
-        db.add(lead)
+
+        if lead is None:
+            lead = Lead(asin=asin, source="sheet")
+            db.add(lead)
+
+        lead.sourcing_type = _normalize_sourcing_type(_extract(payload, SOURCING_TYPE_ALIASES))
+        lead.raw_sheet_data = json.dumps(payload)
+        lead.va_roi = _extract_float(payload, VA_ROI_ALIASES)
+        lead.va_profit = _extract_float(payload, VA_PROFIT_ALIASES)
+        lead.va_cost_price = _extract_float(payload, VA_COST_PRICE_ALIASES)
+        lead.va_sale_price = _extract_float(payload, VA_SALE_PRICE_ALIASES)
+        lead.source_detail = _stringify(_extract(payload, SOURCE_DETAIL_ALIASES))
+        lead.source_marketplace = _extract_source_marketplace(payload)
+        lead.status = "queued"
+        lead.verdict = None
+        lead.rationale = None
+        lead.keepa_metrics = None
+        lead.analysis_attempts = 0
+
         db.commit()
         db.refresh(lead)
 
@@ -234,7 +292,9 @@ def review_history_page(request: Request, decision: str = ""):
     )
 
 
-def apply_lead_decision(lead: Lead, decision: str, reason: str | None = None) -> None:
+def apply_lead_decision(
+    lead: Lead, decision: str, reason: str | None = None, reason_category: str | None = None
+) -> None:
     """
     What "deciding" a lead actually means -- shared by /review/decide
     (a human using Atlas's own UI) and the sheet-decision webhook (a
@@ -253,6 +313,12 @@ def apply_lead_decision(lead: Lead, decision: str, reason: str | None = None) ->
     reason: optional free-text "why not" (2026-08-23) -- see
     Lead.decision_reason.
 
+    reason_category: optional structured reason (atlas-review-queue-
+    backend-v1.md section 5, see review_queue_service.
+    REVIEW_REASON_CATEGORIES) -- additive alongside `reason`, never a
+    replacement for it. The sheet webhook never sends one (the sheet
+    has no such column), so this is None there, same as before.
+
     "oos" ALSO auto-adds the ASIN to the existing Watchlist, reusing
     its already-built re-check machinery (WatchlistService.check_stale
     runs weekly, or visit /watchlist to force an immediate recheck)
@@ -262,6 +328,7 @@ def apply_lead_decision(lead: Lead, decision: str, reason: str | None = None) ->
     """
     lead.decision = decision
     lead.decision_reason = reason or None
+    lead.decision_reason_category = reason_category or None
     lead.status = "reviewed"
     lead.reviewed_at = datetime.now(timezone.utc)
 
@@ -287,6 +354,7 @@ def review_decide(
     lead_id: int = Form(...),
     decision: str = Form(...),
     reason: str = Form(""),
+    reason_category: str = Form(""),
     return_to: str = Form("/review"),
 ):
     db = SessionLocal()
@@ -294,7 +362,7 @@ def review_decide(
         lead = db.get(Lead, lead_id)
 
         if lead is not None:
-            apply_lead_decision(lead, decision, reason)
+            apply_lead_decision(lead, decision, reason, reason_category or None)
             db.commit()
     finally:
         db.close()

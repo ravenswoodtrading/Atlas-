@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from pathlib import Path
 
 import anthropic
@@ -125,44 +126,101 @@ def _format_metrics_summary(metrics: dict) -> str:
     )
 
 
+def _format_source_check_summary(metrics: dict) -> str | None:
+    """
+    Renders VerdictService.check_source_marketplace's result -- whether
+    an EU A2A lead can actually be BOUGHT on its source marketplace --
+    as its own labelled section. Returns None when no source check ran
+    (a domestic OA lead, or one whose source marketplace couldn't be
+    resolved), so generate_verdict simply omits the section rather than
+    telling Claude "unknown" and inviting it to speculate.
+
+    Spelled out in words rather than passed as raw flags for the same
+    reason _format_metrics_summary exists: the distinction that matters
+    here (Amazon out of stock = park and revisit, FBM-only = dead) is
+    exactly the kind of thing a bare boolean loses.
+    """
+    check = metrics.get("source_check")
+
+    if not check:
+        return None
+
+    marketplace = check.get("marketplace")
+    lines = [f"SOURCE MARKETPLACE CHECK (Amazon {marketplace} -- where this lead would be bought)"]
+    lines.append(check.get("note") or "")
+
+    price = check.get("buy_box_price")
+    if price:
+        price_gbp = check.get("buy_box_price_gbp")
+        gbp_part = f" (about GBP {price_gbp:.2f})" if price_gbp else ""
+        lines.append(f"Current {marketplace} buy-box price: {price} {check.get('currency')}{gbp_part}")
+
+    blocker = check.get("blocker")
+
+    if blocker == "amazon_oos":
+        # `note` above already states exactly this -- repeating it reads
+        # as two separate findings rather than one.
+        pass
+    elif check.get("amazon_on_listing"):
+        lines.append(
+            f"Amazon {marketplace} sells this listing and is "
+            f"{'IN stock' if check.get('amazon_in_stock') else 'OUT OF stock'} right now."
+        )
+    else:
+        lines.append(f"Amazon {marketplace} does not sell this listing itself.")
+
+    if check.get("offer_count_fba") is not None:
+        lines.append(f"FBA offers on {marketplace}: {check['offer_count_fba']}")
+
+    if blocker == "amazon_oos":
+        lines.append(
+            "VERDICT IMPACT: not buyable right now, but this is a RESTOCK case -- "
+            "say so plainly so it can be parked and revisited, not written off."
+        )
+    elif blocker in ("fbm_only", "no_buy_box", "not_listed"):
+        lines.append(
+            "VERDICT IMPACT: not buyable at all -- this lead cannot be purchased "
+            "in a way that produces a reclaimable Amazon VAT invoice."
+        )
+    elif blocker in ("unverified", "check_failed"):
+        lines.append(
+            "VERDICT IMPACT: buyability could NOT be confirmed -- treat as unverified, "
+            "do not assume either way."
+        )
+
+    return "\n".join(line for line in lines if line)
+
+
 def _format_deep_dive_summary(metrics: dict) -> str | None:
     """
     Renders VerdictService.compute_metrics' deep_dive=True fields
-    (2026-08-23, sourcing-agent brief section 5) -- competitor_stock_levels
-    and sp_api_live_check -- as a labelled section, same "name the
-    figure explicitly" reasoning as _format_metrics_summary. Returns
-    None when this metrics dict wasn't a deep-dive pass at all (the
-    common case -- most bulk-checked ASINs never get this far), so
-    generate_verdict can skip the section entirely rather than print a
-    block of "not available" noise on every ordinary verdict.
+    (2026-08-23, sourcing-agent brief section 5) -- sp_api_live_check --
+    as a labelled section, same "name the figure explicitly" reasoning
+    as _format_metrics_summary. Returns None when this metrics dict
+    wasn't a deep-dive pass at all (the common case -- most
+    bulk-checked ASINs never get this far), so generate_verdict can
+    skip the section entirely rather than print a block of "not
+    available" noise on every ordinary verdict.
+
+    Used to also cover competitor_stock_levels (per-seller Keepa stock)
+    -- dropped 2026-08-26 along with the field itself, see
+    VerdictService.compute_metrics' docstring for why.
     """
-    if not metrics.get("deep_dive"):
+    sp_check = metrics.get("sp_api_live_check")
+
+    if not metrics.get("deep_dive") or not sp_check:
+        # deep_dive is only ever set True alongside a real sp_check --
+        # see VerdictService.add_deep_dive -- but check both explicitly
+        # rather than assume the invariant holds forever.
         return None
 
-    lines = []
-
-    stock_levels = metrics.get("competitor_stock_levels")
-    if stock_levels:
-        parts = []
-        for s in stock_levels[:8]:
-            qty = "10+ (Keepa's own cap -- real number could be higher)" if s["stock"] >= 10 else f"{s['stock']}"
-            who = "Amazon itself" if s["is_amazon"] else ("a competing FBA seller" if s["is_fba"] else "a competing non-FBA seller")
-            parts.append(f"{who}: {qty} units")
-        lines.append("Competitor stock levels, highest first: " + "; ".join(parts) + ".")
-    else:
-        lines.append("Competitor stock levels: no stock data available from Keepa for this listing right now.")
-
-    sp_check = metrics.get("sp_api_live_check")
-    if sp_check:
-        price = sp_check.get("price")
-        price_str = f"£{price:.2f}" if price is not None else "no live buyable offer found"
-        lines.append(
-            f"Live price cross-check via SP-API (free, real-time, independent of Keepa's own possibly-stale "
-            f"snapshot above): {price_str}, {sp_check.get('offer_count')} total offers, status "
-            f"{sp_check.get('status')}."
-        )
-    else:
-        lines.append("Live SP-API price cross-check: not available (not configured, or the live call failed).")
+    price = sp_check.get("price")
+    price_str = f"£{price:.2f}" if price is not None else "no live buyable offer found"
+    lines = [
+        f"Live price cross-check via SP-API (free, real-time, independent of Keepa's own possibly-stale "
+        f"snapshot above): {price_str}, {sp_check.get('offer_count')} total offers, status "
+        f"{sp_check.get('status')}."
+    ]
 
     return (
         "DEEP DIVE -- this lead already looked promising on an initial pass, so extra evidence was "
@@ -170,31 +228,80 @@ def _format_deep_dive_summary(metrics: dict) -> str | None:
     )
 
 
+def _format_rejected_on(reviewed_at: str | None) -> str:
+    """
+    "26 Aug 2026" rather than the raw ISO stamp
+    get_similar_rejections carries. How long ago a rejection was is
+    the part that matters when judging whether its reason still holds
+    against today's figures, and a bare timestamp with microseconds
+    reads as noise.
+    """
+    if not reviewed_at:
+        return "previously"
+
+    try:
+        return datetime.fromisoformat(reviewed_at).strftime("%d %b %Y")
+    except (TypeError, ValueError):
+        return "previously"
+
+
 def _format_rejection_history_summary(similar_rejections: list[dict] | None) -> str | None:
     """
     Renders VerdictService.get_similar_rejections' output (sourcing
-    agent brief step 7) as a labelled section -- related leads the
-    user has already rejected, in their own words. Returns None when
+    agent brief step 7) as a labelled section -- previous rejections
+    of THIS EXACT ASIN, in the user's own words. Returns None when
     there's nothing to show (the common case today: Lead.decision_reason
     only started being captured 2026-08-23 and the review queue hasn't
     built up history yet), so generate_verdict can skip the section.
+
+    Same-brand and same-category entries no longer reach here at all
+    (2026-08-27 -- see get_similar_rejections for why they were bad
+    signal). The match_reason branch is gone with them: every entry is
+    this ASIN resurfacing, so the label can just say so.
     """
     if not similar_rejections:
         return None
 
-    lines = []
-    for r in similar_rejections:
-        if r["match_reason"] == "same_asin":
-            tag = "THIS EXACT ASIN was rejected before"
-        elif r["match_reason"] == "same_brand":
-            tag = f"same brand ({r['brand']})"
-        else:
-            tag = f"same category ({r['category_name']})"
-        lines.append(f"- {tag}, ASIN {r['asin']}: \"{r['decision_reason']}\"")
+    lines = [
+        f"- rejected {_format_rejected_on(r.get('reviewed_at'))}: \"{r['decision_reason']}\""
+        for r in similar_rejections
+    ]
 
     return (
-        "PAST REJECTIONS -- the user has previously rejected these related leads, in their own words:\n"
+        "PAST REJECTIONS OF THIS EXACT ASIN -- the user has rejected this same product "
+        "before, in their own words. Weigh whether the reason still applies to today's "
+        "figures (a price or competition change can genuinely resolve it) rather than "
+        "treating it as an automatic AVOID:\n"
         + "\n".join(lines)
+    )
+
+
+def _format_brand_gating_summary(brand_gating: dict | None) -> str | None:
+    """
+    Renders VerdictService.get_brand_gating's output -- Atlas being
+    gated on the brand, which unlike per-ASIN economics genuinely does
+    carry from one ASIN to another.
+
+    Stated as a hard fact rather than as "past rejection" context,
+    because that's what it is: a row on the user's own Gated Brands
+    list, not an inference from something they once typed into a
+    reject prompt. Returns None when the brand isn't gated, so the
+    section is skipped.
+    """
+    if not brand_gating:
+        return None
+
+    scope = (
+        f"in {brand_gating['category_name']}"
+        if brand_gating.get("category_name") else "across all categories"
+    )
+
+    return (
+        f"GATED BRAND -- Atlas is currently gated on {brand_gating['brand']} {scope}: "
+        "Amazon approval to sell it has not been obtained, so this stock could not be "
+        "listed today however good the numbers are. Say so plainly in the rationale and "
+        "let it drive the verdict -- a strong-looking gated lead is at best a WATCH "
+        "(worth tracking to judge whether pursuing ungating is worthwhile), never a BUY."
     )
 
 
@@ -215,6 +322,7 @@ def _load_criteria_doc() -> str | None:
 
 def generate_verdict(
     metrics: dict, va_financials: dict | None = None, similar_rejections: list[dict] | None = None,
+    brand_gating: dict | None = None,
 ) -> tuple[str, str]:
     """
     Calls Claude with the Keepa metric set (see VerdictService.compute_metrics)
@@ -238,11 +346,17 @@ def generate_verdict(
         "it's an estimate, not a verified number.\n"
     )
 
+    source_check_summary = _format_source_check_summary(metrics)
+    source_check_block = f"\n{source_check_summary}\n" if source_check_summary else ""
+
     deep_dive_summary = _format_deep_dive_summary(metrics)
     deep_dive_block = f"\n{deep_dive_summary}\n" if deep_dive_summary else ""
 
     rejection_history_summary = _format_rejection_history_summary(similar_rejections)
     rejection_history_block = f"\n{rejection_history_summary}\n" if rejection_history_summary else ""
+
+    brand_gating_summary = _format_brand_gating_summary(brand_gating)
+    brand_gating_block = f"\n{brand_gating_summary}\n" if brand_gating_summary else ""
 
     criteria_doc = _load_criteria_doc()
     criteria_block = (
@@ -257,7 +371,9 @@ def generate_verdict(
         f"{criteria_block}"
         f"{financials_block}\n"
         f"Keepa-derived metrics:\n{_format_metrics_summary(metrics)}\n"
+        f"{source_check_block}"
         f"{deep_dive_block}"
+        f"{brand_gating_block}"
         f"{rejection_history_block}\n"
         "Ground every bullet in a specific figure above, and follow these "
         "rules exactly -- each one fixes a real mistake seen in a previous "
@@ -271,10 +387,15 @@ def generate_verdict(
         "compare it to a concrete reference point instead: 17% ROI is the "
         "bare minimum this app treats as viable at all -- a lead also needs "
         "13%+ margin (profit as a % of sale price, NOT the same number as "
-        "ROI) and £2+ absolute profit per unit; all three together, not "
-        "ROI alone. 25%+ ROI is what it treats as a strong lead. Report "
-        "the actual margin % and profit £ plainly against those floors "
-        "rather than editorializing.\n"
+        "ROI), £2+ absolute profit per unit, and a £10+ sale price (a "
+        "genuinely cheap item doesn't leave enough absolute headroom for "
+        "fees to be worth sourcing, however good its ROI/margin numbers "
+        "look); all four together, not ROI alone. A sub-£10 sale price is "
+        "an automatic AVOID regardless of how strong every other figure "
+        "is -- state that plainly rather than treating it as just one "
+        "caution among several. 25%+ ROI is what it treats as a strong "
+        "lead. Report the actual margin % and profit £ plainly against "
+        "those floors rather than editorializing.\n"
         "3. Judge Amazon's presence by its buy-box SHARE, not by whether "
         "it's merely present. Amazon being on a listing is not itself a "
         "reason to mark a lead down -- only call it out as a competitive "
@@ -283,19 +404,25 @@ def generate_verdict(
         "4. State the review count exactly as given -- never say 'no "
         "reviews' unless the review count above is genuinely 0.\n"
         "5. When a DEEP DIVE section is present above, weigh it as real "
-        "extra evidence, not a footnote -- high stock among competing "
-        "FBA sellers is a genuine caution (they can sustain undercutting "
-        "for longer), while low/no competing stock is a genuine "
-        "supporting signal. If the SP-API live cross-check disagrees "
-        "materially with Keepa's snapshot price above, flag that "
-        "explicitly rather than silently picking one.\n"
+        "extra evidence, not a footnote -- if the SP-API live "
+        "cross-check disagrees materially with Keepa's snapshot price "
+        "above, flag that explicitly rather than silently picking one.\n"
         "6. When a PAST REJECTIONS section is present above, treat it as "
         "the user's own stated preferences, not a rule to apply blindly -- "
         "if THIS EXACT ASIN was rejected before, say so plainly and weigh "
         "that reason heavily unless something concrete has genuinely "
         "changed since (price, stock, competition). A same-brand or "
         "same-category rejection is softer evidence of a pattern worth "
-        "naming, not an automatic AVOID on its own.\n\n"
+        "naming, not an automatic AVOID on its own.\n"
+        "7. When a SOURCE MARKETPLACE CHECK section is present above, it "
+        "overrides the profitability figures: this reseller can only buy an "
+        "EU A2A lead from Amazon itself or from an FBA seller, because only "
+        "those come with a reclaimable Amazon VAT invoice. If that section "
+        "says the lead is not buyable, the verdict is AVOID no matter how "
+        "good the ROI is -- and say WHICH it is, because they mean different "
+        "things: Amazon being out of stock is a restock/park case, an "
+        "FBM-only buy box is dead. If it says buyability could not be "
+        "confirmed, say so as a caution rather than assuming either way.\n\n"
         "Reply using EXACTLY this format -- the first line must be one of "
         "these three words and nothing else: BUY, WATCH, or AVOID (not a "
         "synonym like 'Pass' or 'Skip', not punctuation, not a sentence -- "

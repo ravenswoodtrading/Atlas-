@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database.database import SessionLocal
 from app.database.models import Lead, ProductRecord, SellerNewListing, TrackedSeller
@@ -43,12 +43,21 @@ MAX_CONSIDER_LEADS = 150
 # "worth the risk". Buying against a recent price peak is inherently
 # riskier than a normal BUY/CONSIDER (you're betting the price gets
 # back there again), so the Review Queue holds PEAK_WINDOW leads to a
-# higher bar before surfacing them: either the peak ROI is genuinely
-# strong, or the underlying score is already at CONSIDER-tier quality
-# despite failing the current/90d-avg price gate that kept it out of
-# CONSIDER/BUY. Below both, it's not worth seeing -- this is what let
-# weak, low-score peak leads (e.g. two Wiha ASINs barely over the old
-# 10% floor) leak into the queue.
+# higher bar before surfacing them: BOTH the peak ROI must be genuinely
+# strong AND the underlying score must already be at CONSIDER-tier
+# quality, despite failing the current/90d-avg price gate that kept it
+# out of CONSIDER/BUY.
+#
+# Was an OR (either bar alone was enough) until 2026-09-03 -- real bug,
+# not a design choice: a score=22 lead with roi=-44.9% at today's price
+# (a genuine LOSS) was showing up purely because its speculative peak
+# ROI cleared 35%, and several other sub-30-score leads did the same
+# (Tamara, 2026-09-03: "including some of the peak ones that really
+# aren't good enough... slow scoring leads getting through"). A bad
+# score means the underlying demand/trend/competition picture is weak
+# regardless of what a one-off historical price spike says, so a weak
+# score should disqualify a peak lead even with a strong peak ROI, not
+# just be a second way in.
 PEAK_WORTH_IT_ROI = 35
 PEAK_WORTH_IT_SCORE = 65
 
@@ -83,6 +92,140 @@ SORT_OPTIONS = {
     "score_desc": (lambda lead: lead["score"] or 0, True),
     "score_asc": (lambda lead: lead["score"] or 0, False),
 }
+
+# Canonical origin values for /review-queue's source filter -- one per
+# badge the table already renders (see review_queue.html's Source
+# column), so filtering to e.g. "sheet" shows exactly the rows already
+# wearing the "VA Sheet" badge, no separate taxonomy to keep in sync.
+# The "lead" row source collapses to three of these via lead_subsource
+# (manual/sheet/shortlist -- see _lead_dict); "scan" and "competitor"
+# map straight through.
+SOURCE_FILTERS = ("scan", "competitor", "manual", "sheet", "shortlist")
+
+SOURCE_FILTER_LABELS = {
+    "scan": "Scan",
+    "competitor": "Competitor find",
+    "manual": "Manual (Verdict Checker)",
+    "sheet": "VA Sheet",
+    "shortlist": "Shortlist",
+}
+
+# Structured review/decision reason categories (atlas-review-queue-
+# backend-v1.md section 5) -- ADDITIVE alongside the existing free-text
+# review_reason/decision_reason columns, never a replacement for them.
+# A rejecting user may optionally pick one of these; historical rows
+# (and anyone who skips the picker) simply have category=None and keep
+# their free-text reason exactly as before. Lets Atlas eventually
+# answer questions like "what % of BUYs are rejected because the
+# source offer disappeared" without parsing free text (section 11).
+REVIEW_REASON_CATEGORIES = (
+    "NO_BUYABLE_OFFER",
+    "PRICE_CHANGED",
+    "NO_LONGER_PROFITABLE",
+    "ALREADY_BOUGHT",
+    "TOO_MUCH_STOCK",
+    "TOO_EXPENSIVE",
+    "IMPORT_DUTY",
+    "WRONG_MATCH",
+    "GATED",
+    "INSUFFICIENT_SALES",
+    "INSUFFICIENT_PROFIT",
+    "PRODUCT_RISK",
+    "EU_PLUG",
+    "EBAY",
+    "OTHER",
+)
+
+REVIEW_REASON_CATEGORY_LABELS = {
+    "NO_BUYABLE_OFFER": "No buyable offer",
+    "PRICE_CHANGED": "Price changed",
+    "NO_LONGER_PROFITABLE": "No longer profitable",
+    "ALREADY_BOUGHT": "Already bought",
+    "TOO_MUCH_STOCK": "Too much stock",
+    "TOO_EXPENSIVE": "Too expensive",
+    "IMPORT_DUTY": "Over import duty",
+    "WRONG_MATCH": "Wrong match",
+    "GATED": "Gated",
+    "INSUFFICIENT_SALES": "Not enough sales evidence",
+    "INSUFFICIENT_PROFIT": "Not enough profit",
+    "PRODUCT_RISK": "Product risk (returns/safety/etc)",
+    "EU_PLUG": "EU plug",
+    "EBAY": "eBay",
+    "OTHER": "Other",
+}
+
+# Categories that mean "the opportunity expired between Atlas's check
+# and the user's review" (section 2) rather than "Atlas's original
+# sourcing/matching judgement was wrong" -- used to interpret a
+# rejection without ever touching the stored decision itself. Anything
+# not in this set (WRONG_MATCH, GATED, PRODUCT_RISK, etc.) is treated
+# as a real sourcing-quality signal, not timing/volatility.
+EXPIRY_REASON_CATEGORIES = {"NO_BUYABLE_OFFER", "PRICE_CHANGED", "NO_LONGER_PROFITABLE"}
+
+
+def interpret_review_reason(category: str | None) -> str | None:
+    """
+    "OPPORTUNITY_EXPIRED" | "SOURCING_ISSUE" | None (no category
+    picked, nothing to interpret). Pure classification, section 2 --
+    never changes what got stored, only how a rejection reads.
+    """
+    if not category:
+        return None
+    return "OPPORTUNITY_EXPIRED" if category in EXPIRY_REASON_CATEGORIES else "SOURCING_ISSUE"
+
+
+# Offer freshness states (section 3). Thresholds are configurable here
+# rather than hardcoded elsewhere, and are deliberately anchored to
+# EU_A2A_FRESHNESS_INTERVAL_SECONDS (app/main.py) -- the only existing
+# automated source-recheck cadence in Atlas (daily). FRESH covers
+# "checked well within the last sweep cycle"; AGING covers "checked,
+# but approaching a full cycle old, sweep may not have reached it
+# again yet"; anything older is STALE. UNAVAILABLE overrides both on
+# any check (automated or manual) that came back not-buyable,
+# regardless of age -- a confirmed "not there" is a stronger signal
+# than elapsed time either way.
+OFFER_FRESHNESS_FRESH_HOURS = 6
+OFFER_FRESHNESS_AGING_HOURS = 30  # ~1.25x the daily sweep interval
+
+
+def classify_offer_freshness(
+    scanned_at: datetime | None,
+    last_offer_checked_at: datetime | None = None,
+    last_offer_buyable: bool | None = None,
+    now: datetime | None = None,
+) -> str:
+    """
+    "FRESH" | "AGING" | "STALE" | "UNAVAILABLE" | "UNKNOWN".
+
+    last_offer_checked_at/last_offer_buyable are the persisted result
+    of the most recent AUTOMATED recheck (see eu_a2a_freshness_service),
+    which is more authoritative than the original scan if present --
+    falls back to scanned_at (the original check) when no separate
+    recheck has ever happened, which is the common case today outside
+    EU A2A. "UNKNOWN" only when there is no timestamp at all to judge
+    from (should not happen for a real record, but this must never
+    raise on a blank/legacy row).
+    """
+    if last_offer_buyable is False:
+        return "UNAVAILABLE"
+
+    checked_at = last_offer_checked_at or scanned_at
+    if checked_at is None:
+        return "UNKNOWN"
+
+    now = now or datetime.now(timezone.utc)
+    checked_at = checked_at.replace(tzinfo=None) if checked_at.tzinfo else checked_at
+    now = now.replace(tzinfo=None) if now.tzinfo else now
+
+    age_hours = (now - checked_at).total_seconds() / 3600.0
+
+    if age_hours < 0:
+        return "FRESH"  # clock skew guard -- never show a negative age as stale
+    if age_hours <= OFFER_FRESHNESS_FRESH_HOURS:
+        return "FRESH"
+    if age_hours <= OFFER_FRESHNESS_AGING_HOURS:
+        return "AGING"
+    return "STALE"
 
 
 class ReviewQueueService:
@@ -132,6 +275,24 @@ class ReviewQueueService:
             "seller": None,
             "listing_id": 0,
             "conflict_note": None,
+            # OA Source Discovery match confidence (2026-08-29) --
+            # "" for every non-OA scan record, which is exactly when
+            # review_queue.html skips the confidence badge. See
+            # ProductRecord.match_tier's own comment for why this
+            # lives here instead of parsed_report.
+            "match_tier": record.match_tier,
+            "match_confidence_pct": record.match_confidence_pct,
+            "source_confidence": record.source_confidence,
+            # Offer freshness / structured reason (atlas-review-queue-
+            # backend-v1.md sections 3/5) -- additive, see
+            # classify_offer_freshness's own docstring.
+            "freshness": classify_offer_freshness(
+                record.scanned_at, record.last_offer_checked_at, record.last_offer_buyable,
+            ),
+            "last_offer_checked_at": record.last_offer_checked_at,
+            "last_offer_price_gbp": record.last_offer_price_gbp,
+            "last_offer_buyable": record.last_offer_buyable,
+            "review_reason_category": record.review_reason_category,
         }
 
     @staticmethod
@@ -184,7 +345,44 @@ class ReviewQueueService:
             "seller": None,
             "listing_id": 0,
             "conflict_note": None,
+            # No OA match-confidence equivalent for a Verdict Checker/
+            # VA Sheet/Shortlist lead -- see _scan_lead_dict's comment.
+            "match_tier": "",
+            "match_confidence_pct": 0,
+            "source_confidence": "",
+            # No automated source-offer recheck exists for Lead rows yet
+            # (see eu_a2a_freshness_service.py's own scope note) --
+            # freshness falls back to analyzed_at, the only "last
+            # checked" signal a Lead actually has.
+            "freshness": classify_offer_freshness(lead.analyzed_at, None, None),
+            "last_offer_checked_at": None,
+            "last_offer_price_gbp": None,
+            "last_offer_buyable": None,
+            "review_reason_category": lead.decision_reason_category,
         }
+
+    @staticmethod
+    def _origin(lead: dict) -> str:
+        """One of SOURCE_FILTERS -- the "lead" row source collapses to
+        its lead_subsource (manual/sheet/shortlist); scan/competitor
+        map straight through."""
+        if lead["source"] != "lead":
+            return lead["source"]
+        return lead.get("lead_subsource") or "manual"
+
+    @staticmethod
+    def filter_by_source(leads: list, source_filter: str) -> list:
+        """
+        Narrows an already-built merged leads list to one origin (see
+        SOURCE_FILTERS) -- e.g. every VA Sheet lead, so it can be
+        reviewed as its own batch instead of interleaved with scan/
+        competitor/other Lead rows. An empty or unrecognized filter is
+        a no-op (shows everything), same "don't hide data on a bad
+        value" convention as SORT_OPTIONS.get's fallback above.
+        """
+        if source_filter not in SOURCE_FILTERS:
+            return leads
+        return [lead for lead in leads if ReviewQueueService._origin(lead) == source_filter]
 
     @staticmethod
     def _pending_leads(verdicts: tuple) -> list:
@@ -274,9 +472,50 @@ class ReviewQueueService:
             page=1, page_size=MAX_LEADS, review_filter="peak", sort="scanned_desc",
         )
 
-        leads = []
+        # Genuinely viable (real ROI at today's/90d-avg price, not a
+        # speculative peak), CONSIDER-tier-scoring leads a confidence
+        # penalty alone knocked below CONSIDER/BUY -- see
+        # OpportunityEngine.analyse's LOW_CONFIDENCE branch (2026-09-03).
+        # Merged in the same way as peak_records, for the same reason:
+        # is_notable() explicitly excludes LOW_CONFIDENCE (see that
+        # method's own comment), so these would otherwise never surface
+        # anywhere despite often carrying real, strong ROI.
+        low_confidence_records, _ = ProductRepository.list_latest(
+            page=1, page_size=MAX_LEADS, review_filter="low_confidence", sort="scanned_desc",
+        )
 
-        for record in list(scan_records) + list(peak_records):
+        # Genuinely viable, real-sales-evidence leads a weak composite
+        # score alone knocked below CONSIDER/BUY -- see
+        # OpportunityEngine.analyse's LOW_SCORE branch (2026-09-03).
+        # Same reasoning/merge pattern as low_confidence_records above.
+        low_score_records, _ = ProductRepository.list_latest(
+            page=1, page_size=MAX_LEADS, review_filter="low_score", sort="scanned_desc",
+        )
+
+        leads = []
+        # De-dupes the scan+peak merge below (2026-09-02, fixing a real
+        # Review Queue duplicate-items bug): "notable" and "peak" are two
+        # SEPARATE list_latest() calls with review_filter="notable" vs
+        # "peak" -- the code assumed these were mutually exclusive
+        # (is_notable's roi/roi_90d checks "never see" a PEAK_WINDOW
+        # record, per the comment above), but is_notable() only excludes
+        # IGNORE/GATED, not PEAK_WINDOW, so a PEAK_WINDOW record whose
+        # regular (non-peak) roi/roi_90d ALSO clears 25% with sales
+        # evidence passes both filters -- confirmed live (a real
+        # unreviewed record with roi=71.7%) showing up twice. Scoped to
+        # just this scan+peak merge, not is_notable() itself, since that
+        # function is also the Discord-notify gate in
+        # brand_scan_service.py -- narrowing it there would silently
+        # stop Discord pings for worthwhile PEAK_WINDOW finds, a
+        # different behavior than what was reported.
+        seen_scan_asins = set()
+
+        for record in (
+            list(scan_records) + list(peak_records) + list(low_confidence_records) + list(low_score_records)
+        ):
+            if record.asin in seen_scan_asins:
+                continue
+
             lead = ReviewQueueService._scan_lead_dict(record)
 
             if record.recommendation == "PEAK_WINDOW":
@@ -287,9 +526,10 @@ class ReviewQueueService:
                 # review_filter="peak" branch, which only has the ORM
                 # record's own columns to filter on.
                 peak_roi = lead["parsed_report"].get("peak_roi") or 0
-                if peak_roi < PEAK_WORTH_IT_ROI and record.score < PEAK_WORTH_IT_SCORE:
+                if peak_roi < PEAK_WORTH_IT_ROI or record.score < PEAK_WORTH_IT_SCORE:
                     continue
 
+            seen_scan_asins.add(record.asin)
             leads.append(lead)
 
         for entry in SellerWatchService.list_notable_buyable(limit=MAX_LEADS):
@@ -334,6 +574,22 @@ class ReviewQueueService:
                 "seller": seller,
                 "listing_id": listing.id,
                 "conflict_note": None,
+                # Competitor finds don't go through OA Source Discovery's
+                # shopping-match pipeline -- see _scan_lead_dict's comment.
+                "match_tier": record.match_tier,
+                "match_confidence_pct": record.match_confidence_pct,
+                "source_confidence": record.source_confidence,
+                # Competitor rows read best_source_marketplace/cost off
+                # the same ProductRecord the "scan" branch above uses --
+                # see eu_a2a_freshness_service.py's own scope note --
+                # so the same freshness fields apply here too.
+                "freshness": classify_offer_freshness(
+                    record.scanned_at, record.last_offer_checked_at, record.last_offer_buyable,
+                ),
+                "last_offer_checked_at": record.last_offer_checked_at,
+                "last_offer_price_gbp": record.last_offer_price_gbp,
+                "last_offer_buyable": record.last_offer_buyable,
+                "review_reason_category": listing.review_reason_category,
             })
 
         leads.extend(ReviewQueueService._pending_leads(LEAD_MAIN_VERDICTS))
@@ -427,18 +683,26 @@ class ReviewQueueService:
 
         Each lead is counted in exactly one bucket, in the same
         priority a person reading the page would use to describe it:
-        competitor find > PEAK (risky) > verdict-checked BUY lead >
-        scan BUY > star buy. "leads" (2026-08-24 nav consolidation) is
-        counted separately from "buys" even though both currently
-        render the same BUY badge -- a verdict-checked lead is an AI
-        judgment call (Verdict Checker/Shortlist), not the same thing
-        as OpportunityEngine's deterministic BUY recommendation, and
-        collapsing them into one bucket would misrepresent the
-        Dashboard's own "BUY recommendation" wording.
+        competitor find > PEAK (risky) > LOW CONFIDENCE (risky, own
+        reason) > verdict-checked BUY lead > scan BUY > star buy.
+        "leads" (2026-08-24 nav consolidation) is counted separately
+        from "buys" even though both currently render the same BUY
+        badge -- a verdict-checked lead is an AI judgment call (Verdict
+        Checker/Shortlist), not the same thing as OpportunityEngine's
+        deterministic BUY recommendation, and collapsing them into one
+        bucket would misrepresent the Dashboard's own "BUY
+        recommendation" wording.
+
+        low_confidence and low_score (2026-09-03) are their own buckets,
+        not folded into star_buys -- before this each would have fallen
+        into the catch-all `else` below and been miscounted as a
+        full-trust star buy, which is exactly the wrong signal for tiers
+        that exist specifically to flag "this needs your judgment on a
+        confidence penalty / weak score first".
         """
         leads = ReviewQueueService.list_leads()
 
-        star_buys = buys = peak = competitor = lead_buys = 0
+        star_buys = buys = peak = competitor = lead_buys = low_confidence = low_score = 0
 
         for lead in leads:
             if lead["source"] == "competitor":
@@ -447,6 +711,10 @@ class ReviewQueueService:
                 lead_buys += 1
             elif lead["recommendation"] == "PEAK_WINDOW":
                 peak += 1
+            elif lead["recommendation"] == "LOW_CONFIDENCE":
+                low_confidence += 1
+            elif lead["recommendation"] == "LOW_SCORE":
+                low_score += 1
             elif lead["recommendation"] == "BUY":
                 buys += 1
             else:
@@ -457,6 +725,8 @@ class ReviewQueueService:
             "star_buys": star_buys,
             "buys": buys,
             "peak": peak,
+            "low_confidence": low_confidence,
+            "low_score": low_score,
             "competitor": competitor,
             "leads": lead_buys,
         }
@@ -480,6 +750,7 @@ class ReviewQueueService:
             "recommendation": record.recommendation,
             "decision": ReviewQueueService._SCAN_DECISION_MAP.get(record.review, record.review),
             "decision_reason": record.review_reason,
+            "decision_reason_category": record.review_reason_category,
             # No dedicated "reviewed at" column on ProductRecord (only
             # scanned_at) -- reviewed_at_is_approx tells the template
             # to label this honestly rather than imply precision that
@@ -502,6 +773,7 @@ class ReviewQueueService:
             "recommendation": record.recommendation if record else None,
             "decision": ReviewQueueService._SCAN_DECISION_MAP.get(listing.review, listing.review),
             "decision_reason": listing.review_reason,
+            "decision_reason_category": listing.review_reason_category,
             "reviewed_at": listing.detected_at,
             "reviewed_at_is_approx": True,
             "seller": seller,
@@ -528,6 +800,7 @@ class ReviewQueueService:
             "recommendation": lead.verdict,
             "decision": lead.decision,
             "decision_reason": lead.decision_reason,
+            "decision_reason_category": lead.decision_reason_category,
             "reviewed_at": lead.reviewed_at,
             "reviewed_at_is_approx": False,
             "detail_url": f"/review/{lead.id}",

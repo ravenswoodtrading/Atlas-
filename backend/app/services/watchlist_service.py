@@ -99,6 +99,79 @@ class WatchlistService:
         except Exception as exc:
             print(f"WatchlistService.maybe_auto_watch failed for {product.asin}: {exc}")
 
+    # Same day-count bar as OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D
+    # (reused, not duplicated) -- applied here to the EU-source-cost-drop
+    # signal instead of the UK-sale-price-peak one it was built for.
+    LEAD_SOURCE_DROP_MIN_VIABLE_DAYS_90D = OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D
+
+    @staticmethod
+    def maybe_auto_watch_lead(
+        asin: str, title: str, brand: str, source_marketplace: str, source_drop_evidence: dict,
+    ):
+        """
+        The Lead-pipeline mirror of maybe_auto_watch above -- extends
+        the same "not profitable now, but genuinely was recently"
+        concept to VA-sheet/Verdict-Checker leads, which previously had
+        NO such tracking at all: an AVOID-verdict A2A lead just died
+        with nothing watching it for a future source-cost drop, unlike
+        a scan-sourced equivalent. Added 2026-09-03, Tamara: "lots of my
+        VA leads are A2A drops that are not profitable today but on a
+        price drop so may be profitable soon."
+
+        Takes source_drop_evidence as an already-computed dict (see
+        VerdictService.compute_source_drop_evidence) rather than calling
+        VerdictService itself -- that module already needs to import
+        THIS one to make the call in the first place (see
+        VerdictService.compute_metrics), so this file must never import
+        VerdictService back, or it's circular. The caller is responsible
+        for only calling this when the lead ISN'T already profitable at
+        today's/90d cost -- see compute_metrics for where that's judged.
+
+        Unlike maybe_auto_watch's single 90-day-low snapshot, this
+        REQUIRES real day-count evidence -- Tamara's own explicit
+        requirement, directly informed by prune_stale_auto_adds' own
+        hard-won lesson (94% of the watchlist was auto-added on a single
+        snapshot, 88% never went profitable). A single low day proves
+        almost nothing; LEAD_SOURCE_DROP_MIN_VIABLE_DAYS_90D of them is
+        real evidence.
+
+        "Profitable now should be higher rated than one that may be
+        profitable in x days" (Tamara's own framing) is enforced by the
+        caller never running this check at all once a lead is already
+        viable -- a genuinely profitable-now lead gets a real BUY/WATCH
+        verdict and goes straight to the Review Queue; this speculative,
+        lower-trust signal only ever applies to what's LEFT once that's
+        ruled out, and lands on a completely separate page (Watchlist),
+        never the Review Queue itself.
+
+        No-op (never raises), same reason as maybe_auto_watch: rides
+        along on every Verdict Checker / VA-sheet check and must never
+        break that over a watchlist side-effect.
+        """
+        try:
+            if source_drop_evidence["viable_days_90d"] < WatchlistService.LEAD_SOURCE_DROP_MIN_VIABLE_DAYS_90D:
+                return
+
+            if asin in ProductRepository.get_watched_asins():
+                return
+
+            note = (
+                f"Auto-added: {source_marketplace} cost has been low enough to be viable on "
+                f"{source_drop_evidence['viable_days_90d']} of the last 90 days (best case ~GBP "
+                f"{source_drop_evidence['best_case_profit']:.2f} profit, "
+                f"{source_drop_evidence['best_case_roi']:.0f}% ROI at GBP "
+                f"{source_drop_evidence['recent_low_source_cost_gbp']:.2f}) -- not profitable at "
+                f"today's cost. (VA/Verdict Checker lead)"
+            )
+
+            ProductRepository.add_watch(
+                asin, title=title, brand=brand, note=note,
+                viable_days_90d=source_drop_evidence["viable_days_90d"],
+            )
+
+        except Exception as exc:
+            print(f"WatchlistService.maybe_auto_watch_lead failed for {asin}: {exc}")
+
     @staticmethod
     def check_stale(since_hours: int = 24 * 7):
         """

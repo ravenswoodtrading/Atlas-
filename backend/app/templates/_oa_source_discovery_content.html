@@ -1,6 +1,6 @@
 {% from "_help.html" import help_button, help_modal %}
 
-{% macro oa_source_discovery_content(runs, selected_run, candidates, preview_candidates, excluded_asins, serpapi_configured, serpapi_searches_left) %}
+{% macro oa_source_discovery_content(runs, selected_run, candidates, preview_candidates, excluded_asins, serpapi_configured, serpapi_searches_left, preview_window_matched, preview_pool_total, since_days, window_options) %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">OA Source Discovery {{ help_button("oa-source-discovery") }}</h4>
@@ -34,7 +34,8 @@
     a better one you find yourself (see "other retailers found" on each row) -- either way recalculates profit/ROI
     and adds it to the Review Queue if it now qualifies. A handful of harder cases still fall back to the older
     Brave web-search pipeline, which only finds a retailer page (no price) for you to confirm manually. Batches
-    always work through the "Next up to scan" list below in best-opportunity-first order, and each run automatically
+    always work through the "Next up to scan" list below in best-opportunity-first order, limited to competitor
+    detections inside the "Detected" window you pick there, and each run automatically
     stops spending SerpApi searches once your remaining monthly quota gets low (falling back to Brave instead) so
     one big batch can't quietly burn through the whole month.
 </div>
@@ -45,6 +46,9 @@
             <label class="form-label small mb-0">ASINs to check</label>
             <input type="number" name="limit" value="20" min="1" max="200" class="form-control form-control-sm" style="width:100px;">
         </div>
+        {# Mirrors the "Detected" dropdown below so the run searches
+           exactly the rows the preview is showing, not its own set. #}
+        <input type="hidden" name="since_days" value="{{ since_days }}">
         <button class="btn btn-dark btn-sm" type="submit">
             <i class="bi bi-play-fill"></i> Run batch
         </button>
@@ -60,7 +64,7 @@
 <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
     <span class="text-muted small">Past runs:</span>
     {% for run in runs %}
-    <a href="/oa-discovery?run_id={{ run.id }}"
+    <a href="/oa-discovery?run_id={{ run.id }}&since_days={{ since_days }}"
        class="badge {{ 'bg-dark' if selected_run and run.id == selected_run.id else 'bg-light text-dark border' }} text-decoration-none">
         {{ run.started_at.strftime("%d %b %H:%M") }}
         {% if run.status == "running" %}<i class="bi bi-hourglass-split"></i>{% elif run.status == "error" %}<i class="bi bi-exclamation-triangle"></i>{% endif %}
@@ -74,16 +78,36 @@
     <div class="d-flex justify-content-between align-items-center mb-2">
         <h5 class="mb-0">
             Next up to scan
-            <span class="badge bg-light text-dark border">{{ preview_candidates|length }}</span>
+            <span class="badge bg-light text-dark border">{{ preview_window_matched }}</span>
+            {% if since_days and preview_pool_total > preview_window_matched %}
+            <span class="text-muted small fw-normal">of {{ preview_pool_total }} eligible</span>
+            {% endif %}
         </h5>
-        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#excludedAsinsList">
-            <i class="bi bi-slash-circle"></i> Excluded ASINs ({{ excluded_asins|length }})
-        </button>
+        <div class="d-flex align-items-center gap-2">
+            <label class="text-muted small mb-0">Detected:</label>
+            <select class="form-select form-select-sm" style="width:130px;"
+                    onchange="window.location.href='/oa-discovery?since_days=' + this.value;">
+                {% for days, label in window_options %}
+                <option value="{{ days }}" {{ "selected" if days == since_days }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#excludedAsinsList">
+                <i class="bi bi-slash-circle"></i> Excluded ASINs ({{ excluded_asins|length }})
+            </button>
+        </div>
     </div>
     <p class="text-muted small mb-2">
-        Eligible "OA / unclear" ASINs a "Run batch" click would search next, sorted by best opportunity first
+        Eligible "OA / unclear" ASINs a "Run batch" click would search next -- only those your competitors were
+        detected listing recently (the "Detected" filter), sorted by best opportunity first within that window
         (the price ceiling you could pay for stock and still clear 25%+ ROI). Exclude anything
         here you don't want searched -- this only affects OA Source Discovery, not the rest of Atlas.
+        {% if since_days and preview_pool_total > preview_window_matched %}
+        <br>
+        <i class="bi bi-info-circle"></i>
+        {{ preview_pool_total - preview_window_matched }} older eligible ASIN(s) are hidden by this window --
+        they're often the highest-value ones, so widen to
+        <a href="/oa-discovery?since_days=0">All time</a> if you'd rather work through those first.
+        {% endif %}
     </p>
 
     <div class="collapse mb-3" id="excludedAsinsList">
@@ -110,6 +134,7 @@
                             <td>
                                 <form method="post" action="/oa-discovery/unexclude">
                                     <input type="hidden" name="asin" value="{{ e.asin }}">
+                                    <input type="hidden" name="since_days" value="{{ since_days }}">
                                     <button class="btn btn-sm btn-outline-dark" type="submit" title="Include again">
                                         <i class="bi bi-arrow-counterclockwise"></i>
                                     </button>
@@ -126,7 +151,13 @@
 
     {% if not preview_candidates %}
     <div class="alert alert-info py-2 small mb-0">
+        {% if since_days and preview_pool_total %}
+        No eligible "OA / unclear" ASINs detected in this window -- but
+        <strong>{{ preview_pool_total }}</strong> older one(s) are still waiting.
+        <a href="/oa-discovery?since_days=0">Show all time</a> to work through those.
+        {% else %}
         No eligible "OA / unclear" ASINs waiting to be scanned right now.
+        {% endif %}
     </div>
     {% else %}
     <div class="card metric p-3">
@@ -169,6 +200,7 @@
                             <form method="post" action="/oa-discovery/exclude">
                                 <input type="hidden" name="asin" value="{{ p.asin }}">
                                 <input type="hidden" name="title" value="{{ p.title }}">
+                                <input type="hidden" name="since_days" value="{{ since_days }}">
                                 <button class="btn btn-sm btn-outline-danger" type="submit" title="Exclude from OA Source Discovery">
                                     <i class="bi bi-slash-circle"></i>
                                 </button>
@@ -336,6 +368,7 @@
                         <form method="post" action="/oa-discovery/update-candidate" class="d-flex flex-column gap-1">
                             <input type="hidden" name="candidate_id" value="{{ c.id }}">
                             <input type="hidden" name="run_id" value="{{ selected_run.id }}">
+                            <input type="hidden" name="since_days" value="{{ since_days }}">
                             <div class="d-flex gap-1">
                                 <input type="text" name="retailer_domain" value="{{ c.retailer_domain }}" placeholder="Retailer name" class="form-control form-control-sm" style="width:100px;">
                                 <span class="align-self-center">&pound;</span>
@@ -355,6 +388,7 @@
                                 <form method="post" action="/oa-discovery/update-candidate" class="d-flex align-items-center gap-1 mt-1">
                                     <input type="hidden" name="candidate_id" value="{{ c.id }}">
                                     <input type="hidden" name="run_id" value="{{ selected_run.id }}">
+                                    <input type="hidden" name="since_days" value="{{ since_days }}">
                                     <input type="hidden" name="retailer_domain" value="{{ alt.source }}">
                                     <input type="hidden" name="retailer_url" value="{{ alt.product_link }}">
                                     <input type="hidden" name="retailer_title" value="{{ alt.title }}">

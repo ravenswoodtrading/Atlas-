@@ -405,6 +405,26 @@ class BrandScanService:
                     ),
                 }
 
+            # Priority-yield before the Product Finder call, not just at
+            # the chunk boundaries in _fetch_in_chunks (2026-08-28). A
+            # find_brand page fetch is a single slow Keepa request that
+            # happens BEFORE any chunk loop exists to check, so a
+            # high-priority caller arriving right here previously waited
+            # out the whole thing -- long enough to blow a Verdict
+            # Checker batch's timeout on its own. Same "ran out, don't
+            # advance the page, retry next tick" exit as everywhere else,
+            # so nothing is skipped.
+            if KeepaPriority.has_pending():
+                return {
+                    "brand": brand, "count": 0, "opportunities": [],
+                    "skipped_excluded": 0, "skipped_user_excluded": 0,
+                    "skipped_known_excluded": 0, "skipped_recently_scanned": 0,
+                    "skipped_unprofitable_ceiling": 0, "skipped_dead_listing": 0,
+                    "marketplaces_skipped_low_tokens": [], "marketplaces_partial_low_tokens": {},
+                    "tokens_remaining": tokens_before_search,
+                    "asins_scanned": 0, "raw_page_count": None, "uk_ran_out": True,
+                }
+
             asins = self.finder.find_brand(
                 brand, limit=100, page=page, category_ids=category_ids,
                 usage_category=self.usage_category,

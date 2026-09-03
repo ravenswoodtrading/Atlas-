@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
@@ -18,16 +19,21 @@ from app.services.discord_notifier import DiscordNotifier
 from app.services.product_repository import ProductRepository
 from app.services.signal_service import SignalService
 from app.services.activity_log import ActivityLog
+from app.services.verdict_run_service import VerdictRunService
+from app.services.eu_a2a_freshness_service import recheck_pending_eu_a2a
+from app.services.inventory_cleanup_service import InventoryCleanupService
+from app.services.storage_fee_service import StorageFeeService
 
 from app.database.base import Base
 from app.database.database import engine
 from app.database import models  # noqa: F401 -- registers ProductRecord with Base.metadata
+from app.sp_api.client import get_sp_api_client
 
 from app.routes import (
     dashboard, keepa, scan, analyse, opportunities_view, products, watchlist,
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
-    token_usage, criteria, shortlist, leads_hub,
+    token_usage, criteria, shortlist, leads_hub, inventory_cleanup, storage_fee_watch,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -253,19 +259,123 @@ async def _signal_scheduler():
         await asyncio.sleep(SIGNAL_SCHEDULER_INTERVAL_SECONDS)
 
 
+# How often the EU A2A Review Queue freshness sweep runs (2026-08-29,
+# Tamara's own instruction: "let's remove dead leads... regularly
+# check this"). Daily, same reasoning as WEEKLY_RECHECK_TICK_SECONDS
+# above -- a review queue's pending backlog doesn't need minute-by-
+# minute polling, and this keeps SP-API calls (free, but still real
+# wall-clock/rate-limited work) modest. No ScanCoordinator gating --
+# spends zero Keepa tokens (SP-API only), so it has no reason to yield
+# to a manual scan the way the token-spending automated ticks do.
+EU_A2A_FRESHNESS_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _eu_a2a_freshness_scheduler():
+    while True:
+        try:
+            # recheck_pending_eu_a2a makes blocking SP-API HTTP calls --
+            # run it off the event loop, same reason as the other
+            # schedulers above.
+            result = await asyncio.to_thread(recheck_pending_eu_a2a)
+            summary = result.get("message") or (
+                f"{result.get('checked', 0)} checked, {result.get('removed', 0)} removed as stale"
+            )
+            await asyncio.to_thread(
+                ActivityLog.mark_tick, "eu_a2a_freshness", EU_A2A_FRESHNESS_INTERVAL_SECONDS, summary,
+            )
+        except Exception as exc:
+            print(f"EU A2A freshness sweep failed: {exc}")
+
+        await asyncio.sleep(EU_A2A_FRESHNESS_INTERVAL_SECONDS)
+
+
+# How often the Out of Stock Cleanup sweep runs (2026-09-01, Tamara: "as
+# automated as possible"). Daily, same reasoning as EU_A2A_FRESHNESS_
+# INTERVAL_SECONDS just above -- a sold-out listing doesn't need
+# minute-by-minute polling, and this is SP-API only (zero Keepa tokens),
+# so no ScanCoordinator gating: it has no reason to yield to a manual
+# scan the way the token-spending automated ticks do. Detection only --
+# deletion always requires a human on the /inventory-cleanup page, never
+# this scheduler (see InventoryCleanupService's own docstring).
+INVENTORY_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _inventory_cleanup_scheduler():
+    while True:
+        try:
+            # detect_out_of_stock_candidates() makes blocking SP-API HTTP
+            # calls (including a Reports API poll loop) -- run it off the
+            # event loop, same reason as the other schedulers above.
+            result = await asyncio.to_thread(InventoryCleanupService.detect_out_of_stock_candidates)
+            summary = result.get("message") or (
+                f"{result.get('checked', 0)} checked, {result.get('flagged', 0)} flagged, "
+                f"{result.get('graduated', 0)} graduated, {result.get('restocked_cleared', 0)} cleared"
+            )
+            await asyncio.to_thread(
+                ActivityLog.mark_tick, "inventory_cleanup", INVENTORY_CLEANUP_INTERVAL_SECONDS, summary,
+            )
+        except Exception as exc:
+            print(f"Inventory cleanup sweep failed: {exc}")
+
+        await asyncio.sleep(INVENTORY_CLEANUP_INTERVAL_SECONDS)
+
+
+# Same reasoning as INVENTORY_CLEANUP_INTERVAL_SECONDS above -- daily is
+# plenty for a report that's a monthly snapshot anyway (see
+# SPAPIClient.get_storage_fee_charges), this is read-only reporting with
+# no delete action ever (see StorageFeeWatch's own docstring), so no
+# ScanCoordinator gating either.
+STORAGE_FEE_WATCH_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def _storage_fee_scheduler():
+    while True:
+        try:
+            # StorageFeeService.refresh() makes blocking SP-API HTTP
+            # calls (two Reports API poll loops) -- run it off the
+            # event loop, same reason as the other schedulers above.
+            result = await asyncio.to_thread(StorageFeeService.refresh)
+            summary = result.get("message") or (
+                f"{result.get('checked', 0)} checked, {result.get('flagged_surcharge', 0)} "
+                f"carrying a surcharge, {result.get('flagged_shift', 0)} flagged to shift"
+            )
+            await asyncio.to_thread(
+                ActivityLog.mark_tick, "storage_fee_watch", STORAGE_FEE_WATCH_INTERVAL_SECONDS, summary,
+            )
+        except Exception as exc:
+            print(f"Storage fee watch sweep failed: {exc}")
+
+        await asyncio.sleep(STORAGE_FEE_WATCH_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # A Verdict Checker bulk batch runs in a daemon thread, so a
+    # restart kills it mid-run and leaves the run row claiming to still
+    # be running. Close those out before serving anything, or the
+    # results page auto-refreshes a batch that will never advance.
+    try:
+        VerdictRunService.reconcile_interrupted_runs()
+    except Exception as exc:
+        print(f"Verdict run reconciliation failed (non-fatal): {exc}")
+
     scan_queue_task = asyncio.create_task(_scan_queue_scheduler())
     seller_watch_task = asyncio.create_task(_seller_watch_scheduler())
     weekly_recheck_task = asyncio.create_task(_weekly_recheck_scheduler())
     lead_analysis_task = asyncio.create_task(_lead_analysis_scheduler())
     signal_task = asyncio.create_task(_signal_scheduler())
+    eu_a2a_freshness_task = asyncio.create_task(_eu_a2a_freshness_scheduler())
+    inventory_cleanup_task = asyncio.create_task(_inventory_cleanup_scheduler())
+    storage_fee_task = asyncio.create_task(_storage_fee_scheduler())
     yield
     scan_queue_task.cancel()
     seller_watch_task.cancel()
     weekly_recheck_task.cancel()
     lead_analysis_task.cancel()
     signal_task.cancel()
+    eu_a2a_freshness_task.cancel()
+    inventory_cleanup_task.cancel()
+    storage_fee_task.cancel()
 
 
 app = FastAPI(title="Atlas", lifespan=lifespan)
@@ -325,6 +435,8 @@ app.include_router(token_usage.router)
 app.include_router(criteria.router)
 app.include_router(shortlist.router)
 app.include_router(leads_hub.router)
+app.include_router(inventory_cleanup.router)
+app.include_router(storage_fee_watch.router)
 
 
 @app.get("/opportunities/{brand}")
@@ -464,6 +576,167 @@ def debug_mpn_check(limit: int = 5, asins: str = ""):
                 "and tell Claude either way so the matching hierarchy can be finalized.",
         "results": results,
     })
+
+
+@app.get("/debug/sp-api/inventory-check")
+def debug_sp_inventory_check(marketplace: str = "UK", limit: int = 5):
+    """
+    ONE-TIME diagnostic (2026-09-01) for Out of Stock Cleanup's new FBA
+    Inventory API call (see SPAPIClient.get_inventory_summaries) -- same
+    "confirm the real shape before trusting it" discipline as
+    /debug/oa/mpn-check above, since that method's field names were read
+    off Amazon's docs, not a live response.
+
+    Visit /debug/sp-api/inventory-check once after setting SP_API_CLIENT_
+    ID/SECRET/REFRESH_TOKEN in .env (the SP-API app needs the "Product
+    Listing" role authorized -- confirmed 2026-09-02 against Amazon's own
+    docs: getInventorySummaries accepts either "Amazon Fulfillment" or
+    "Product Listing", and deleteListingsItem needs "Product Listing"
+    specifically, so selecting just that one role covers both calls) and
+    check the returned SKUs/quantities look right against what Seller
+    Central's Manage Inventory page actually shows. Not part of any
+    normal app flow -- safe to ignore once you've checked.
+    """
+    sp_client = get_sp_api_client()
+    if not sp_client:
+        return {"error": "SP-API not configured -- set SP_API_CLIENT_ID/SECRET/REFRESH_TOKEN in .env."}
+
+    inventory = sp_client.get_inventory_summaries(marketplace)
+    if inventory is None:
+        return {"error": "getInventorySummaries call failed -- check server logs for the real HTTP error."}
+
+    zero_stock = {
+        sku: v for sku, v in inventory.items()
+        if v["fulfillable"] + v["inbound_working"] + v["inbound_shipped"] + v["inbound_receiving"] + v["reserved"] <= 0
+    }
+
+    return jsonable_encoder({
+        "marketplace": marketplace,
+        "total_skus": len(inventory),
+        "zero_stock_skus": len(zero_stock),
+        "sample_zero_stock": dict(list(zero_stock.items())[:limit]),
+        "note": "Cross-check 'sample_zero_stock' against Seller Central's Manage Inventory page. "
+                "Next, visit /debug/sp-api/sales-check to verify the fulfilled-shipments report "
+                "returns real data for a couple of these SKUs before trusting Out of Stock Cleanup's "
+                "Ready to review list.",
+    })
+
+
+@app.get("/debug/sp-api/sales-check")
+def debug_sp_sales_check(marketplace: str = "UK", lookback_days: int = 30, limit: int = 5):
+    """
+    ONE-TIME diagnostic (2026-09-01) for the FBA Fulfilled Shipments
+    report call (see SPAPIClient.get_fba_fulfilled_shipments_units) --
+    this is what distinguishes "sold out" from "never stocked", so it's
+    worth confirming before trusting any Delete button. Report
+    generation is async and can take a couple of minutes; this route
+    just waits for it (up to REPORT_POLL_TIMEOUT_SECONDS).
+
+    Visit /debug/sp-api/sales-check once and spot-check a SKU you KNOW
+    has sold before against units_shipped/last_shipment_date here.
+    """
+    sp_client = get_sp_api_client()
+    if not sp_client:
+        return {"error": "SP-API not configured -- set SP_API_CLIENT_ID/SECRET/REFRESH_TOKEN in .env."}
+
+    sales = sp_client.get_fba_fulfilled_shipments_units(marketplace, lookback_days)
+    if sales is None:
+        return {"error": "Fulfilled shipments report failed -- check server logs for the real error."}
+
+    return jsonable_encoder({
+        "marketplace": marketplace,
+        "lookback_days": lookback_days,
+        "skus_with_confirmed_sales": len(sales),
+        "sample": dict(list(sales.items())[:limit]),
+    })
+
+
+@app.get("/debug/sp-api/storage-fee-check")
+def debug_sp_storage_fee_check(marketplace: str = "UK"):
+    """
+    ONE-TIME diagnostic (2026-09-02) for Storage Fee Watch's two new
+    Reports API calls (GET_FBA_STORAGE_FEE_CHARGES_DATA and GET_FBA_
+    FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA) -- same "confirm the
+    real shape before trusting it" discipline as /debug/sp-api/
+    inventory-check and /debug/sp-api/sales-check above, except this
+    time BOTH the required SP-API role AND the column names/current
+    aged-inventory-surcharge thresholds are genuinely unconfirmed (see
+    SPAPIClient.get_storage_fee_charges and .get_longterm_storage_fee_
+    charges' own docstrings for the pre-research this route exists to
+    check). Do NOT assume the "Product Listing" role already pending
+    for Out of Stock Cleanup covers this -- these are finance/FBA
+    reports, almost certainly a different role.
+
+    Deliberately calls the private _run_report() helper directly rather
+    than the two get_* methods above, so the RAW header row prints
+    regardless of whether those methods' guessed column names are
+    right -- confirming that is the whole point of this route. Report
+    generation is async and can take a couple of minutes per report;
+    this route waits for both in turn (up to 2x REPORT_POLL_TIMEOUT_
+    SECONDS worst case).
+
+    Visit /debug/sp-api/storage-fee-check once. If either report call
+    fails, "error" reflects that the raw HTTP status + response body
+    Amazon actually sent was printed to the server log (not returned
+    here directly, to avoid ever leaking a full error body into a
+    browser response) -- check server logs for it. If Amazon's error
+    names a specific required role, that's the real answer to "what
+    role does Tamara need to request" -- more reliable than any of this
+    file's own pre-research comments.
+    """
+    sp_client = get_sp_api_client()
+    if not sp_client:
+        return {"error": "SP-API not configured -- set SP_API_CLIENT_ID/SECRET/REFRESH_TOKEN in .env."}
+
+    now = datetime.now(timezone.utc)
+    result = {"marketplace": marketplace}
+
+    # GET_FBA_STORAGE_FEE_CHARGES_DATA -- Amazon's docs say dataStartTime
+    # must be >= 72h before now, dataEndTime = now (see get_storage_fee_
+    # charges' own docstring for the source).
+    storage_text = sp_client._run_report(
+        "GET_FBA_STORAGE_FEE_CHARGES_DATA", marketplace, now - timedelta(hours=76), now
+    )
+    if storage_text is None:
+        result["storage_fee_report"] = {
+            "error": "Report call failed -- check server logs for the real HTTP status/error body Amazon returned.",
+        }
+    else:
+        lines = storage_text.splitlines()
+        result["storage_fee_report"] = {
+            "header_row": lines[0].split("\t") if lines else [],
+            "sample_row": lines[1].split("\t") if len(lines) > 1 else None,
+            "total_rows": max(len(lines) - 1, 0),
+        }
+
+    # GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA -- Amazon's
+    # docs say the dataStartTime/dataEndTime span should equal one month
+    # (see get_longterm_storage_fee_charges' own docstring for the
+    # source).
+    ltsf_text = sp_client._run_report(
+        "GET_FBA_FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA", marketplace, now - timedelta(days=30), now
+    )
+    if ltsf_text is None:
+        result["longterm_storage_fee_report"] = {
+            "error": "Report call failed -- check server logs for the real HTTP status/error body Amazon returned.",
+        }
+    else:
+        lines = ltsf_text.splitlines()
+        result["longterm_storage_fee_report"] = {
+            "header_row": lines[0].split("\t") if lines else [],
+            "sample_row": lines[1].split("\t") if len(lines) > 1 else None,
+            "total_rows": max(len(lines) - 1, 0),
+        }
+
+    result["note"] = (
+        "Compare each report's 'header_row' against the column names guessed in "
+        "SPAPIClient.get_storage_fee_charges/get_longterm_storage_fee_charges' docstrings -- "
+        "fix the parsing there if they differ. Look for any age/'days in FC' column neither "
+        "method currently uses. If either report shows an 'error' instead, check the server "
+        "log for the raw error body and whether it names a specific required role."
+    )
+
+    return jsonable_encoder(result)
 
 
 @app.get("/debug/discord/test")

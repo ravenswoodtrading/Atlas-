@@ -110,6 +110,47 @@ class ProductRecord(Base):
     # what was actually wrong with the lead.
     review_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # OA Source Discovery match confidence (2026-08-29, added after
+    # Tamara caught a wrong-product auto-match by eye -- B0DV6CDXKT,
+    # see oa_source_discovery_service.TRUSTED_MATCH_TIERS_AUTO_PROMOTE's
+    # docstring). Same 3 fields/vocabulary as OaSourceCandidate's own
+    # match_tier/match_confidence_pct/source_confidence -- copied onto
+    # this record at promotion time (_promote_if_qualifying) since
+    # Product has no match_tier field of its own and this is the only
+    # place a human actually sees the lead again. "" / 0 for every
+    # record NOT sourced via OA Source Discovery (the ordinary Keepa
+    # scan pipeline, competitor finds, etc.) -- review_queue.html only
+    # shows the confidence badge when match_tier is non-empty.
+    match_tier: Mapped[str] = mapped_column(String, default="")
+    match_confidence_pct: Mapped[int] = mapped_column(Integer, default=0)
+    source_confidence: Mapped[str] = mapped_column(String, default="")
+
+    # Structured version of review_reason (atlas-review-queue-backend-v1.md
+    # section 5) -- one of REVIEW_REASON_CATEGORIES (see
+    # review_queue_service.py). NULL for every historical row and for
+    # any reviewer who doesn't pick one -- review_reason (free text)
+    # stays the source of truth and is NEVER cleared or replaced by
+    # this; the category is purely additive, so old rejection reasons
+    # remain exactly as typed. Lets Atlas eventually answer "what % of
+    # BUYs were rejected because the source offer disappeared" without
+    # parsing free text.
+    review_reason_category: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # Persisted result of the most recent AUTOMATED source-offer check
+    # (currently only eu_a2a_freshness_service.py, SP-API-based) for
+    # THIS record -- separate from the original scan's
+    # best_source_cost_gbp/scanned_at, which are never overwritten (see
+    # spec section 9, "preserve original analysis"). NULL means "never
+    # separately rechecked since this record was scanned" -- the
+    # freshness classifier then falls back to scanned_at itself as the
+    # last known signal. Previously this same "current price" was only
+    # ever computed in memory inside the sweep and thrown away once the
+    # keep/remove decision was made; these columns make that check's
+    # result inspectable instead of ephemeral.
+    last_offer_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_offer_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    last_offer_buyable: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=None)
+
 
 class KnownProduct(Base):
     """
@@ -161,6 +202,16 @@ class WatchedProduct(Base):
     title: Mapped[str] = mapped_column(String, default="")
     brand: Mapped[str] = mapped_column(String, default="")
     note: Mapped[str] = mapped_column(String, default="")
+
+    # How many of the last 90 days this ASIN's EU source cost would
+    # actually have cleared the viability floor at today's UK price --
+    # 0 for anything not added via WatchlistService.maybe_auto_watch_lead
+    # (2026-09-03), meaning "not evaluated with day-count evidence", NOT
+    # "zero days viable". Tamara's own explicit requirement: "the number
+    # of times it has been profitable in a 90 day window should be a
+    # factor" -- kept as a real queryable column, not just prose buried
+    # in `note`, so it can actually be sorted/displayed as one.
+    viable_days_90d: Mapped[int] = mapped_column(Integer, default=0)
 
     watched_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -444,6 +495,16 @@ class Lead(Base):
     # "OA" | "A2A", or NULL if not known/provided
     sourcing_type: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Which Amazon marketplace an A2A lead would actually be BOUGHT on
+    # ("DE" | "FR" | "ES" | "IT"), or NULL for an OA lead / one whose
+    # source couldn't be resolved. Drives
+    # VerdictService.check_source_marketplace, which spends one extra
+    # Keepa call confirming the lead is buyable there (Amazon or FBA on
+    # the buy box, Amazon in stock) -- see that method for why an
+    # unbuyable EU source has to be caught before a human does it by
+    # hand. NULL simply means "don't run that check", never "assume DE".
+    source_marketplace: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     # Full sheet row as submitted, JSON text -- NULL for manual leads.
     raw_sheet_data: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
@@ -489,6 +550,12 @@ class Lead(Base):
     # decision -- same purpose as ProductRecord.review_reason, see its
     # own comment.
     decision_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # Structured version of decision_reason -- same purpose/vocabulary
+    # as ProductRecord.review_reason_category, see its own comment.
+    # NULL for every historical lead and for any reviewer who doesn't
+    # pick one; decision_reason (free text) is untouched either way.
+    decision_reason_category: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     # VA sheet <-> Atlas decision sync (2026-08-24). NULL means "Atlas's
     # own UI decided this and the sheet doesn't know yet" -- the
@@ -602,6 +669,12 @@ class SellerNewListing(Base):
     # Optional free-text "why not" captured alongside a "down" review --
     # same purpose as ProductRecord.review_reason, see its own comment.
     review_reason: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # Structured version of review_reason -- same purpose/vocabulary as
+    # ProductRecord.review_reason_category, see its own comment. NULL
+    # for every historical detection and for any reviewer who doesn't
+    # pick one; review_reason (free text) is untouched either way.
+    review_reason_category: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     # When this row was last run through SellerWatchService.reclassify_all()
     # -- separate from detected_at (fixed at first detection). NULL means
@@ -790,6 +863,21 @@ class OaSourceRun(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
+    # True for a run started via run_batch(test_mode=True) -- the step-3
+    # SerpApi-vs-Serper comparison harness (see
+    # test_harness_search_providers.py). A test run writes real
+    # OaSourceRun/OaSourceCandidate rows (so its results can be
+    # inspected/compared like any other run) but NEVER calls
+    # ProductRepository.save_opportunity -- see
+    # OaSourceDiscoveryService._promote_if_qualifying's dry_run param.
+    # Every query that decides what the LIVE pipeline does next (cooldown
+    # via _recently_checked_asins, the Dashboard's latest-run quota tile,
+    # count_awaiting_review, the /oa-discovery results page's run list)
+    # excludes is_test=True rows -- a test run must be invisible to
+    # everything except the harness that created it and someone
+    # deliberately looking at oa_source_runs/oa_source_candidates directly.
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # "running" | "done" | "error" -- lets the page show a run still
     # in progress without the request having to stay open.
     status: Mapped[str] = mapped_column(String, default="running")
@@ -815,14 +903,28 @@ class OaSourceRun(Base):
     serpapi_search_count: Mapped[int] = mapped_column(Integer, default=0)
     serpapi_searches_left: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
-    # True when this run stopped calling SerpApi partway through
-    # because remaining account quota dropped to/below
-    # SERPAPI_QUOTA_SAFETY_BUFFER (see oa_source_discovery_service.py,
-    # 2026-08-19) -- every ASIN still left in the batch after that point
-    # fell back to the free Brave pipeline instead of SerpApi. Surfaced
-    # on the results page so a small/no auto-priced count on a big
-    # batch is explained rather than looking like SerpApi just stopped
-    # working.
+    # Google Shopping searches this run made via Serper INSTEAD of
+    # SerpApi (2026-08-29) -- only non-zero once serpapi_quota_stopped
+    # below has kicked in. Tracked separately from serpapi_search_count
+    # since Serper bills prepaid credits, not a monthly quota, so it's
+    # never subject to SERPAPI_QUOTA_SAFETY_BUFFER. See
+    # OaSourceCandidate.shopping_provider for the per-candidate version
+    # of this same fact, and shopping_search.search_uk_shopping_via.
+    serper_search_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    # True when this run's SerpApi account quota dropped to/below
+    # SERPAPI_QUOTA_SAFETY_BUFFER partway through (see
+    # oa_source_discovery_service.py). Originally (2026-08-19) this
+    # meant every remaining ASIN fell back to the free Brave pipeline
+    # with no Google-Shopping-style search at all; as of 2026-08-29 it
+    # instead means those ASINs' shopping search switched to Serper
+    # (see serper_search_count above) -- Tamara's own instruction ("use
+    # both, switch to the other when we're out of free credits on
+    # one") rather than giving up on Google Shopping results entirely
+    # for the rest of the month. Brave remains the fallback ONLY when
+    # Serper also finds nothing at a trusted match tier, same as it
+    # always was for SerpApi. Surfaced on the results page so a switch
+    # mid-batch is explained rather than looking like something broke.
     serpapi_quota_stopped: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # How many ASINs got an automatically-priced, trusted-match-tier
@@ -922,7 +1024,7 @@ class OaSourceCandidate(Base):
     estimated_roi_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     # "" (never priced) | "serpapi_auto" (retailer_price_gbp came from
-    # an automated Google Shopping match at run_batch time, see
+    # an automated Google Shopping-style match at run_batch time, see
     # OaSourceDiscoveryService's SerpApi integration, 2026-08-19) |
     # "manual" (the user typed/overrode it via the results page,
     # whether confirming the auto-found price as-is or replacing the
@@ -930,7 +1032,24 @@ class OaSourceCandidate(Base):
     # cheaper genuine price at a different retailer than the one Atlas
     # auto-picked). Shown on the results page so it's clear which
     # prices are machine-found vs. human-verified.
+    #
+    # NOTE (2026-08-29): "serpapi_auto" stayed the literal string value
+    # here on purpose, even after the SerpApi-quota fallback to Serper
+    # was added -- several existing queries/checks compare against this
+    # exact string to mean "auto-priced via the Google-Shopping-style
+    # path" (as opposed to "" or "manual"), regardless of which actual
+    # client served it. shopping_provider below is the accurate record
+    # of which one really did.
     price_source: Mapped[str] = mapped_column(String, default="")
+
+    # "" (Brave-only / never auto-priced) | "serpapi" | "serper" -- the
+    # ACTUAL client that served this candidate's Google-Shopping-style
+    # search, independent of price_source's fixed "serpapi_auto" string
+    # above. Exists so a month-from-now evaluation of the 2026-08-29
+    # auto-fallback (Tamara's own request) can tell real candidates
+    # apart by which provider actually found them, not just infer it
+    # from run.serpapi_quota_stopped at the whole-run level.
+    shopping_provider: Mapped[str] = mapped_column(String, default="")
 
     # Every Google Shopping candidate considered for this ASIN (JSON
     # list of {title, source, price, extracted_price, product_link}),
@@ -959,6 +1078,77 @@ class OaSourceCandidate(Base):
     # was searched" per row, and feeds the test protocol's "which
     # search queries worked" metric.
     queries_used_json: Mapped[str] = mapped_column(String, default="")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class OaCandidatePool(Base):
+    """
+    A free (no Keepa token) rank/price screen result for one ASIN --
+    step 2 of atlas-oa-scale-up-spec.md's OA scale-up build order (see
+    services/oa_candidate_screener.py). Exists to answer, BEFORE any
+    Keepa token is spent: is there even a chance this ASIN could be a
+    profitable OA source, based only on what SP-API's free
+    searchCatalogItems/getItemOffers endpoints already know (sales
+    rank + today's Buy Box price)?
+
+    NOT YET WIRED into the live OA Source Discovery queue
+    (_eligible_candidate_rows) -- deliberately. The spec's own build
+    order (§10) sequences this BEFORE widening intake via
+    ProductFinder.find_oa_candidates (step 4): first backfill this
+    table from ASINs the EXISTING Competitor Watch pipeline already
+    scored (which already has real Keepa data to check against) and
+    confirm the free screen's screened_in/screened_out verdict
+    actually lines up with what that fuller data already told us,
+    before trusting this screen to gate brand-new ASINs that have NO
+    Keepa fallback at all. See backfill_oa_candidate_pool.py for that
+    validation run.
+    """
+    __tablename__ = "oa_candidate_pool"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    asin: Mapped[str] = mapped_column(String, index=True)
+
+    # "competitor_watch_backfill" (step 2, this table's only source
+    # today) | "product_finder" (step 4, not built yet) -- lets a
+    # later query/report split validation-run rows from real intake
+    # once step 4 exists, without a schema change then.
+    source: Mapped[str] = mapped_column(String, default="")
+
+    # "screened_in" | "screened_out" -- a row only ever gets written
+    # once screening has actually completed for that ASIN (see
+    # oa_candidate_screener.screen_asin), so there's no separate
+    # "pending" state stored here.
+    status: Mapped[str] = mapped_column(String, default="")
+
+    # "" when status="screened_in". One of: "gated", "excluded",
+    # "sp_api_unavailable", "rank_too_high", "no_headroom" -- see
+    # oa_candidate_screener.screen_asin for exactly which check
+    # produced which reason.
+    screened_out_reason: Mapped[str] = mapped_column(String, default="")
+
+    # SP-API's OWN Buy Box price/rank (not Keepa's) -- kept alongside
+    # the pool row specifically so a backfill validation run can show
+    # its work: what did the free screen actually see, not just what
+    # it decided. Both None when SP-API had nothing usable.
+    amazon_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    sales_rank: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    # FeeEngine.max_source_cost() at FeeEngine.OA_TARGET_ROI_PCT, using
+    # FeeEngine.DEFAULT_FBA_FEE since no dimension-based fee estimate
+    # exists yet -- see this table's own docstring above and the
+    # spec's own §11 open question on whether config/fees.py needs
+    # extending for that. 0.0 whenever status="screened_out".
+    target_price_gbp: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Free-text context for a backfill row -- e.g. the already-known
+    # record's buy_box_now/category_name, so a human reviewing the
+    # validation report can see what the FULL Keepa picture said
+    # without a join. Not meant to be machine-parsed.
+    notes: Mapped[str] = mapped_column(String, default="")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -1103,3 +1293,288 @@ class TokenUsageEvent(Base):
     # (call_type="sp_api_saved") -- see this class's own docstring.
     tokens: Mapped[float] = mapped_column(Float, default=0.0)
     last_summary: Mapped[str] = mapped_column(String, default="")
+
+
+class VerdictRun(Base):
+    """
+    One Verdict Checker bulk submission (2026-08-27) -- the batch-level
+    record that makes a bulk scan outlive the request that started it.
+
+    Before this existed, POST /verdict/bulk did the whole batch inline
+    and rendered the results straight into that one response: leaving
+    the page lost them permanently, and there was no way to look up
+    what a previous batch had returned. Worse, a batch of any real size
+    blocked for minutes with a blank tab (each ASIN is a Keepa call
+    plus one-or-two Claude calls, and the whole run waits on
+    ScanCoordinator's lock if the automated scan queue happens to hold
+    it), so it read as "nothing happened" -- which is what prompted
+    this table.
+
+    Deliberately the same shape as OaSourceRun: a run row whose status
+    the page can poll ("running" | "done" | "error"), with one child
+    VerdictRunItem per ASIN, never upserted across runs -- rechecking
+    the same ASIN next week creates a second run, so historical batches
+    stay independently comparable instead of the newer one quietly
+    overwriting the older one's verdicts.
+
+    source_detail / source_marketplace are stored at the RUN level
+    because that is how the form collects them (see
+    _run_bulk_verdict_check's docstring: one shared "where did these
+    come from" note per batch, not one per line in a textarea).
+    """
+    __tablename__ = "verdict_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # "running" | "done" | "error" -- lets /verdict/run/{id} show a run
+    # still in progress without the request having to stay open.
+    status: Mapped[str] = mapped_column(String, default="running")
+
+    # Only set when the whole run died (an unexpected exception in the
+    # worker thread). A single ASIN failing is recorded on its own
+    # VerdictRunItem.error and leaves the run itself "done".
+    error: Mapped[str] = mapped_column(String, default="")
+
+    # Batch-wide inputs, echoed back on the results page so an old run
+    # is self-explanatory -- "which 30 ASINs, priced from where".
+    source_detail: Mapped[str] = mapped_column(String, default="")
+    source_marketplace: Mapped[str] = mapped_column(String, default="")
+
+    # The raw textarea contents, exactly as submitted. Kept so a run
+    # can be re-run or corrected later without the user having to dig
+    # the original list back out of wherever they pasted it from --
+    # same "don't lose what the user typed" instinct as
+    # Lead.raw_sheet_data.
+    asins_text: Mapped[str] = mapped_column(String, default="")
+
+    asins_submitted: Mapped[int] = mapped_column(Integer, default=0)
+    asins_completed: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Verdict tallies, incremented as each ASIN finishes -- so a
+    # still-"running" run already shows a meaningful progress summary
+    # rather than only counting up an opaque completed number.
+    buy_count: Mapped[int] = mapped_column(Integer, default=0)
+    watch_count: Mapped[int] = mapped_column(Integer, default=0)
+    avoid_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class VerdictRunItem(Base):
+    """
+    One ASIN's result within a single VerdictRun -- the persisted form
+    of what the bulk results table used to render straight out of an
+    in-memory dict.
+
+    lead_id points at the Lead row this check created, so the results
+    page can still link through to the full Review Queue detail view.
+    It's NULL when the check failed (no Lead is saved for an ASIN
+    Keepa has no data for, or one that ran out of tokens) -- error
+    carries the user-facing reason in that case.
+
+    title / keepa_estimate_* are denormalised copies of what the
+    verdict was based on. They're stored rather than re-read off the
+    Lead so an old run keeps showing the numbers it actually decided
+    on, even after the Lead's metrics are later refreshed.
+    """
+    __tablename__ = "verdict_run_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("verdict_runs.id"), index=True)
+
+    # Position in the submitted list, so the results table can be shown
+    # in the order the user pasted them regardless of completion order.
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    asin: Mapped[str] = mapped_column(String, index=True)
+    cost_price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # "pending" until the worker reaches this ASIN, then "done" or
+    # "failed" -- what lets the polling results page distinguish "not
+    # checked yet" from "checked, came back AVOID".
+    status: Mapped[str] = mapped_column(String, default="pending")
+
+    verdict: Mapped[str] = mapped_column(String, default="")
+    rationale: Mapped[str] = mapped_column(String, default="")
+    error: Mapped[str] = mapped_column(String, default="")
+
+    deep_dive_fired: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    lead_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+
+    title: Mapped[str] = mapped_column(String, default="")
+    keepa_estimate_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    keepa_estimate_profit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+
+class OutOfStockListing(Base):
+    """
+    A seller SKU on Tamara's own Amazon account that InventoryCleanupService
+    has detected with zero sellable/incoming stock AND confirmed sales
+    history -- i.e. genuinely sold through, not a new listing that's never
+    been stocked yet (2026-09-01: "identify which products in my inventory
+    are out of stock, as in have been sold and then all stock sold, rather
+    than not yet reached inventory").
+
+    Populated by the nightly detection sweep (see app/main.py's
+    _inventory_cleanup_scheduler), never by a page load -- the
+    /inventory-cleanup page only reads/updates rows this created.
+
+    Deletion is NEVER automatic. status starts "monitoring" (zero stock +
+    confirmed past sales, but under MIN_DAYS_OUT_OF_STOCK) and graduates to
+    "pending_review" once it's been continuously zero-stock for long enough
+    that a real restock landing mid-flight is unlikely -- only THEN does it
+    show as actionable on the page. A human has to explicitly select it and
+    click Delete (which calls the real Listings Items API
+    deleteListingsItem -- see app/sp_api/client.py) or Dismiss (keep the
+    listing, stop flagging it) before anything changes on Amazon.
+
+    A SKU that shows real stock again on a later sweep is simply deleted
+    from this table (see InventoryCleanupService.detect_out_of_stock_
+    candidates) -- restocking clears the flag entirely rather than leaving
+    a stale row behind; if it sells through again later it gets a fresh
+    first_out_of_stock_at.
+    """
+    __tablename__ = "out_of_stock_listings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    sku: Mapped[str] = mapped_column(String, unique=True, index=True)
+    asin: Mapped[str] = mapped_column(String, default="")
+    title: Mapped[str] = mapped_column(String, default="")
+    marketplace: Mapped[str] = mapped_column(String, default="UK")
+
+    # Current stock breakdown as of the LATEST sweep -- all zero is what
+    # qualifies a row to exist here at all (see the detection service for
+    # the exact fields summed to decide that).
+    fulfillable_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    inbound_working_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    inbound_shipped_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    inbound_receiving_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_quantity: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Confirmed sales evidence from the FBA Fulfilled Shipments report
+    # (see SPAPIClient.get_fba_fulfilled_shipments_units) -- this is what
+    # distinguishes "sold out" from "never stocked". units_shipped_lookback
+    # is always >= 1 for a row to exist -- a SKU with zero confirmed sales
+    # in the lookback window is never added here at all (see the detection
+    # service), so there's no separate "unconfirmed" status to represent.
+    units_shipped_lookback: Mapped[int] = mapped_column(Integer, default=0)
+    lookback_days: Mapped[int] = mapped_column(Integer, default=0)
+    last_shipment_date: Mapped[str] = mapped_column(String, default="")
+
+    # Which of the two signals in InventoryCleanupService._is_confirmed_
+    # sold actually justified flagging this SKU -- "sku_listing_date"
+    # (Tamara's own SKU-batch naming convention, primary signal since
+    # 2026-09-02) or "sales_report" (the 30-day fulfilled-shipments
+    # fallback, for SKUs that don't carry that date pattern). Shown on
+    # /inventory-cleanup so "Ready to review" never looks like it
+    # contradicts units_shipped_lookback=0 with no explanation --
+    # sku_listing_date rows legitimately show 0 units there, since that
+    # signal doesn't come from the sales report at all.
+    sold_evidence: Mapped[str] = mapped_column(String, default="")
+    sku_listing_date: Mapped[str] = mapped_column(String, default="")
+
+    # First sweep that found this SKU at zero stock -- NOT reset by later
+    # sweeps that still find it at zero (see detect_out_of_stock_candidates),
+    # so days-out-of-stock (computed at read time, not stored, to avoid it
+    # ever going stale) is measured from the true start.
+    first_out_of_stock_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+    last_checked_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    # "monitoring" (zero-stock + sold before, but not yet past
+    # MIN_DAYS_OUT_OF_STOCK) -> "pending_review" (past the threshold, shown
+    # as actionable) -> "deleted" (permanent) or "dismissed" (temporary --
+    # see snoozed_until below; a human acted on it either way). Deleted
+    # rows are kept as a permanent audit trail; dismissed rows are kept
+    # only until InventoryCleanupService.detect_out_of_stock_candidates
+    # revives them once snoozed_until passes (see its own comments).
+    status: Mapped[str] = mapped_column(String, default="monitoring", index=True)
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # Set only when status is "dismissed" (2026-09-02, Tamara: "maybe
+    # dismiss stops flagging it for a couple of weeks?") -- Dismiss is
+    # deliberately never permanent in this domain (see
+    # InventoryCleanupService.dismiss's own docstring): once this passes,
+    # the next sweep re-evaluates the SKU completely fresh rather than
+    # leaving it silenced forever.
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # Populated only if a delete attempt via the Listings Items API failed
+    # -- the row stays "pending_review" (never silently marked "deleted")
+    # so a failed attempt is never mistaken for a real one.
+    delete_error: Mapped[str] = mapped_column(String, default="")
+
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class StorageFeeWatch(Base):
+    """
+    One row per FBA SKU with current-month storage-fee and aged-inventory/
+    long-term-storage-surcharge data, refreshed nightly (Storage Fee Watch,
+    2026-09-02, Tamara: "identify which items in my inventory are
+    contributing lots to my storage fees" and "identify products that are
+    getting close to long term storage or that we should really try and
+    shift").
+
+    Purely a read-only ranked view -- unlike OutOfStockListing above there
+    is no review/approve/delete workflow here (see StorageFeeService),
+    just current numbers a human reads and acts on manually in Seller
+    Central. Every sweep fully replaces this table's contents
+    (delete-all-then-insert) rather than diffing/carrying state row to
+    row, since there's no status machine here to preserve across sweeps.
+    """
+    __tablename__ = "storage_fee_watch"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    sku: Mapped[str] = mapped_column(String, index=True)
+    asin: Mapped[str] = mapped_column(String, default="")
+    title: Mapped[str] = mapped_column(String, default="")
+    marketplace: Mapped[str] = mapped_column(String, default="UK")
+
+    # Current-month snapshot from GET_FBA_STORAGE_FEE_CHARGES_DATA (see
+    # SPAPIClient.get_storage_fee_charges) -- storage_fee_amount is what
+    # the page ranks by, highest first.
+    average_quantity_on_hand: Mapped[int] = mapped_column(Integer, default=0)
+    storage_fee_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    month_of_charge: Mapped[str] = mapped_column(String, default="")
+    currency: Mapped[str] = mapped_column(String, default="")
+
+    # Aged-inventory/long-term-storage-surcharge data from GET_FBA_
+    # FULFILLMENT_LONGTERM_STORAGE_FEE_CHARGES_DATA (see SPAPIClient.
+    # get_longterm_storage_fee_charges). ltsf_surcharge_age_tier is
+    # Amazon's OWN day-range label for this SKU's current surcharge
+    # bracket (e.g. "241-270"), passed through verbatim -- never
+    # hardcoded here, since that method's own docstring found Amazon's
+    # real live tiers don't cleanly match any threshold this file
+    # previously assumed.
+    ltsf_quantity_charged: Mapped[int] = mapped_column(Integer, default=0)
+    ltsf_amount_charged: Mapped[float] = mapped_column(Float, default=0.0)
+    ltsf_surcharge_age_tier: Mapped[str] = mapped_column(String, default="")
+
+    # Recent sell-through, from get_fba_fulfilled_shipments_units (see
+    # SELL_THROUGH_LOOKBACK_DAYS in storage_fee_service.py) -- this is
+    # the "should we really try and shift this" signal: high storage fee
+    # relative to low/zero recent units sold.
+    recent_units_shipped: Mapped[int] = mapped_column(Integer, default=0)
+    last_shipment_date: Mapped[str] = mapped_column(String, default="")
+
+    # Derived flags, computed once at sweep time (see
+    # StorageFeeService.refresh) rather than in the template, so the
+    # ranking/flagging logic lives in exactly one place.
+    has_ltsf_surcharge: Mapped[bool] = mapped_column(Boolean, default=False)
+    should_consider_shifting: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    last_refreshed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )

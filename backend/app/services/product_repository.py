@@ -55,8 +55,29 @@ class ProductRepository:
         BUY-CONSIDER counters. It has its own dedicated view instead
         (see ProductRepository.list_gated_opportunities /
         the Gated Brand Opportunities page).
+
+        LOW_CONFIDENCE (2026-09-03) is excluded explicitly for the same
+        reason, and deliberately NOT left to chance the way PEAK_WINDOW
+        originally was -- PEAK_WINDOW isn't listed here either, but was
+        never SUPPOSED to satisfy is_notable (see its own "never affects
+        is_notable/Discord's own trust bar" comment in
+        ReviewQueueService.list_leads), and a real bug confirmed a
+        PEAK_WINDOW record with strong regular ROI could slip through
+        the ROI-only branch below anyway and get double-counted. A
+        LOW_CONFIDENCE record often has real ROI (that's exactly why
+        it's visible at all instead of IGNORE), so without this explicit
+        exclusion it would hit the exact same leak -- pinging Discord
+        and counting as a full-trust star buy despite the whole point of
+        the tier being "this needs a human's judgment on the
+        confidence penalty first".
+
+        LOW_SCORE (2026-09-03) is excluded for the identical reason --
+        it also often carries real ROI (that's exactly why it's visible
+        at all instead of IGNORE), and the whole point of the tier is
+        "the composite score is weak, look at the actual score factors
+        before trusting it", not full-trust-star-buy treatment.
         """
-        if recommendation in ("IGNORE", "GATED"):
+        if recommendation in ("IGNORE", "GATED", "LOW_CONFIDENCE", "LOW_SCORE"):
             return False
 
         has_sales_evidence = monthly_sales > 0 or sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
@@ -161,7 +182,16 @@ class ProductRepository:
         other filter here -- the tab is just not EXPECTED to be
         cleared to zero regularly the way the main tab is; new
         profitable-but-not-star-tier leads keep landing on top as
-        older ones get reviewed off.
+        older ones get reviewed off. "peak" keeps unreviewed
+        PEAK_WINDOW-recommended items (see OpportunityEngine.
+        PEAK_WINDOW). "low_confidence" keeps unreviewed LOW_CONFIDENCE-
+        recommended items (2026-09-03, see OpportunityEngine.analyse's
+        LOW_CONFIDENCE branch) -- genuinely viable leads a confidence
+        penalty alone knocked out of CONSIDER/BUY. "low_score" keeps
+        unreviewed LOW_SCORE-recommended items (2026-09-03, see
+        OpportunityEngine.analyse's LOW_SCORE branch) -- genuinely
+        viable leads with real sales evidence that a weak composite
+        score alone knocked out of CONSIDER/BUY.
         """
         db = SessionLocal()
 
@@ -203,6 +233,21 @@ class ProductRepository:
                 # since is_notable's roi/roi_90d checks never see these
                 # (they only clear the bar at the 90-day PEAK price).
                 latest = [r for r in latest if not r.review and r.recommendation == "PEAK_WINDOW"]
+            elif review_filter == "low_confidence":
+                # Genuinely viable, CONSIDER-tier-scoring leads a
+                # confidence penalty knocked out of CONSIDER/BUY -- see
+                # OpportunityEngine.analyse's LOW_CONFIDENCE branch
+                # (2026-09-03). Its own filter for the same reason
+                # "peak" is: is_notable() explicitly excludes it (see
+                # that method's own comment), so it would never surface
+                # via "notable" no matter how good its ROI looks.
+                latest = [r for r in latest if not r.review and r.recommendation == "LOW_CONFIDENCE"]
+            elif review_filter == "low_score":
+                # Genuinely viable leads with real sales evidence a weak
+                # composite score knocked out of CONSIDER/BUY -- see
+                # OpportunityEngine.analyse's LOW_SCORE branch
+                # (2026-09-03). Same reasoning as "low_confidence" above.
+                latest = [r for r in latest if not r.review and r.recommendation == "LOW_SCORE"]
             elif review_filter == "any":
                 latest = [r for r in latest if not r.review]
             elif review_filter == "consider_worthwhile":
@@ -481,7 +526,7 @@ class ProductRepository:
     # ---- Watchlist ----
 
     @staticmethod
-    def add_watch(asin: str, title: str = "", brand: str = "", note: str = ""):
+    def add_watch(asin: str, title: str = "", brand: str = "", note: str = "", viable_days_90d: int = 0):
         db = SessionLocal()
 
         try:
@@ -494,8 +539,12 @@ class ProductRepository:
                     existing.brand = brand
                 if note:
                     existing.note = note
+                if viable_days_90d:
+                    existing.viable_days_90d = viable_days_90d
             else:
-                db.add(WatchedProduct(asin=asin, title=title, brand=brand, note=note))
+                db.add(WatchedProduct(
+                    asin=asin, title=title, brand=brand, note=note, viable_days_90d=viable_days_90d,
+                ))
 
             db.commit()
 
@@ -952,7 +1001,7 @@ class ProductRepository:
     # ---- Review (thumbs up/down) ----
 
     @staticmethod
-    def set_review(asin: str, verdict: str | None, reason: str | None = None):
+    def set_review(asin: str, verdict: str | None, reason: str | None = None, reason_category: str | None = None):
         """
         verdict: "up", "down", or None to clear. Applies to the MOST
         RECENT scan record for this ASIN -- the one currently being
@@ -962,6 +1011,11 @@ class ProductRepository:
         verdict="down" -- the reject-flow field added 2026-08-23 (see
         ProductRecord.review_reason's own comment). Passed through as
         given; callers decide whether it's worth prompting for.
+
+        reason_category: optional structured reason (atlas-review-
+        queue-backend-v1.md section 5, see review_queue_service.
+        REVIEW_REASON_CATEGORIES) -- purely additive alongside `reason`,
+        never a replacement for it.
         """
         db = SessionLocal()
 
@@ -976,6 +1030,7 @@ class ProductRepository:
             if record:
                 record.review = verdict
                 record.review_reason = reason
+                record.review_reason_category = reason_category
                 db.commit()
 
         finally:

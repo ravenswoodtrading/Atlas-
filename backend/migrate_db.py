@@ -46,12 +46,25 @@ migrate_table("product_records", {
     "eu_vat_rate_used": "REAL DEFAULT 0.0",
     "ean": "TEXT DEFAULT ''",
     "review_reason": "TEXT",
+    "match_tier": "TEXT DEFAULT ''",
+    "match_confidence_pct": "INTEGER DEFAULT 0",
+    "source_confidence": "TEXT DEFAULT ''",
+    "review_reason_category": "TEXT",
+    "last_offer_checked_at": "DATETIME",
+    "last_offer_price_gbp": "REAL",
+    "last_offer_buyable": "BOOLEAN",
 })
 
 migrate_table("leads", {
     "decision_reason": "TEXT",
     "source_detail": "TEXT",
     "synced_to_sheet_at": "DATETIME",
+    "source_marketplace": "TEXT",
+    "decision_reason_category": "TEXT",
+})
+
+migrate_table("watched_products", {
+    "viable_days_90d": "INTEGER DEFAULT 0",
 })
 
 migrate_table("automation_settings", {
@@ -63,6 +76,7 @@ migrate_table("seller_new_listings", {
     "review": "TEXT",
     "sourcing_reclassified_at": "DATETIME",
     "review_reason": "TEXT",
+    "review_reason_category": "TEXT",
 })
 
 migrate_table("oa_source_candidates", {
@@ -72,6 +86,13 @@ migrate_table("oa_source_candidates", {
     "price_source": "TEXT DEFAULT ''",
     "shopping_candidates_json": "TEXT DEFAULT ''",
     "added_to_review_queue": "BOOLEAN DEFAULT 0",
+    "shopping_provider": "TEXT DEFAULT ''",
+})
+
+migrate_table("out_of_stock_listings", {
+    "sold_evidence": "TEXT DEFAULT ''",
+    "sku_listing_date": "TEXT DEFAULT ''",
+    "snoozed_until": "DATETIME",
 })
 
 migrate_table("oa_source_runs", {
@@ -79,6 +100,8 @@ migrate_table("oa_source_runs", {
     "serpapi_searches_left": "INTEGER",
     "asins_auto_priced": "INTEGER DEFAULT 0",
     "serpapi_quota_stopped": "BOOLEAN DEFAULT 0",
+    "is_test": "BOOLEAN DEFAULT 0",
+    "serper_search_count": "INTEGER DEFAULT 0",
 })
 
 conn.commit()

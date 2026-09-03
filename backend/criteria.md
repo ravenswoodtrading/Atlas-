@@ -15,6 +15,8 @@ A lead needs to clear ALL of these to be recommended at all:
 - ROI ≥ 17%
 - Margin ≥ 13% (profit as a % of sale price)
 - Profit ≥ £2 per unit
+- Sale price ≥ £10 -- a genuinely cheap item doesn't leave enough absolute headroom for fees
+  to be worth sourcing, however good the ROI/margin numbers look
 
 25%+ ROI is treated as a strong lead, on top of the floor above — not a separate gate.
 
@@ -36,4 +38,5 @@ rejection reasons, for your approval — it only ever writes between the markers
 without your explicit approval on that page. You can also just edit this section by hand.
 
 <!-- BEGIN JUDGMENT NOTES -->
+- EU A2A leads can only be bought from Amazon itself or from an FBA seller. If the EU buy box is merchant-fulfilled (FBM), or Amazon is out of stock on the source marketplace, the lead is not buyable no matter how good the spread looks -- there's no Amazon VAT invoice to reclaim against. Treat "Amazon out of stock" as an OOS park (revisit on restock), and "FBM seller only" as a plain reject.
 <!-- END JUDGMENT NOTES -->

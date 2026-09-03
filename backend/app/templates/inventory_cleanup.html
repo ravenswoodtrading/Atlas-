@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
+
+{% macro sold_evidence_cell(item) -%}
+{%- if item.sold_evidence == "sku_listing_date" -%}
+SKU date ({{ item.sku_listing_date }})
+{%- elif item.sold_evidence == "sales_report" -%}
+Sales report ({{ item.units_shipped_lookback }} unit{{ "s" if item.units_shipped_lookback != 1 else "" }}{% if item.last_shipment_date %}, last {{ item.last_shipment_date }}{% endif %})
+{%- else -%}
+--
+{%- endif -%}
+{% endmacro %}
+
+{% block title %}Out of Stock Cleanup - Atlas{% endblock %}
+
+{% block content %}
+
+{% if message %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0">Out of Stock Cleanup {{ help_button("inventory_cleanup") }}</h4>
+    <form method="post" action="/inventory-cleanup/check-now" id="checkNowForm">
+        <button class="btn btn-dark btn-sm" type="submit" id="checkNowBtn">
+            <i class="bi bi-arrow-repeat"></i> Check stock now
+        </button>
+    </form>
+</div>
+
+<script>
+(function() {
+    var form = document.getElementById('checkNowForm');
+    var btn = document.getElementById('checkNowBtn');
+    form.addEventListener('submit', function() {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking your live Amazon stock -- this can take a minute or two...';
+    });
+})();
+</script>
+
+<p class="text-muted">
+    SKUs Atlas has confirmed are genuinely sold out -- zero fulfillable/inbound/reserved stock on Amazon,
+    <strong>and</strong> confirmed sold evidence (see "Sold evidence" per row) -- never a listing that just
+    hasn't been stocked yet. A SKU only shows as "Ready to review" once it's stayed at zero stock for {{ min_days }}
+    straight days. Nothing is ever deleted automatically -- deleting removes the listing from Amazon via the
+    real Listings API and is <strong>not</strong> easily reversible.
+</p>
+
+<form method="post" id="candidatesForm">
+{% if pending %}
+<div class="card metric p-3 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="mb-0">Ready to review ({{ pending|length }})</h6>
+        <div>
+            <button type="submit" formaction="/inventory-cleanup/dismiss" class="btn btn-sm btn-outline-secondary me-2"
+                    title="Stops flagging for {{ dismiss_snooze_days }} days, then re-checks it fresh -- never permanent.">
+                <i class="bi bi-eye-slash"></i> Snooze {{ dismiss_snooze_days }}d
+            </button>
+            <button type="submit" formaction="/inventory-cleanup/delete" class="btn btn-sm btn-danger"
+                    onclick="return confirm('Permanently delete the selected listing(s) from Amazon? This is not easily reversible.');">
+                <i class="bi bi-trash"></i> Delete selected from Amazon
+            </button>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="selectAll"></th>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th class="text-end">Days out of stock</th>
+                    <th>Sold evidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in pending %}
+                <tr>
+                    <td>
+                        <input type="checkbox" name="candidate_ids" value="{{ item.id }}" class="row-check">
+                    </td>
+                    <td style="max-width:260px;">
+                        <div class="fw-semibold small">{{ item.title[:70] if item.title else item.sku }}{% if item.title and item.title|length > 70 %}...{% endif %}</div>
+                        <div class="text-muted small">{{ item.asin }}</div>
+                    </td>
+                    <td class="small">{{ item.sku }}</td>
+                    <td class="text-end">{{ (item.last_checked_at - item.first_out_of_stock_at).days }}</td>
+                    <td class="small text-muted">{{ sold_evidence_cell(item) }}</td>
+                </tr>
+                {% if item.delete_error %}
+                <tr>
+                    <td></td>
+                    <td colspan="4" class="small text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> Last delete attempt failed: {{ item.delete_error }}
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+(function() {
+    var selectAll = document.getElementById('selectAll');
+    if (!selectAll) return;
+    selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.row-check').forEach(function(cb) { cb.checked = selectAll.checked; });
+    });
+})();
+</script>
+{% else %}
+<div class="alert alert-info mb-4">
+    Nothing ready to review yet.
+    {% if monitoring %}{{ monitoring|length }} SKU(s) are out of stock with confirmed past sales, but still within the {{ min_days }}-day monitoring window below.{% endif %}
+</div>
+{% endif %}
+</form>
+
+{% if monitoring %}
+<form method="post" id="monitoringForm">
+<div class="card metric p-3 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Still monitoring ({{ monitoring|length }})</h6>
+        <div>
+            <button type="submit" formaction="/inventory-cleanup/dismiss" class="btn btn-sm btn-outline-secondary me-2"
+                    title="Stops flagging for {{ dismiss_snooze_days }} days, then re-checks it fresh -- never permanent.">
+                <i class="bi bi-eye-slash"></i> Snooze {{ dismiss_snooze_days }}d
+            </button>
+            <button type="submit" formaction="/inventory-cleanup/delete" class="btn btn-sm btn-danger"
+                    onclick="return confirm('Permanently delete the selected listing(s) from Amazon? This is not easily reversible. These have NOT yet passed the {{ min_days }}-day monitoring window -- only proceed if you already trust the sold evidence shown.');">
+                <i class="bi bi-trash"></i> Delete selected from Amazon
+            </button>
+        </div>
+    </div>
+    <p class="text-muted small mb-2">
+        Out of stock with confirmed sold evidence, but under {{ min_days }} days since Atlas first started
+        tracking this stockout -- Delete and Dismiss both work here too, in case the sold evidence alone
+        (e.g. an old SKU date) already convinces you without waiting.
+    </p>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th><input type="checkbox" id="selectAllMonitoring"></th>
+                    <th>Product</th>
+                    <th>SKU</th>
+                    <th class="text-end">Days out of stock</th>
+                    <th>Sold evidence</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in monitoring %}
+                <tr class="text-muted">
+                    <td>
+                        <input type="checkbox" name="candidate_ids" value="{{ item.id }}" class="monitoring-row-check">
+                    </td>
+                    <td class="small">{{ item.title[:60] if item.title else item.sku }}</td>
+                    <td class="small">{{ item.sku }}</td>
+                    <td class="text-end">{{ (item.last_checked_at - item.first_out_of_stock_at).days }}</td>
+                    <td class="small">{{ sold_evidence_cell(item) }}</td>
+                </tr>
+                {% if item.delete_error %}
+                <tr>
+                    <td></td>
+                    <td colspan="4" class="small text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> Last delete attempt failed: {{ item.delete_error }}
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</form>
+
+<script>
+(function() {
+    var selectAll = document.getElementById('selectAllMonitoring');
+    if (!selectAll) return;
+    selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.monitoring-row-check').forEach(function(cb) { cb.checked = selectAll.checked; });
+    });
+})();
+</script>
+{% endif %}
+
+{% if history %}
+<div class="card metric p-3">
+    <h6>History</h6>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead><tr><th>Product</th><th>SKU</th><th>Outcome</th><th>When</th></tr></thead>
+            <tbody>
+                {% for item in history %}
+                <tr>
+                    <td class="small">{{ item.title[:60] if item.title else item.sku }}</td>
+                    <td class="small">{{ item.sku }}</td>
+                    <td class="small">
+                        {% if item.status == "deleted" %}<span class="badge bg-danger">Deleted from Amazon</span>
+                        {% else %}<span class="badge bg-secondary">Snoozed{% if item.snoozed_until %} until {{ item.snoozed_until.strftime("%Y-%m-%d") }}{% endif %}</span>{% endif %}
+                    </td>
+                    <td class="small text-muted">{{ item.reviewed_at.strftime("%Y-%m-%d %H:%M") if item.reviewed_at else "--" }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% call help_modal("inventory_cleanup", "Out of Stock Cleanup") %}
+<p>
+    Finds Amazon SKUs that are genuinely sold out -- zero stock (fulfillable, inbound, and reserved all zero)
+    <strong>and</strong> confirmed evidence it actually sold at some point -- and lets you delete the listing
+    straight from here.
+</p>
+<p>
+    "Sold evidence" is one of two signals, shown per row. Most SKUs carry a date in their own SKU name -- if
+    that date is old enough, the listing itself is old enough to trust as sold-through evidence, even with zero
+    units showing in the last 30 days. SKUs that don't carry that date pattern fall back to Amazon's own
+    fulfilled-shipments report instead, which currently only sees the last 30 days.
+</p>
+<p>
+    A SKU with zero stock but <strong>no</strong> confirmed evidence either way is never shown here at all --
+    that's a listing that hasn't been stocked yet, not one that sold through, and this page deliberately leaves
+    those alone.
+</p>
+<p>
+    "Days out of stock" counts from whenever Atlas FIRST detected this specific stockout -- it resets to 0 for a
+    SKU that restocks and later sells through again, and it also reads low right after Atlas starts tracking
+    something new, even if the listing itself has clearly been dead much longer (that's what "Sold evidence"
+    is for -- an old SKU date is real proof on its own, independent of this counter).
+</p>
+<p>
+    "Ready to review" means it's passed {{ min_days }} days since first detected -- but Delete and Dismiss both
+    work from "Still monitoring" too, so you're never forced to wait that out if the sold evidence already
+    convinces you. Nothing is ever deleted automatically either way -- select rows and click Delete, which
+    removes the listing from Amazon via the Listings API (not easily reversible).
+</p>
+<p class="mb-0">
+    "Snooze {{ dismiss_snooze_days }}d" is never permanent -- it just stops flagging a SKU for
+    {{ dismiss_snooze_days }} days (e.g. you know an inbound shipment is on its way but Amazon hasn't reflected it
+    yet), then a later sweep re-checks it completely fresh. If it's still genuinely zero stock with confirmed sold
+    evidence once the snooze expires, it comes straight back -- possibly straight into "Ready to review" if it's
+    already been out of stock long enough, since the days-out-of-stock clock keeps running the whole time, it
+    doesn't reset.
+</p>
+{% endcall %}
+
+{% endblock %}

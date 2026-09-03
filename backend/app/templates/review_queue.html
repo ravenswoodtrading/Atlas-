@@ -19,13 +19,13 @@
 
 <ul class="nav nav-tabs mb-3">
     <li class="nav-item">
-        <a class="nav-link {{ 'active' if view == 'main' }}" href="/review-queue?view=main&sort={{ sort }}">
+        <a class="nav-link {{ 'active' if view == 'main' }}" href="/review-queue?view=main&sort={{ sort }}&source={{ source }}">
             Buy / Star buys
             <span class="badge bg-success ms-1">{{ main_count }}</span>
         </a>
     </li>
     <li class="nav-item">
-        <a class="nav-link {{ 'active' if view == 'consider' }}" href="/review-queue?view=consider&sort={{ sort }}">
+        <a class="nav-link {{ 'active' if view == 'consider' }}" href="/review-queue?view=consider&sort={{ sort }}&source={{ source }}">
             Consider
             <span class="badge bg-warning text-dark ms-1">{{ consider_count }}</span>
         </a>
@@ -47,18 +47,6 @@
 </div>
 {% endif %}
 
-{% if not leads %}
-<div class="alert alert-info">
-    <h5>{{ "Nothing here right now" if view == "consider" else "Nothing waiting on review" }}</h5>
-    <p class="mb-0">
-        {% if view == "consider" %}
-            CONSIDER leads that are profitable with some sign of sales will show up here as they're found.
-        {% else %}
-            Star buys, BUY recommendations, and riskier peak-price leads (from scans or buyable competitor finds) will show up here as they're found.
-        {% endif %}
-    </p>
-</div>
-{% else %}
 <div class="card metric p-3 mb-3">
     <form method="get" action="/review-queue" class="row g-3 align-items-end">
         <input type="hidden" name="view" value="{{ view }}">
@@ -71,8 +59,40 @@
                 <option value="score_asc" {{ "selected" if sort == "score_asc" }}>Lowest score</option>
             </select>
         </div>
+        <div class="col-md-3">
+            <label class="form-label">Source</label>
+            <select class="form-select" name="source" onchange="this.form.submit()">
+                <option value="" {{ "selected" if not source }}>All sources</option>
+                {% for key in source_filters %}
+                <option value="{{ key }}" {{ "selected" if source == key }}>{{ source_filter_labels[key] }}</option>
+                {% endfor %}
+            </select>
+        </div>
     </form>
 </div>
+
+{% if not leads %}
+<div class="alert alert-info">
+    <h5>
+        {% if source in source_filters %}
+            No {{ source_filter_labels[source] }} leads right now
+        {% elif view == "consider" %}
+            Nothing here right now
+        {% else %}
+            Nothing waiting on review
+        {% endif %}
+    </h5>
+    <p class="mb-0">
+        {% if source in source_filters %}
+            Try a different source, or <a href="/review-queue?view={{ view }}&sort={{ sort }}">clear the filter</a> to see everything on this tab.
+        {% elif view == "consider" %}
+            CONSIDER leads that are profitable with some sign of sales will show up here as they're found.
+        {% else %}
+            Star buys, BUY recommendations, and riskier peak-price leads (from scans or buyable competitor finds) will show up here as they're found.
+        {% endif %}
+    </p>
+</div>
+{% else %}
 <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
     <div class="form-check mb-0">
         <input class="form-check-input" type="checkbox" id="select-all-leads">
@@ -150,7 +170,36 @@
                         <div class="mt-1"><span class="badge bg-warning text-dark" title="{{ lead.conflict_note }}"><i class="bi bi-exclamation-triangle"></i> Conflict</span></div>
                         {% endif %}
                     </td>
-                    <td class="fw-semibold">{{ lead.best_source_marketplace }}</td>
+                    <td class="fw-semibold">
+                        {{ lead.best_source_marketplace }}
+                        {% if lead.match_tier %}
+                            {% set tier_labels = {"ean": "EAN match", "brand_mpn": "Brand + MPN match", "mpn": "MPN match", "brand_title": "Brand + title only", "title_only": "Title only"} %}
+                            {% if lead.source_confidence == "High" %}
+                                {% set badge_class = "bg-success" %}
+                            {% elif lead.source_confidence == "Medium" %}
+                                {% set badge_class = "bg-warning text-dark" %}
+                            {% else %}
+                                {% set badge_class = "bg-danger" %}
+                            {% endif %}
+                            <div class="mt-1">
+                                <span class="badge {{ badge_class }}"
+                                      title="Atlas's OA Source Discovery match confidence: {{ lead.match_confidence_pct }}% ({{ tier_labels.get(lead.match_tier, lead.match_tier) }}). {% if lead.source_confidence != 'High' %}No exact EAN/MPN was confirmed for this listing -- double-check it's really the same product before buying.{% else %}An exact identifier (EAN/MPN) was found in this listing.{% endif %}">
+                                    <i class="bi bi-{{ 'patch-check' if lead.source_confidence == 'High' else 'question-diamond' }}"></i>
+                                    {{ lead.source_confidence }} match ({{ lead.match_confidence_pct }}%)
+                                </span>
+                            </div>
+                        {% endif %}
+                        {% if lead.freshness == "UNAVAILABLE" %}
+                        <div class="mt-1"><span class="badge bg-danger" title="Atlas's most recent automated check found no buyable offer at this source. The original analysis below is unchanged -- this may simply mean the opportunity has expired since Atlas found it, not that the original recommendation was wrong.">
+                            <i class="bi bi-x-octagon"></i> No buyable offer (last checked)</span></div>
+                        {% elif lead.freshness == "STALE" %}
+                        <div class="mt-1"><span class="badge bg-warning text-dark" title="This source hasn't been rechecked recently -- the price/availability below may no longer be current.">
+                            <i class="bi bi-clock-history"></i> Stale check</span></div>
+                        {% elif lead.freshness == "AGING" %}
+                        <div class="mt-1"><span class="badge bg-secondary" title="This source check is getting old -- double-check before buying.">
+                            <i class="bi bi-clock"></i> Aging check</span></div>
+                        {% endif %}
+                    </td>
                     <td>&pound;{{ "%.2f"|format(lead.best_source_cost_gbp) }}</td>
                     <td class="{{ 'text-success' if lead.profit > 0 else 'text-danger' }}">
                         <div class="fw-bold">{{ "%.1f"|format(lead.roi) }}%{% if lead.parsed_report.margin %} <span class="fw-normal small">/ {{ "%.1f"|format(lead.parsed_report.margin) }}% margin</span>{% endif %}</div>
@@ -179,6 +228,14 @@
                             <span class="badge" style="background:#96660a;color:#fff;" title="Only profitable at a recent price peak, not today/average -- riskier">
                                 <i class="bi bi-exclamation-triangle"></i> PEAK (risky)
                             </span>
+                        {% elif lead.recommendation == "LOW_CONFIDENCE" %}
+                            <span class="badge" style="background:#5c4d99;color:#fff;" title="Genuinely viable ROI at today's/90-day-average price and a decent score, but a price-swing/competition-surge/low-velocity penalty knocked confidence below the CONSIDER bar -- check the Why? panel before trusting it.">
+                                <i class="bi bi-question-diamond"></i> LOW CONFIDENCE
+                            </span>
+                        {% elif lead.recommendation == "LOW_SCORE" %}
+                            <span class="badge" style="background:#4a6b7c;color:#fff;" title="Genuinely viable ROI/profit at today's/90-day-average price with real sales evidence, but the composite score (demand trend/competition/velocity) is under the CONSIDER bar -- check the Why? panel before trusting it.">
+                                <i class="bi bi-graph-down"></i> LOW SCORE
+                            </span>
                         {% elif lead.recommendation == "GATED" %}
                             <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
                                 <i class="bi bi-shield-lock"></i> GATED
@@ -204,10 +261,11 @@
                                         <i class="bi bi-hand-thumbs-up"></i>
                                     </button>
                                 </form>
-                                <form method="post" action="/review/decide" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
+                                <form method="post" action="/review/decide" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return promptRejectReasonCategory(this);">
                                     <input type="hidden" name="lead_id" value="{{ lead.lead_id }}">
                                     <input type="hidden" name="decision" value="rejected">
                                     <input type="hidden" name="reason" value="">
+                                    <input type="hidden" name="reason_category" value="">
                                     <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
                                         <i class="bi bi-hand-thumbs-down"></i>
@@ -233,11 +291,12 @@
                                         <i class="bi bi-hand-thumbs-up"></i>
                                     </button>
                                 </form>
-                                <form method="post" action="/review/set" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return true;">
+                                <form method="post" action="/review/set" class="flex-fill" onsubmit="this.reason.value = prompt('Why reject this lead? (optional)') || ''; return promptRejectReasonCategory(this);">
                                     <input type="hidden" name="asin" value="{{ lead.asin }}">
                                     <input type="hidden" name="listing_id" value="{{ lead.listing_id }}">
                                     <input type="hidden" name="verdict" value="down">
                                     <input type="hidden" name="reason" value="">
+                                    <input type="hidden" name="reason_category" value="">
                                     <input type="hidden" name="return_to" value="/review-queue?view={{ view }}&sort={{ sort }}">
                                     <button class="btn btn-sm btn-outline-danger w-100" type="submit" title="Not worth it">
                                         <i class="bi bi-hand-thumbs-down"></i>
@@ -318,6 +377,22 @@
                             not just a single spike.
                         </div>
                         {% endif %}
+                        {% if lead.recommendation == "LOW_CONFIDENCE" %}
+                        <div class="alert py-2 px-3 small mb-2" style="background:#efe9fb;border-color:#c9b8f0;color:#5c4d99;">
+                            <i class="bi bi-question-diamond"></i>
+                            Genuinely profitable today or at the 90-day average, with a {{ lead.parsed_report.score }}/100 score -- but confidence
+                            ({{ lead.parsed_report.confidence }}/100) fell below the CONSIDER bar. See "Confidence factors" below for exactly why
+                            (price swing, competition surge, and/or low sales velocity) before trusting it.
+                        </div>
+                        {% endif %}
+                        {% if lead.recommendation == "LOW_SCORE" %}
+                        <div class="alert py-2 px-3 small mb-2" style="background:#e8eef1;border-color:#bcd1da;color:#4a6b7c;">
+                            <i class="bi bi-graph-down"></i>
+                            Genuinely profitable today or at the 90-day average, with real sales evidence -- but the composite score
+                            ({{ lead.parsed_report.score }}/100, which also weighs demand trend/competition/velocity, not just profitability)
+                            fell below the CONSIDER bar. See "Score factors" below for exactly why before trusting it.
+                        </div>
+                        {% endif %}
                         <div class="row py-2">
                             {% if lead.reasoning %}
                             <div class="col-md-6">
@@ -343,6 +418,20 @@
                                 </ul>
                             </div>
                             {% endif %}
+                            {% if lead.recommendation == "LOW_CONFIDENCE" and lead.parsed_report.confidence_breakdown %}
+                            <div class="col-md-6">
+                                <h6 class="small fw-bold">Confidence factors ({{ lead.parsed_report.confidence }}/100)</h6>
+                                <ul class="list-unstyled small mb-0">
+                                {% for f in lead.parsed_report.confidence_breakdown %}
+                                    <li class="{{ 'text-danger' if f.triggered else 'text-muted' }}">
+                                        <i class="bi {{ 'bi-exclamation-triangle-fill' if f.triggered else 'bi-check-circle' }}"></i>
+                                        {{ f.label }}
+                                        {% if f.triggered %}<strong>({{ f.points }})</strong>{% endif %}
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                            </div>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>
@@ -355,6 +444,29 @@
 {% endif %}
 
 <script>
+// Structured reject reason (atlas-review-queue-backend-v1.md section 5)
+// -- kept as a second plain prompt() rather than a modal/dropdown, same
+// minimal-UI-touch discipline as the existing free-text reason prompt
+// this sits alongside; a real picker is UI-redesign work, out of scope
+// here. Categories echoed from REVIEW_REASON_CATEGORY_LABELS server-side
+// so this never drifts from the actual backend enum.
+const REVIEW_REASON_CATEGORY_PROMPT_LABELS = {
+    {% for cat in review_reason_categories %}"{{ cat }}": "{{ review_reason_category_labels[cat] }}"{{ "," if not loop.last }}
+    {% endfor %}
+};
+
+function promptRejectReasonCategory(form) {
+    const options = Object.entries(REVIEW_REASON_CATEGORY_PROMPT_LABELS)
+        .map(([value, label], i) => `${i + 1}. ${label}`).join('\n');
+    const raw = prompt(
+        `Reason category (optional, type a number or leave blank):\n${options}`
+    );
+    const index = parseInt(raw, 10) - 1;
+    const keys = Object.keys(REVIEW_REASON_CATEGORY_PROMPT_LABELS);
+    form.reason_category.value = (index >= 0 && index < keys.length) ? keys[index] : '';
+    return true;
+}
+
 (function () {
     const checkboxes = () => Array.from(document.querySelectorAll('.lead-checkbox'));
     const selectAllTop = document.getElementById('select-all-leads');

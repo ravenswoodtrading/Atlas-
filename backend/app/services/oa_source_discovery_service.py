@@ -5,7 +5,7 @@ from difflib import SequenceMatcher
 from sqlalchemy import func
 
 from app.database.database import SessionLocal
-from app.database.models import OaSourceRun, OaSourceCandidate, OaSourceExcludedAsin
+from app.database.models import OaSourceRun, OaSourceCandidate, OaSourceExcludedAsin, ProductRecord
 from app.models.product import Product
 from app.services.seller_watch_service import SellerWatchService
 from app.services.product_repository import ProductRepository
@@ -14,8 +14,8 @@ from app.services.product_mapper import ProductMapper
 from app.services.category_survey_service import get_category_names
 from app.services.fee_engine import FeeEngine
 from app.services import brave_search_client
-from app.services import serpapi_client
-from app.services.oa_domain_classifier import classify_domain
+from app.services import shopping_search
+from app.services.oa_domain_classifier import classify_domain, classify_shopping_source
 from app.services.opportunity_engine import OpportunityEngine
 from app.services.activity_log import ActivityLog
 from app.config.exclusions import is_gated
@@ -59,6 +59,26 @@ TITLE_SIMILARITY_STRONG = 0.55
 # (and re-spending Brave/Keepa budget on) the same handful of ASINs
 # every time the "Run batch" button is clicked.
 SKIP_RECENTLY_CHECKED_DAYS = 7
+
+# Default "detected in the last N days" window for the "next up to
+# scan" preview AND for what a Run batch actually searches (2026-08-28).
+#
+# WHY this exists: the eligible pool is sorted by max_source_cost
+# DESCENDING (see _sorted_eligible_rows -- best opportunity first, the
+# user's own confirmed choice) and there are ~290 eligible ASINs at any
+# time. A handful of expensive old detections (£500 laptops from three
+# weeks ago) therefore permanently occupy the top of the list, so a
+# default limit=20 batch would search those over and over and NEVER
+# reach anything a competitor listed this week -- the exact complaint
+# that prompted this ("it only looks to have old leads on here... I
+# thought it would give me recent OA leads competitors have added").
+#
+# The window is applied BEFORE the value sort, not instead of it: you
+# still get best-opportunity-first, just within recent detections.
+# 0 means no window at all (the pre-2026-08-28 behaviour) and is a
+# selectable option on the page, so nothing is permanently hidden --
+# an old-but-valuable ASIN is always one dropdown change away.
+DEFAULT_DETECTION_WINDOW_DAYS = 7
 
 # Reserve this many SerpApi searches at the bottom of the monthly quota
 # and stop spending them once remaining quota drops to/below this line
@@ -123,6 +143,127 @@ MATCH_TIER_SCORES = {
 # THEY are the trust check, and this tier bar no longer applies -- see
 # _promote_if_qualifying.
 TRUSTED_MATCH_TIERS = ("ean", "brand_mpn", "mpn", "brand_title")
+
+# Auto-PROMOTE trust bar (2026-08-29, tightened after a real false
+# positive Tamara caught by eye: B0DV6CDXKT, a UbiQuiti
+# USW-FLEX-2.5G-8-POE switch, auto-matched to Optdex's GBP114 listing
+# for the base "USW-FLEX" model -- a different, cheaper product in the
+# same family. The match scored "brand_title" (Medium, 55%
+# confidence) and was the cheapest TRUSTED_MATCH_TIERS hit, so it won
+# and went straight into the Review Queue with no human look at all.
+#
+# Checked the real numbers behind that run: several OTHER listings in
+# the same result set genuinely WERE the right product (matching
+# title, matching price range) but scored a LOWER SequenceMatcher
+# similarity than the wrong one and were classified "title_only" --
+# i.e. the title-similarity signal that "brand_title" rests on isn't
+# reliable enough, on its own, to silently promote a lead with zero
+# human check. See classify_shopping_match's own docstring: this tier
+# has no actual product-identifier confirmation behind it, just brand
+# + fuzzy title similarity -- exactly the signal that can't tell a
+# variant/sibling product apart from the real one (same root cause as
+# the K5/K2 pressure-washer false positive IMPLAUSIBLE_AUTO_PROMOTE_ROI_PCT
+# was added for, 2026-08-28 -- that backstop doesn't catch THIS case
+# because a wrong-but-real-looking price like GBP114 isn't
+# implausible in isolation).
+#
+# Deliberately narrower than TRUSTED_MATCH_TIERS above, which still
+# governs which shopping result auto-populates a candidate's
+# SUGGESTED price for the OA results page (a brand_title match still
+# shows up there, pre-priced, ready for a human to confirm or
+# reject) -- this constant only gates the fully-automated path
+# straight into the real Review Queue with no human look at all. See
+# _promote_if_qualifying's match_trusted_enough.
+TRUSTED_MATCH_TIERS_AUTO_PROMOTE = ("ean", "brand_mpn", "mpn")
+
+# ROI above which a FULLY AUTOMATED "brand_title" match is treated as
+# too good to be true and held back for a human instead of
+# auto-promoted (2026-08-28).
+#
+# From a real false positive in run 3: a Karcher K 5 WCM Flex pressure
+# washer matched to an Argos listing at GBP45, scoring 336% ROI, and
+# went straight into the Review Queue. A K5 does not sell for GBP45 --
+# the match was almost certainly a different, far cheaper item in the
+# same brand family (an accessory, a K2, a spare lance).
+#
+# WHY only "brand_title": it's the one trusted tier with NO identifier
+# confirmation behind it at all -- just brand name + fuzzy title
+# similarity (see classify_shopping_match), which is exactly the
+# signal that cannot tell a K5 from a K2. The ean/mpn tiers matched a
+# specific product identifier, so a high ROI there is far more likely
+# to be a real find than a variant mix-up, and gating them would throw
+# away genuine leads. Not applied to price_source == "manual" either:
+# a human who opened the page and typed the price has already done the
+# check this bar is a substitute for.
+#
+# Deliberately generous -- this is a "that's not physically plausible"
+# backstop, not a profitability opinion. A genuine 150% OA find should
+# still sail through. Needs recalibrating once real batches show the
+# actual ROI distribution, same spirit as DIP_THRESHOLD in
+# sourcing_classifier.py. The candidate is NOT discarded: it still
+# appears on the results page with its price and ROI for a human to
+# confirm, which promotes it via the manual path.
+IMPLAUSIBLE_AUTO_PROMOTE_ROI_PCT = 200.0
+
+# WIDENED TO EVERY AUTOMATED TIER (2026-08-28). The reasoning above --
+# that an ean/mpn tier "matched a specific product identifier, so a high
+# ROI there is far more likely to be a real find" -- was tested by a real
+# batch and did not hold. Run 5 auto-promoted B0BTZB7F88 at a claimed
+# 1453% ROI: an eBay listing titled "Amd Ryzen 7 7800x3d Box Only No Cpu"
+# -- an EMPTY BOX at GBP12.94 against a GBP265 Amazon price -- and it
+# reached brand_mpn, not brand_title, because the MPN and brand both
+# genuinely appear in the box's own title.
+#
+# That is the whole failure mode: an identifier match confirms the
+# listing is ABOUT the right product, never that it IS the product. A
+# box, a spare part, a replacement screen, an empty retail carton and a
+# manual all legitimately carry the MPN. So the implausibility backstop
+# has to apply to every automated tier, not just the weakest one. A real
+# OA find does not return 1453%; a number like that is a mismatch
+# detector, not an opportunity.
+#
+# Still never applied to price_source == "manual" -- a human who opened
+# the page has done this check themselves.
+TIERS_EXEMPT_FROM_ROI_CEILING = ()
+
+# Phrases that mean the listing is NOT the product itself, even when the
+# brand and MPN match perfectly (2026-08-28). Drawn from real false
+# positives in run 5: "Box Only No Cpu" (an empty box) and "Asus
+# Chromebook Plus CX3402CB 14.0\" Laptop Screen" (a replacement screen,
+# not the laptop). Both cleared a trusted tier and auto-promoted.
+#
+# Matched case-insensitively against the RETAILER's own title, not
+# Amazon's. Blocks auto-promotion only -- the candidate still appears on
+# the results page, because occasionally one of these is a genuine
+# accessory listing the user may want, and that judgement is theirs.
+#
+# Add to this list whenever a new shape of false positive shows up; it is
+# cheap to extend and each entry is evidence of a real miss.
+NOT_THE_PRODUCT_PHRASES = (
+    "box only", "empty box", "no cpu", "cpu not included",
+    "for parts", "spares or repair", "spares/repair", "faulty", "not working",
+    "case only", "cover only", "screen only", "replacement screen",
+    "lcd screen", "digitizer", "screen assembly",
+    "manual only", "instructions only", "photo only", "picture only",
+    "battery only", "charger only", "cable only", "stand only", "lid only",
+    "pre-owned", "preowned", "second hand", "used ", "refurbished", "refurb",
+    "damaged", "incomplete", "read description", "sold as seen",
+    "replica", "compatible with", "fits ",
+)
+
+
+def looks_like_not_the_product(retailer_title: str) -> bool:
+    """
+    True when the retailer's own listing title says this isn't the whole
+    product -- see NOT_THE_PRODUCT_PHRASES.
+
+    Deliberately a dumb substring check rather than anything clever: the
+    phrases are unambiguous, and a false block costs the user one manual
+    confirmation on the results page, while a false pass costs them a
+    purchase of an empty box.
+    """
+    haystack = (retailer_title or "").lower()
+    return any(phrase in haystack for phrase in NOT_THE_PRODUCT_PHRASES)
 
 
 class OaSourceDiscoveryService:
@@ -270,7 +411,41 @@ class OaSourceDiscoveryService:
         return rows
 
     @staticmethod
-    def _sorted_eligible_rows() -> list:
+    def _within_window(rows: list, since_days: int) -> list:
+        """
+        Keeps only detections first seen in the last `since_days` days.
+        since_days=0 (or None) means no window -- every eligible row.
+
+        Filtered in Python against rows already fetched by
+        _fresh_eligible_rows rather than pushed down into
+        SellerWatchService.list_detections' own since_days SQL filter,
+        specifically so ONE pass over the pool can serve both the
+        windowed list and the unwindowed total the page shows beside it
+        ("87 of 288") -- doing it in SQL would mean running the whole
+        eligibility pipeline (gated-brand lookup, _has_oa_potential,
+        max_source_cost per row) twice per page load just to produce a
+        second count.
+
+        detected_at comes back timezone-NAIVE from SQLite even though
+        it's written via datetime.now(timezone.utc) -- same workaround
+        SellerWatchService._apply_common_filters already documents for
+        its own cutoff. A row with no detected_at at all is KEPT rather
+        than dropped: it's a data gap, not evidence of age, and
+        silently hiding an otherwise-eligible ASIN would be worse than
+        showing one whose date column reads "-".
+        """
+        if not since_days:
+            return rows
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).replace(tzinfo=None)
+
+        return [
+            row for row in rows
+            if row["listing"].detected_at is None or row["listing"].detected_at >= cutoff
+        ]
+
+    @staticmethod
+    def _fresh_eligible_rows() -> list:
         """
         _eligible_candidate_rows(), minus recently-checked (see
         SKIP_RECENTLY_CHECKED_DAYS) and manually-excluded ASINs (see
@@ -278,6 +453,11 @@ class OaSourceDiscoveryService:
         DESCENDING -- best opportunity (most headroom to pay for stock
         at FeeEngine.OA_TARGET_ROI_PCT) first, per the user's own
         confirmed choice over sorting by most-recently-detected.
+
+        NO detection-age window applied here -- that's _within_window's
+        job, layered on top by _sorted_eligible_rows. Split that way so
+        preview_context can get the windowed list and the full-pool
+        total out of a single pass (see _within_window).
 
         FIXED 2026-08-19: this ordering used to be computed ONLY inside
         preview_candidates -- get_candidate_asins (what a "Run batch"
@@ -320,54 +500,109 @@ class OaSourceDiscoveryService:
         return fresh_rows
 
     @staticmethod
-    def get_candidate_asins(limit: int) -> list:
+    def _sorted_eligible_rows(since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> list:
+        """
+        _fresh_eligible_rows() narrowed to detections from the last
+        `since_days` days (see DEFAULT_DETECTION_WINDOW_DAYS for why
+        that window exists and why it defaults on), still in
+        best-opportunity-first order within that window.
+
+        since_days=0 restores the original all-time behaviour.
+        """
+        return OaSourceDiscoveryService._within_window(
+            OaSourceDiscoveryService._fresh_eligible_rows(), since_days,
+        )
+
+    @staticmethod
+    def _display_row(row: dict) -> dict:
+        """
+        One eligible row -> the flat dict the "next up to scan" table
+        renders. Shared by preview_candidates and preview_context so
+        the two can't drift on which fields the template gets.
+        """
+        record = row["record"]
+        listing = row["listing"]
+
+        return {
+            "asin": listing.asin,
+            "title": record.title,
+            "brand": record.brand,
+            "category_name": record.category_name,
+            "buy_box_now": record.buy_box_now,
+            "monthly_sales": record.monthly_sales,
+            "ean": record.ean,
+            "max_source_cost": row["max_source_cost"],
+            "detected_at": listing.detected_at,
+        }
+
+    @staticmethod
+    def get_candidate_asins(limit: int, since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> list:
         """
         Up to `limit` ASINs from _sorted_eligible_rows -- i.e. the
         BEST opportunities first (see that method's docstring for why
         this matters, especially with a finite SerpApi search budget),
-        not just the most recently detected. Distinct ASINs, with
-        recently-checked and manually-excluded ones already filtered
-        out by _sorted_eligible_rows, so repeated batches don't just
-        keep re-searching the same handful of ASINs, and a run
-        automatically respects whatever the user pruned from the "next
-        up to scan" preview.
+        within the last `since_days` days of detections. Distinct
+        ASINs, with recently-checked and manually-excluded ones already
+        filtered out, so repeated batches don't just keep re-searching
+        the same handful of ASINs, and a run automatically respects
+        whatever the user pruned from the "next up to scan" preview.
+
+        `since_days` MUST be whatever the page was displaying when Run
+        batch was clicked (the form posts it back -- see
+        oa_discovery_run) -- otherwise the preview would once again be
+        claiming to show what a run would search while the run quietly
+        picked a different set, the exact drift _sorted_eligible_rows
+        was factored out to prevent in the first place.
         """
-        rows = OaSourceDiscoveryService._sorted_eligible_rows()
+        rows = OaSourceDiscoveryService._sorted_eligible_rows(since_days)
         return [row["listing"].asin for row in rows[:limit]]
 
     @staticmethod
-    def preview_candidates(limit: int = 100) -> list:
+    def preview_candidates(limit: int = 100,
+                            since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> list:
         """
         Full display rows for the "next up to scan" table -- the exact
-        same sorted, eligible/not-recently-checked/not-excluded pool
-        get_candidate_asins draws its ASINs from (see
-        _sorted_eligible_rows -- this table genuinely reflects what a
-        "Run batch" click would search next, in the order it would
-        search them), but returned as dicts with the fields the UI
-        needs to show and to judge before excluding one, rather than
-        bare ASIN strings.
+        same sorted, eligible/not-recently-checked/not-excluded,
+        within-window pool get_candidate_asins draws its ASINs from
+        (this table genuinely reflects what a "Run batch" click would
+        search next, in the order it would search them), but returned
+        as dicts with the fields the UI needs to show and to judge
+        before excluding one, rather than bare ASIN strings.
+
+        Kept as a thin wrapper over preview_context for any caller that
+        only wants the rows and not the pool counts.
         """
-        rows = OaSourceDiscoveryService._sorted_eligible_rows()
+        return OaSourceDiscoveryService.preview_context(limit, since_days)["candidates"]
 
-        preview = []
+    @staticmethod
+    def preview_context(limit: int = 100,
+                         since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> dict:
+        """
+        preview_candidates' rows PLUS the two counts the page needs to
+        make the window filter honest:
 
-        for row in rows[:limit]:
-            record = row["record"]
-            listing = row["listing"]
+          window_matched -- eligible ASINs inside the current window
+                            (may exceed len(candidates), which is
+                            capped at `limit`)
+          pool_total     -- eligible ASINs ignoring the window entirely
 
-            preview.append({
-                "asin": listing.asin,
-                "title": record.title,
-                "brand": record.brand,
-                "category_name": record.category_name,
-                "buy_box_now": record.buy_box_now,
-                "monthly_sales": record.monthly_sales,
-                "ean": record.ean,
-                "max_source_cost": row["max_source_cost"],
-                "detected_at": listing.detected_at,
-            })
+        Showing both is the whole point: "87 of 288" tells the user at
+        a glance that a narrow window is hiding 201 older-but-still-
+        eligible ASINs, rather than leaving them to assume the pool
+        itself has dried up -- which is precisely how the old
+        unwindowed-but-value-sorted list misled in the other direction.
 
-        return preview
+        Both counts come from ONE pass over the eligibility pipeline --
+        see _within_window for why the window isn't pushed into SQL.
+        """
+        all_rows = OaSourceDiscoveryService._fresh_eligible_rows()
+        windowed = OaSourceDiscoveryService._within_window(all_rows, since_days)
+
+        return {
+            "candidates": [OaSourceDiscoveryService._display_row(row) for row in windowed[:limit]],
+            "window_matched": len(windowed),
+            "pool_total": len(all_rows),
+        }
 
     @staticmethod
     def get_excluded_asins() -> set:
@@ -439,6 +674,12 @@ class OaSourceDiscoveryService:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).replace(tzinfo=None)
             rows = (
                 db.query(OaSourceCandidate.asin)
+                .join(OaSourceRun, OaSourceCandidate.run_id == OaSourceRun.id)
+                # Excludes test-harness runs (see OaSourceRun.is_test's
+                # docstring) -- a step-3 comparison run must never make a
+                # real ASIN look "recently checked" and suppress it from
+                # the LIVE next-up-to-scan pool for SKIP_RECENTLY_CHECKED_DAYS.
+                .filter(OaSourceRun.is_test == False)  # noqa: E712
                 .filter(OaSourceCandidate.created_at >= cutoff)
                 .distinct()
                 .all()
@@ -486,6 +727,26 @@ class OaSourceDiscoveryService:
             queries.append(("brand_title", f'"{combined}" UK'))
 
         return queries[:MAX_DISCOVERY_QUERIES_PER_ASIN]
+
+    @staticmethod
+    def _canonical_product_string(brand: str, title: str) -> str:
+        """
+        "brand + title" for the title-similarity tiers below -- but
+        Amazon titles routinely already start with the brand name
+        (e.g. "UbiQuiti USW-FLEX-2.5G-8-POE", "Philips Airfryer XL"),
+        same observation _build_discovery_queries already made for its
+        own Brave query text (see its own comment just above). Naively
+        prepending the brand again doubles it up ("Ubiquiti Ubiquiti
+        USW-Flex-2.5G-8-PoE"), which shortens/skews the string enough
+        to move a SequenceMatcher ratio in either direction for no
+        real reason -- confirmed 2026-08-29 on a real false positive
+        (B0DV6CDXKT, see TRUSTED_MATCH_TIERS_AUTO_PROMOTE's docstring)
+        where this was one contributing factor in a wrong listing
+        narrowly clearing the similarity bar.
+        """
+        if brand and title.lower().startswith(brand.lower()):
+            return title.lower()
+        return f"{brand} {title}".lower()
 
     @staticmethod
     def classify_match(ean: str, mpn: str, brand: str, title: str,
@@ -537,7 +798,8 @@ class OaSourceDiscoveryService:
             return "", None
 
         haystack = f"{discovery_hit.get('title', '')} {discovery_hit.get('description', '')}"
-        similarity = SequenceMatcher(None, f"{brand} {title}".lower(), haystack.lower()).ratio()
+        canonical = OaSourceDiscoveryService._canonical_product_string(brand, title)
+        similarity = SequenceMatcher(None, canonical, haystack.lower()).ratio()
         brand_present = bool(brand) and brand.lower() in haystack.lower()
 
         if brand_present and similarity >= TITLE_SIMILARITY_STRONG:
@@ -549,7 +811,7 @@ class OaSourceDiscoveryService:
     def classify_shopping_match(ean: str, mpn: str, brand: str, title: str, result: dict) -> str:
         """
         The same 5-tier hierarchy as classify_match, adapted for a
-        single Google Shopping result (see serpapi_client.
+        single Google Shopping result (see shopping_search.
         search_uk_shopping) rather than a Brave discovery hit + a
         separate site-restricted verification search. There IS no
         site-restricted EAN/MPN search available here -- SerpApi's
@@ -576,7 +838,8 @@ class OaSourceDiscoveryService:
                 return "brand_mpn"
             return "mpn"
 
-        similarity = SequenceMatcher(None, f"{brand} {title}".lower(), haystack).ratio()
+        canonical = OaSourceDiscoveryService._canonical_product_string(brand, title)
+        similarity = SequenceMatcher(None, canonical, haystack).ratio()
         brand_present = bool(brand) and brand.lower() in haystack
 
         if brand_present and similarity >= TITLE_SIMILARITY_STRONG:
@@ -585,18 +848,20 @@ class OaSourceDiscoveryService:
         return "title_only"
 
     @staticmethod
-    def _promote_if_qualifying(db, candidate, product, category_name: str, retailer_price_gbp: float) -> bool:
+    def _promote_if_qualifying(db, candidate, product, category_name: str, retailer_price_gbp: float,
+                                dry_run: bool = False) -> bool:
         """
         Shared by run_batch (SerpApi auto-found prices) and
         update_candidate (a human confirming/overriding a price) --
         one place deciding whether a priced OA candidate is trustworthy
         AND profitable enough to become a REAL Atlas lead.
 
-        The match-tier bar (TRUSTED_MATCH_TIERS, never title_only
-        alone -- per the user's own explicit choice, 2026-08-19) ONLY
-        applies when candidate.price_source == "serpapi_auto" -- i.e.
-        nobody has looked at this yet, so the algorithm's own match
-        confidence is the only check there is. It does NOT apply when
+        The match-tier bar (TRUSTED_MATCH_TIERS_AUTO_PROMOTE -- EAN/
+        MPN/brand+MPN only, tightened 2026-08-29 to exclude brand_title;
+        see that constant's docstring) ONLY applies when
+        candidate.price_source == "serpapi_auto" -- i.e. nobody has
+        looked at this yet, so the algorithm's own match confidence is
+        the only check there is. It does NOT apply when
         price_source == "manual": a human who opened the retailer link
         (or picked one from "other retailers found") and typed in what
         they verified themselves IS the trust check -- requiring an
@@ -604,7 +869,9 @@ class OaSourceDiscoveryService:
         own explicit ask ("if I find a better retailer... this gets
         added to the review queue"), and mirrors the original
         confirm_price's bar (ROI only, no match-tier gate) for exactly
-        this reason.
+        this reason. A brand_title match (Medium confidence -- no real
+        identifier confirmed) still shows up on the OA results page,
+        pre-priced, for a human to confirm via that manual path.
 
         Either way, ROI must clear FeeEngine.OA_TARGET_ROI_PCT (same
         25% bar as everywhere else in Atlas), AND margin/profit must
@@ -635,6 +902,18 @@ class OaSourceDiscoveryService:
         re-confirming an unchanged price, or a Reclassify-style re-run,
         can't create duplicate ProductRecord rows for the same find.
         Returns True if this call newly promoted the candidate.
+
+        dry_run (2026-08-29, added for the step-3 SerpApi-vs-Serper test
+        harness -- see test_harness_search_providers.py): still runs
+        every check above and still returns the real True/False
+        "would this have qualified" answer, and still records
+        candidate.estimated_profit_gbp/estimated_roi_pct either way
+        (those are informational fields on the candidate row, harmless
+        either way) -- but skips the two writes that make a promotion
+        REAL: ProductRepository.save_opportunity and
+        candidate.added_to_review_queue. A dry_run call can therefore
+        measure "how many would have promoted" without creating a
+        single real lead, Review Queue entry, or Discord alert.
         """
         priced_product = dataclass_replace(
             product,
@@ -650,11 +929,35 @@ class OaSourceDiscoveryService:
         already_promoted = candidate.added_to_review_queue
         match_trusted_enough = (
             candidate.price_source == "manual"
-            or candidate.match_tier in TRUSTED_MATCH_TIERS
+            or candidate.match_tier in TRUSTED_MATCH_TIERS_AUTO_PROMOTE
         )
+
+        # Too-good-to-be-true backstop -- see
+        # IMPLAUSIBLE_AUTO_PROMOTE_ROI_PCT and
+        # TIERS_EXEMPT_FROM_ROI_CEILING. Applies to EVERY automated tier
+        # since 2026-08-28, not just brand_title: an identifier match
+        # proves the listing is about the right product, never that it is
+        # the product. Only ever blocks the automated path; the row stays
+        # on the results page for a human to confirm.
+        implausible_auto_match = (
+            candidate.price_source != "manual"
+            and candidate.match_tier not in TIERS_EXEMPT_FROM_ROI_CEILING
+            and fees.roi > IMPLAUSIBLE_AUTO_PROMOTE_ROI_PCT
+        )
+
+        # The retailer's own title says this is a box/spare/screen/used
+        # unit rather than the product -- see NOT_THE_PRODUCT_PHRASES.
+        # Same "block the robot, not the human" rule as above.
+        not_the_product = (
+            candidate.price_source != "manual"
+            and looks_like_not_the_product(candidate.retailer_title)
+        )
+
         qualifies = (
             not already_promoted
             and match_trusted_enough
+            and not implausible_auto_match
+            and not not_the_product
             and fees.roi > FeeEngine.OA_TARGET_ROI_PCT
             # Section 8.2 viability floor (2026-08-23): even at a
             # strong 25%+ ROI, also require the margin/absolute-profit
@@ -668,6 +971,9 @@ class OaSourceDiscoveryService:
 
         if not qualifies:
             return False
+
+        if dry_run:
+            return True
 
         priced_product.profit = fees.profit
         priced_product.roi = fees.roi
@@ -689,6 +995,29 @@ class OaSourceDiscoveryService:
         report_dict = asdict(report)
         ProductRepository.save_opportunity(product_dict, report_dict, "OA Source Discovery")
 
+        # Match confidence doesn't travel through product_dict/
+        # save_opportunity -- Product has no match_tier field, and
+        # save_opportunity is shared by every other caller in Atlas
+        # (the regular scan pipeline included), so adding OA-only
+        # columns to its general signature isn't worth it for three
+        # fields. Stamped directly onto the ProductRecord it just
+        # created instead, so the Review Queue can show "how sure
+        # Atlas actually was" on this specific lead -- see
+        # review_queue_service._scan_lead_dict and the B0DV6CDXKT
+        # false positive that prompted this (2026-08-29,
+        # TRUSTED_MATCH_TIERS_AUTO_PROMOTE's docstring).
+        new_record = (
+            db.query(ProductRecord)
+            .filter(ProductRecord.asin == priced_product.asin)
+            .order_by(ProductRecord.scanned_at.desc())
+            .first()
+        )
+        if new_record:
+            new_record.match_tier = candidate.match_tier
+            new_record.match_confidence_pct = candidate.match_confidence_pct
+            new_record.source_confidence = candidate.source_confidence
+            db.add(new_record)
+
         candidate.added_to_review_queue = True
 
         run = db.get(OaSourceRun, candidate.run_id)
@@ -698,19 +1027,53 @@ class OaSourceDiscoveryService:
         return True
 
     @staticmethod
-    def run_batch(limit: int = 20) -> dict:
+    def run_batch(limit: int = 20, since_days: int = DEFAULT_DETECTION_WINDOW_DAYS,
+                  test_mode: bool = False, test_asins: list = None, raw_products: list = None) -> dict:
         """
+        test_mode/test_asins/raw_products (2026-08-29, added for the
+        step-3 SerpApi-vs-Serper test harness -- see
+        test_harness_search_providers.py, NOT used by the live
+        "Run batch" button or the scheduler, both of which omit all
+        three and get EXACTLY the pre-existing behaviour):
+
+        - test_mode=True marks the created OaSourceRun as
+          is_test=True (see that column's docstring in
+          app/database/models.py for every place that then excludes
+          it) and passes dry_run=True into _promote_if_qualifying, so
+          a test run can never write a real ProductRecord, Review
+          Queue entry, or Discord alert -- only OaSourceRun/
+          OaSourceCandidate rows the harness itself reads back.
+        - test_asins, when given, is used VERBATIM instead of calling
+          get_candidate_asins -- so the harness can run the SAME fixed
+          ASIN list through two separate test_mode calls (one per
+          shopping_search provider) and get a genuine apples-to-apples
+          comparison, rather than each call independently (and
+          possibly differently) selecting "the next 25 eligible ASINs".
+        - raw_products, when given, is used instead of this method
+          fetching its own Keepa data -- the provider comparison only
+          differs in the shopping-search step below; the Keepa-sourced
+          product data (title/brand/ean/mpn/category/price) is
+          identical either way, so a caller comparing two providers on
+          the same ASINs can fetch it ONCE and pass it to both calls,
+          rather than this method spending a second real Keepa lookup
+          per ASIN purely to re-fetch data it already has.
+
         Runs the full pipeline against up to `limit` "OA / unclear"
-        ASINs. Spends real Keepa tokens (one fresh full UK lookup per
+        ASINs detected in the last `since_days` days (0 = no window --
+        see DEFAULT_DETECTION_WINDOW_DAYS; the page posts back whatever
+        window it was displaying, so a run always searches exactly the
+        rows the preview promised). Spends real Keepa tokens (one fresh full UK lookup per
         ASIN, batched into a single Keepa call -- needed because
         nothing in Atlas has ever persisted an MPN/model field, so
         this is the one place that actually looks for it).
 
         Per ASIN, tries TWO search paths, in order (2026-08-19):
 
-        1. Google Shopping via SerpApi (serpapi_client.search_uk_shopping)
-           -- ONE call, returns MULTIPLE real retailers with their own
+        1. Google Shopping via shopping_search.search_uk_shopping --
+           ONE call, returns MULTIPLE real retailers with their own
            real prices for one query, unlike Brave's plain web search.
+           Which provider actually serves that call (SerpApi or Serper)
+           is config, see shopping_search.OA_SHOPPING_PROVIDER.
            Every result is scored via classify_shopping_match; the
            CHEAPEST result whose tier is in TRUSTED_MATCH_TIERS wins
            (never title_only alone -- per the user's own explicit
@@ -742,31 +1105,43 @@ class OaSourceDiscoveryService:
         tracked separately since they bill completely differently
         (Brave: $/1000 searches; SerpApi: fixed monthly quota).
 
-        Quota safety buffer (2026-08-19): remaining SerpApi quota is
-        checked once up front via serpapi_client.get_account_status()
-        (confirmed not to cost a search credit) and tracked locally as
-        each search is spent. Once it drops to/below
-        SERPAPI_QUOTA_SAFETY_BUFFER, this run stops calling SerpApi
-        entirely for its remaining ASINs and falls back to Brave for
-        all of them instead -- run.serpapi_quota_stopped records that
-        this happened so the results page can say so plainly rather
-        than the user only noticing later that the month's quota is
-        gone. If the account status lookup itself fails (no key, or
+        Quota safety buffer (2026-08-19, extended 2026-08-29): remaining
+        SerpApi quota is checked once up front via
+        shopping_search.get_account_status() (confirmed not to cost a
+        search credit) and tracked locally as each search is spent.
+        Once it drops to/below SERPAPI_QUOTA_SAFETY_BUFFER, this run
+        stops calling SerpApi for its remaining ASINs -- but instead of
+        giving up on a Google-Shopping-style search entirely (the
+        original 2026-08-19 behaviour), it now reaches for Serper
+        specifically (shopping_search.search_uk_shopping_via("serper",
+        ...)) for the rest of the batch, per Tamara's own instruction:
+        "use both, switch to the other when we're out of free credits
+        on one." Serper has no monthly cliff (prepaid credits) so it's
+        never itself subject to this buffer. run.serpapi_quota_stopped
+        still records that the switch happened, and
+        run.serper_search_count / OaSourceCandidate.shopping_provider
+        record how much of the run actually ran on Serper as a result
+        -- see those fields' own docstrings, added specifically so a
+        month-from-now evaluation of this switch can tell the two
+        providers' real leads apart. Brave remains the fallback ONLY
+        when Serper (or SerpApi, before the buffer was hit) also finds
+        nothing at a trusted match tier for a given ASIN -- unchanged.
+        If the SerpApi account-status lookup itself fails (no key, or
         SerpApi's own account endpoint errors), remaining quota is
-        treated as unknown and the buffer is not enforced -- SerpApi
+        treated as unknown and the buffer is never enforced -- SerpApi
         calls proceed as normal and simply fail/degrade per-call as
         they already did before this feature existed.
         """
         db = SessionLocal()
 
-        run = OaSourceRun(status="running")
+        run = OaSourceRun(status="running", is_test=test_mode)
         db.add(run)
         db.commit()
         db.refresh(run)
         run_id = run.id
 
         try:
-            asins = OaSourceDiscoveryService.get_candidate_asins(limit)
+            asins = list(test_asins) if test_asins is not None else OaSourceDiscoveryService.get_candidate_asins(limit, since_days)
             run.asins_targeted = len(asins)
             db.commit()
 
@@ -774,17 +1149,36 @@ class OaSourceDiscoveryService:
                 run.status = "done"
                 run.completed_at = datetime.now(timezone.utc)
                 db.commit()
-                return {"run_id": run_id, "asins_targeted": 0, "message": "No notable 'OA / unclear' ASINs available right now."}
+                # Name the window in the message -- with one on by
+                # default, "nothing available" is far more often "the
+                # last 7 days are exhausted" than "the pool is empty",
+                # and the two need very different responses from the
+                # user (widen the window vs wait for new detections).
+                window_note = f" detected in the last {since_days} days" if since_days else ""
+                return {
+                    "run_id": run_id,
+                    "asins_targeted": 0,
+                    "message": f"No notable 'OA / unclear' ASINs{window_note} available right now.",
+                }
 
             service = ProductService()
-            raw_products = service.get_products(asins, "UK", full=True, usage_category="oa_discovery")
+            if raw_products is None:
+                raw_products = service.get_products(asins, "UK", full=True, usage_category="oa_discovery")
             category_names = get_category_names(service.api)
 
             search_count = 0
             serpapi_search_count = 0
+            serper_search_count = 0
             with_retailer = 0
             with_exact_match = 0
             auto_priced = 0
+            # Only actually used in test_mode -- see the run.asins_profitable
+            # assignment near the end of this method. In real (non-test)
+            # runs, _promote_if_qualifying already increments
+            # run.asins_profitable itself; in test_mode it can't (dry_run
+            # skips that write on purpose), so this local counter is how
+            # the harness finds out "how many WOULD have promoted".
+            would_promote = 0
 
             # Live remaining quota, checked once up front (doesn't cost
             # a credit -- see get_account_status's own docstring) and
@@ -792,7 +1186,7 @@ class OaSourceDiscoveryService:
             # means "unknown" (no key, or the lookup itself failed) --
             # in that case the buffer below is simply never triggered,
             # same as if this feature didn't exist.
-            serpapi_quota_remaining = serpapi_client.get_account_status().get("plan_searches_left")
+            serpapi_quota_remaining = shopping_search.get_account_status().get("plan_searches_left")
             serpapi_quota_stopped = False
 
             for raw in raw_products:
@@ -853,26 +1247,56 @@ class OaSourceDiscoveryService:
                     and serpapi_quota_remaining <= SERPAPI_QUOTA_SAFETY_BUFFER
                 )
 
-                if quota_buffer_hit:
-                    # Reserve hit -- don't spend the last of the
-                    # month's quota; drop straight to the Brave
-                    # fallback below for this (and every remaining)
-                    # ASIN in the batch, same as if SerpApi had found
-                    # nothing trusted for it.
-                    serpapi_quota_stopped = True
+                # Which client actually served this ASIN's shopping
+                # search, if any -- "" until set below. Recorded onto
+                # the candidate (see OaSourceCandidate.shopping_provider)
+                # only if a trusted match is actually found further
+                # down; kept as a local var here since that's the one
+                # place both branches below agree on what really ran.
+                shopping_provider_used = ""
+
+                if not shopping_query:
+                    # No usable query text -- no call made against
+                    # either provider, nothing to count against anyone's
+                    # quota.
                     shopping_results = []
-                elif shopping_query:
-                    shopping_results = serpapi_client.search_uk_shopping(shopping_query)
+                elif quota_buffer_hit:
+                    # SerpApi's monthly reserve is hit -- reach for
+                    # Serper instead of giving up on a Google-Shopping-
+                    # style search entirely for the rest of this batch
+                    # (2026-08-29, Tamara's own instruction -- see this
+                    # method's docstring and
+                    # shopping_search.search_uk_shopping_via). Serper is
+                    # prepaid credits with no monthly cliff, so no
+                    # equivalent buffer applies to it here.
+                    serpapi_quota_stopped = True
+                    shopping_results = shopping_search.search_uk_shopping_via("serper", shopping_query)
+                    serper_search_count += 1
+                    shopping_provider_used = "serper"
+                else:
+                    shopping_results = shopping_search.search_uk_shopping(shopping_query)
                     serpapi_search_count += 1
+                    shopping_provider_used = shopping_search.active_provider_name()
                     if serpapi_quota_remaining is not None:
                         serpapi_quota_remaining -= 1
-                else:
-                    # No usable query text -- no call made, nothing to
-                    # count against the quota.
-                    shopping_results = []
 
                 best_shopping = None
                 best_shopping_tier = ""
+
+                # Drop marketplaces, used-goods resellers, import
+                # concierges and foreign storefronts BEFORE anything is
+                # scored or stored (2026-08-28) -- see
+                # classify_shopping_source. Filtered here rather than
+                # only at auto-pick time so an excluded source can't
+                # reach the "other retailers found" picker either: it
+                # isn't a viable OA source whether Atlas chooses it or
+                # a human does, so offering it as a one-click promote
+                # would just reintroduce the same bad lead by the
+                # manual route.
+                shopping_results = [
+                    r for r in shopping_results
+                    if classify_shopping_source(r.get("source", ""))[1] == "candidate"
+                ]
 
                 if shopping_results:
                     candidate.shopping_candidates_json = json.dumps(shopping_results)
@@ -905,6 +1329,7 @@ class OaSourceDiscoveryService:
                     candidate.match_confidence_pct = confidence_pct
                     candidate.source_confidence = source_confidence
                     candidate.price_source = "serpapi_auto"
+                    candidate.shopping_provider = shopping_provider_used
                     candidate.queries_used_json = json.dumps([shopping_query])
 
                     with_retailer += 1
@@ -915,9 +1340,11 @@ class OaSourceDiscoveryService:
                     db.add(candidate)
                     db.commit()
 
-                    OaSourceDiscoveryService._promote_if_qualifying(
+                    if OaSourceDiscoveryService._promote_if_qualifying(
                         db, candidate, product, category_name, candidate.retailer_price_gbp,
-                    )
+                        dry_run=test_mode,
+                    ):
+                        would_promote += 1
                     db.commit()
 
                     continue
@@ -1022,19 +1449,27 @@ class OaSourceDiscoveryService:
             run.asins_with_retailer = with_retailer
             run.asins_with_exact_match = with_exact_match
             run.asins_auto_priced = auto_priced
+            if test_mode:
+                # The real (non-test) path already accumulated this
+                # inside _promote_if_qualifying itself; dry_run mode
+                # skips that write on purpose, so this is the only
+                # place test_mode's count gets recorded.
+                run.asins_profitable = would_promote
             run.search_count = search_count
             run.estimated_cost_usd = round(search_count / 1000 * brave_search_client.COST_PER_1000_USD, 2)
             run.serpapi_search_count = serpapi_search_count
-            run.serpapi_searches_left = serpapi_client.get_account_status().get("plan_searches_left")
+            run.serper_search_count = serper_search_count
+            run.serpapi_searches_left = shopping_search.get_account_status().get("plan_searches_left")
             run.serpapi_quota_stopped = serpapi_quota_stopped
             run.completed_at = datetime.now(timezone.utc)
             db.commit()
             db.refresh(run)
 
-            ActivityLog.record(
-                "oa_discovery_run",
-                f"{run.asins_searched} ASIN(s) searched, {auto_priced} auto-priced",
-            )
+            if not test_mode:
+                ActivityLog.record(
+                    "oa_discovery_run",
+                    f"{run.asins_searched} ASIN(s) searched, {auto_priced} auto-priced",
+                )
 
             return {
                 "run_id": run_id,
@@ -1047,6 +1482,7 @@ class OaSourceDiscoveryService:
                 "search_count": search_count,
                 "estimated_cost_usd": run.estimated_cost_usd,
                 "serpapi_search_count": serpapi_search_count,
+                "serper_search_count": serper_search_count,
                 "serpapi_searches_left": run.serpapi_searches_left,
                 "serpapi_quota_stopped": serpapi_quota_stopped,
             }
@@ -1082,6 +1518,14 @@ class OaSourceDiscoveryService:
         try:
             return (
                 db.query(func.count(OaSourceCandidate.id))
+                .join(OaSourceRun, OaSourceCandidate.run_id == OaSourceRun.id)
+                # Excludes test-harness runs -- see OaSourceRun.is_test's
+                # docstring. A dry_run candidate can have price_source
+                # set and added_to_review_queue still False (that's the
+                # whole point of dry_run), which would otherwise inflate
+                # this Dashboard tile with rows nobody actually needs to
+                # review.
+                .filter(OaSourceRun.is_test == False)  # noqa: E712
                 .filter(OaSourceCandidate.price_source != "")
                 .filter(OaSourceCandidate.added_to_review_queue == False)  # noqa: E712
                 .scalar()
@@ -1101,7 +1545,17 @@ class OaSourceDiscoveryService:
         db = SessionLocal()
 
         try:
-            run = db.query(OaSourceRun).order_by(OaSourceRun.started_at.desc()).first()
+            # Excludes test-harness runs -- see OaSourceRun.is_test's
+            # docstring. Without this, a step-3 comparison run would
+            # become "the latest run" and the Dashboard's SerpApi
+            # quota-warning tile would reflect the harness's own
+            # quota usage instead of the live pipeline's.
+            run = (
+                db.query(OaSourceRun)
+                .filter(OaSourceRun.is_test == False)  # noqa: E712
+                .order_by(OaSourceRun.started_at.desc())
+                .first()
+            )
             if not run:
                 return None
 

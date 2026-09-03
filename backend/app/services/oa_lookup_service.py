@@ -5,7 +5,7 @@ from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
 from app.services.category_survey_service import get_category_names
 from app.services.fee_engine import FeeEngine
-from app.services import serpapi_client
+from app.services import shopping_search
 
 # Words too generic to help narrow a Google Shopping search -- stripped
 # out of the naive query suggestion so it doesn't waste words on noise
@@ -72,7 +72,7 @@ class OaLookupService:
         that can be the wrong pack size/variant (confirmed during
         testing, not hypothetical).
         """
-        results = serpapi_client.search_uk_shopping(query)
+        results = shopping_search.search_uk_shopping(query)
         candidates = []
 
         for result in results:

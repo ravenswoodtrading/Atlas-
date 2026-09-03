@@ -7,7 +7,10 @@ from fastapi.responses import RedirectResponse
 
 from app.database.database import SessionLocal
 from app.database.models import OaSourceRun, OaSourceCandidate
-from app.services.oa_source_discovery_service import OaSourceDiscoveryService
+from app.services.oa_source_discovery_service import (
+    OaSourceDiscoveryService,
+    DEFAULT_DETECTION_WINDOW_DAYS,
+)
 from app.services.seller_watch_service import SellerWatchService
 from app.services import serpapi_client
 
@@ -15,13 +18,36 @@ router = APIRouter()
 
 templates = Jinja2Templates(directory="app/templates")
 
+# Options in the "Detected" dropdown on the "next up to scan" table.
+# 0 = no window (every eligible ASIN, the pre-2026-08-28 behaviour) --
+# kept as an explicit choice so an old-but-high-value ASIN is never
+# permanently unreachable, just not the default.
+DETECTION_WINDOW_OPTIONS = [
+    (3, "Last 3 days"),
+    (7, "Last 7 days"),
+    (14, "Last 14 days"),
+    (30, "Last 30 days"),
+    (0, "All time"),
+]
 
-def build_oa_discovery_context(run_id: int = 0) -> dict:
+
+def build_oa_discovery_context(run_id: int = 0,
+                                since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> dict:
     """Shared with the Leads hub's "Web-Sourced" group (leads_hub.py) -- see scan_queue.py's own comment for why."""
     db = SessionLocal()
 
     try:
-        runs = db.query(OaSourceRun).order_by(OaSourceRun.started_at.desc()).limit(20).all()
+        # Excludes test-harness runs (see OaSourceRun.is_test's docstring
+        # in app/database/models.py) -- a step-3 SerpApi-vs-Serper
+        # comparison run shouldn't clutter this page's run picker or
+        # silently become the default-selected run.
+        runs = (
+            db.query(OaSourceRun)
+            .filter(OaSourceRun.is_test == False)  # noqa: E712
+            .order_by(OaSourceRun.started_at.desc())
+            .limit(20)
+            .all()
+        )
 
         selected_run = db.get(OaSourceRun, run_id) if run_id else (runs[0] if runs else None)
 
@@ -60,7 +86,9 @@ def build_oa_discovery_context(run_id: int = 0) -> dict:
             except (ValueError, TypeError):
                 c.shopping_candidates = []
 
-    preview_candidates = OaSourceDiscoveryService.preview_candidates(limit=100)
+    # Rows + the two pool counts behind the window filter's
+    # "N of M" line -- one pass, see preview_context.
+    preview = OaSourceDiscoveryService.preview_context(limit=100, since_days=since_days)
     excluded_asins = OaSourceDiscoveryService.list_excluded()
 
     # Shown as a page-level banner when missing -- SerpApi is what
@@ -74,7 +102,11 @@ def build_oa_discovery_context(run_id: int = 0) -> dict:
         "runs": runs,
         "selected_run": selected_run,
         "candidates": candidates,
-        "preview_candidates": preview_candidates,
+        "preview_candidates": preview["candidates"],
+        "preview_window_matched": preview["window_matched"],
+        "preview_pool_total": preview["pool_total"],
+        "since_days": since_days,
+        "window_options": DETECTION_WINDOW_OPTIONS,
         "excluded_asins": excluded_asins,
         "serpapi_configured": serpapi_configured,
         "serpapi_searches_left": serpapi_searches_left,
@@ -82,16 +114,18 @@ def build_oa_discovery_context(run_id: int = 0) -> dict:
 
 
 @router.get("/oa-discovery")
-def oa_discovery_page(request: Request, run_id: int = 0):
+def oa_discovery_page(request: Request, run_id: int = 0,
+                       since_days: int = DEFAULT_DETECTION_WINDOW_DAYS):
     return templates.TemplateResponse(
         request=request,
         name="oa_source_discovery.html",
-        context={"request": request, **build_oa_discovery_context(run_id)}
+        context={"request": request, **build_oa_discovery_context(run_id, since_days)}
     )
 
 
 @router.post("/oa-discovery/exclude")
-def oa_discovery_exclude(asin: str = Form(...), title: str = Form(""), reason: str = Form("")):
+def oa_discovery_exclude(asin: str = Form(...), title: str = Form(""), reason: str = Form(""),
+                          since_days: int = Form(DEFAULT_DETECTION_WINDOW_DAYS)):
     """
     Module-scoped skip -- see OaSourceExcludedAsin's docstring. Does
     NOT touch Atlas's app-wide Exclusions list; the ASIN stays fully
@@ -99,34 +133,46 @@ def oa_discovery_exclude(asin: str = Form(...), title: str = Form(""), reason: s
     Source Discovery batches/previews.
     """
     OaSourceDiscoveryService.exclude_asin(asin, title=title, reason=reason)
-    return RedirectResponse(url="/oa-discovery", status_code=303)
+    # Preserve the window the user was looking at across the redirect --
+    # excluding a row shouldn't silently snap the table back to the
+    # default 7 days and lose their place. Same for every redirect below.
+    return RedirectResponse(url=f"/oa-discovery?since_days={since_days}", status_code=303)
 
 
 @router.post("/oa-discovery/unexclude")
-def oa_discovery_unexclude(asin: str = Form(...)):
+def oa_discovery_unexclude(asin: str = Form(...),
+                            since_days: int = Form(DEFAULT_DETECTION_WINDOW_DAYS)):
     OaSourceDiscoveryService.unexclude_asin(asin)
-    return RedirectResponse(url="/oa-discovery", status_code=303)
+    return RedirectResponse(url=f"/oa-discovery?since_days={since_days}", status_code=303)
 
 
 @router.post("/oa-discovery/run")
-def oa_discovery_run(limit: int = Form(20)):
+def oa_discovery_run(limit: int = Form(20),
+                      since_days: int = Form(DEFAULT_DETECTION_WINDOW_DAYS)):
     """
     Runs synchronously -- same "block until done" convention as
     Watchlist's force-rescan and other manual Atlas actions. A large
     batch (the spec's own ~100-ASIN test protocol) can take several
     minutes (one Brave call per query, several queries per ASIN) --
     the page explains this before the button is clicked.
+
+    `since_days` is posted by the form as a hidden field mirroring the
+    "Detected" dropdown, so the run searches exactly the rows the
+    preview was showing rather than silently re-deriving its own set.
     """
-    result = OaSourceDiscoveryService.run_batch(limit=limit)
+    result = OaSourceDiscoveryService.run_batch(limit=limit, since_days=since_days)
     run_id = result.get("run_id", 0)
-    return RedirectResponse(url=f"/oa-discovery?run_id={run_id}", status_code=303)
+    return RedirectResponse(
+        url=f"/oa-discovery?run_id={run_id}&since_days={since_days}", status_code=303,
+    )
 
 
 @router.post("/oa-discovery/update-candidate")
 def oa_discovery_update_candidate(candidate_id: int = Form(...), run_id: int = Form(...),
                                    retailer_domain: str = Form(""), retailer_url: str = Form(""),
                                    retailer_title: str = Form(""), retailer_price_gbp: float = Form(...),
-                                   retailer_stock_text: str = Form("")):
+                                   retailer_stock_text: str = Form(""),
+                                   since_days: int = Form(DEFAULT_DETECTION_WINDOW_DAYS)):
     """
     Replaces the old confirm-price endpoint (2026-08-19) -- takes the
     full retailer identity, not just a price, so the user can swap in
@@ -141,4 +187,6 @@ def oa_discovery_update_candidate(candidate_id: int = Form(...), run_id: int = F
         candidate_id, retailer_domain, retailer_url, retailer_price_gbp,
         retailer_title=retailer_title, retailer_stock_text=retailer_stock_text,
     )
-    return RedirectResponse(url=f"/oa-discovery?run_id={run_id}", status_code=303)
+    return RedirectResponse(
+        url=f"/oa-discovery?run_id={run_id}&since_days={since_days}", status_code=303,
+    )

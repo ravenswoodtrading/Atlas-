@@ -4,9 +4,13 @@ from dataclasses import replace
 from app.database.database import SessionLocal
 from app.database.models import Lead
 from app.services.product_service import ProductService
-from app.services.product_mapper import ProductMapper
+from app.services.product_mapper import ProductMapper, MARKETPLACE_CURRENCY
+from app.services.currency_service import CurrencyService
 from app.services.category_survey_service import get_category_names
 from app.services.fee_engine import FeeEngine
+from app.services.product_repository import ProductRepository
+from app.services.watchlist_service import WatchlistService
+from app.config.exclusions import is_gated_by_name
 from app.keepa.parser import KeepaParser
 from app.sp_api.client import get_sp_api_client
 
@@ -36,6 +40,52 @@ MANUAL_COST_LABEL = "MANUAL"
 # ProductService.get_products' stats_days) -- 180 covers all three
 # spec-required trend points (30/90/180) in a single request.
 STATS_WINDOW_DAYS = 180
+
+# EU marketplaces an A2A lead can actually be sourced from -- the same
+# set ProductMapper.MARKETPLACE_COST_FIELD covers. "UK" is deliberately
+# absent: a UK-sourced lead is OA, and its cost came from a retailer,
+# not from an Amazon listing there's anything to verify.
+EU_SOURCE_MARKETPLACES = ("DE", "FR", "ES", "IT")
+
+# Free-text -> marketplace code, for the source-marketplace check below.
+# Keyed on what actually shows up in the wild: an Amazon domain pasted
+# into the Verdict Checker's "source" box or a VA sheet's source/link
+# column, the bare country code, or the country name.
+_MARKETPLACE_HINTS = {
+    "DE": ("amazon.de", "germany", "german", "deutschland"),
+    "FR": ("amazon.fr", "france", "french"),
+    "ES": ("amazon.es", "spain", "spanish", "espana", "españa"),
+    "IT": ("amazon.it", "italy", "italian", "italia"),
+}
+
+
+def resolve_source_marketplace(*candidates: str | None) -> str | None:
+    """
+    Best-effort "which EU marketplace did this lead come from" from
+    whatever free text is available -- an explicit code the user picked
+    on the Verdict Checker, an Amazon domain in a pasted source URL, or
+    a country name in a VA sheet's source column. First candidate that
+    resolves wins, so callers pass their most trustworthy signal first.
+
+    Returns None when nothing resolves, which every caller treats as
+    "don't run the source check" rather than "assume DE" -- an extra
+    Keepa call against the wrong marketplace would produce a confident
+    but meaningless answer, which is worse than no answer.
+    """
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        text = str(candidate).strip().lower()
+
+        if text.upper() in EU_SOURCE_MARKETPLACES:
+            return text.upper()
+
+        for code, hints in _MARKETPLACE_HINTS.items():
+            if any(hint in text for hint in hints):
+                return code
+
+    return None
 
 
 class VerdictService:
@@ -84,12 +134,12 @@ class VerdictService:
         return results
 
     @staticmethod
-    def get_similar_rejections(asin: str, brand: str | None, category_name: str | None) -> list[dict]:
+    def get_similar_rejections(asin: str) -> list[dict]:
         """
-        Sourcing agent brief step 7 -- past Lead rejections with a
-        captured "why not" reason (Lead.decision_reason, added
-        2026-08-23 in the reject-flow change) surfaced as context for
-        scoring a new, possibly-related candidate.
+        Sourcing agent brief step 7 -- past Lead rejections of THIS
+        EXACT ASIN, with the captured "why not" reason
+        (Lead.decision_reason, added 2026-08-23 in the reject-flow
+        change), surfaced as context for scoring it again.
 
         Deliberately scoped to Lead only, not ProductRecord/
         SellerNewListing's own review_reason columns -- those belong
@@ -98,27 +148,41 @@ class VerdictService:
         their rejection reasons into the Verdict Checker's LLM prompt
         would mix two different review contexts together.
 
-        Matching, highest-signal first, capped at
-        MAX_SIMILAR_REJECTIONS total: (1) this exact ASIN rejected
-        before -- the strongest possible signal, it's literally this
-        product resurfacing; (2) same brand; (3) same category. Brand/
-        category aren't their own Lead columns (only inside the JSON
-        keepa_metrics blob), so this loads candidate rejected leads
-        and filters/ranks in Python rather than querying the JSON blob
-        via SQL LIKE -- a manual review queue's rejected-lead volume is
-        small enough that this is simpler and more correct than a
-        fragile text match.
+        SAME ASIN ONLY. This originally also matched same-brand and
+        same-category rejections, and both were removed 2026-08-27
+        because they generate false signal, not signal:
+
+        A brand has good and bad ASINs. Rejecting one Philips item for
+        "Not profitable enough" says nothing whatsoever about a
+        different Philips item -- but it reached the prompt as PAST
+        REJECTIONS context and Claude, correctly treating it as
+        relevant, spent a whole rationale bullet on it ("Same brand
+        (Philips) was rejected before on a different ASIN...") in a
+        verdict that was otherwise a clean BUY. Category matching was
+        worse still: the category here is the likes of "Home & Garden",
+        so it fired on essentially unrelated products.
+
+        The one brand-level property that DOES carry across ASINs --
+        being gated on the brand -- is now handled separately and
+        deterministically by get_brand_gating (below), off the
+        GatedBrand table, rather than depending on someone having
+        happened to type "gated" into the reject prompt.
+
+        Still capped at MAX_SIMILAR_REJECTIONS: an ASIN rejected and
+        resurfaced a dozen times doesn't need all twelve in the prompt.
         """
         db = SessionLocal()
         try:
             rejected = (
                 db.query(Lead)
                 .filter(
+                    Lead.asin == asin,
                     Lead.decision == "rejected",
                     Lead.decision_reason.isnot(None),
                     Lead.decision_reason != "",
                 )
                 .order_by(Lead.reviewed_at.desc())
+                .limit(MAX_SIMILAR_REJECTIONS)
                 .all()
             )
         finally:
@@ -132,41 +196,307 @@ class VerdictService:
             except Exception:
                 return {}
 
-        brand_norm = brand.strip().lower() if brand else None
-        category_norm = category_name.strip().lower() if category_name else None
-
-        same_asin, same_brand, same_category = [], [], []
-
-        for lead in rejected:
-            if lead.asin == asin:
-                same_asin.append((lead, _metrics(lead), "same_asin"))
-                continue
-
-            m = _metrics(lead)
-            lead_brand = (m.get("brand") or "").strip().lower()
-            lead_category = (m.get("category_name") or "").strip().lower()
-
-            if brand_norm and lead_brand == brand_norm:
-                same_brand.append((lead, m, "same_brand"))
-            elif category_norm and lead_category == category_norm:
-                same_category.append((lead, m, "same_category"))
-
         results = []
-        for lead, m, match_reason in (same_asin + same_brand + same_category)[:MAX_SIMILAR_REJECTIONS]:
+        for lead in rejected:
+            m = _metrics(lead)
             results.append({
                 "asin": lead.asin,
                 "brand": m.get("brand"),
                 "category_name": m.get("category_name"),
                 "decision_reason": lead.decision_reason,
                 "reviewed_at": lead.reviewed_at.isoformat() if lead.reviewed_at else None,
-                "match_reason": match_reason,
-                "same_asin": lead.asin == asin,
+                # Retained, and always "same_asin" now, so the template
+                # and prompt formatter keep working unchanged and a
+                # stored metrics blob from before this change still
+                # renders.
+                "match_reason": "same_asin",
+                "same_asin": True,
             })
 
         return results
 
     @staticmethod
-    def compute_metrics(asin: str, cost_price: float | None = None, deep_dive: bool = False) -> dict | None:
+    def get_brand_gating(brand: str | None, category_name: str | None) -> dict | None:
+        """
+        Whether Atlas is gated on this ASIN's brand -- the one
+        brand-level fact that genuinely carries from one ASIN to
+        another, unlike the per-ASIN economics that used to leak into
+        the verdict via same-brand rejection matching (see
+        get_similar_rejections).
+
+        Reads the same sources every other gating check in Atlas reads:
+        the static GATED_BRAND_CATEGORIES set plus the user-editable
+        GatedBrand rows from the Exclusions page, matched by category
+        NAME because that's what compute_metrics has (is_gated_by_name,
+        the known_products variant -- the Keepa numeric category IDs
+        is_gated() wants aren't carried on the metrics dict).
+
+        Until now the Verdict Checker was the one scoring path that
+        never consulted this at all: a gated brand could come back BUY
+        with nothing saying Atlas can't actually sell it. Returns None
+        when not gated, so the prompt section is skipped entirely.
+        """
+        if not brand:
+            return None
+
+        gated = is_gated_by_name(
+            brand,
+            category_name or "",
+            ProductRepository.get_gated_brand_pairs_by_name(),
+        )
+
+        if not gated:
+            return None
+
+        return {"brand": brand, "category_name": category_name or None}
+
+    @staticmethod
+    def check_source_marketplace(asin: str, marketplace: str | None) -> dict | None:
+        """
+        Verifies that an EU A2A lead is actually BUYABLE on its source
+        marketplace, not just profitable on paper. Returns None when
+        there's nothing to check (no marketplace resolved, or a
+        non-EU/UK one) -- so a domestic OA lead pays no extra Keepa
+        cost for a check that doesn't apply to it.
+
+        Why this exists: Atlas can only buy an EU A2A lead from Amazon
+        itself or from an FBA seller, because those are the purchases
+        that come with a reclaimable Amazon VAT invoice -- a
+        merchant-fulfilled (FBM) EU seller ships and invoices direct,
+        so there's nothing to reclaim against no matter how good the
+        spread looks. The bulk scan paths already enforce exactly this
+        (ProductMapper.from_keepa_multi and BrandScanService both skip
+        an FBM-won marketplace outright), but the Verdict Checker
+        never did: it takes a hand-typed cost_price and never looks at
+        the source listing at all, so VA-sheet and manually-entered
+        A2A leads reached the review queue unverified and had to be
+        rejected by hand. See criteria.md's judgment notes.
+
+        Costs ONE extra Keepa call, on the source marketplace's
+        domain, with `offers` on -- which is what makes this better
+        than the bulk paths' price-match proxy: with offers requested,
+        Keepa populates the authoritative buyBoxIsAmazon/buyBoxIsFBA
+        fields KeepaParser.buy_box_holder prefers, so a real FBM
+        winner is named as such instead of collapsing into the proxy's
+        fail-closed "doesn't match either series" bucket. Only this
+        single-ASIN manual path can afford that (see
+        ProductService.get_products' include_offers docstring).
+
+        `blocker` is the single actionable outcome, and deliberately
+        separates the two rejections that mean different things:
+        "amazon_oos" (Amazon sells it but is out of stock right now)
+        is a PARK -- it comes back when they restock, which is what
+        the review queue's "oos" decision is for -- whereas
+        "fbm_only" is a plain reject, since nothing about that listing
+        is going to become buyable. "unverified" means Keepa answered
+        but without the authoritative fields, so this is the weak
+        proxy's opinion and shouldn't be treated as proof either way.
+        """
+        marketplace = (marketplace or "").strip().upper()
+
+        if marketplace not in EU_SOURCE_MARKETPLACES:
+            return None
+
+        try:
+            service = ProductService()
+            products = service.get_products(
+                [asin], marketplace, full=True, include_offers=True,
+                usage_category="verdict_source_check",
+            )
+        except Exception as exc:
+            # Never let the source check sink an otherwise-good verdict
+            # -- the UK-side metrics are already computed by this point
+            # and are worth showing. Report the failure as its own
+            # blocker so it reads as "not verified", not "verified fine".
+            print(f"Source marketplace check failed for {asin} on {marketplace}: {exc}")
+            return {
+                "marketplace": marketplace,
+                "blocker": "check_failed",
+                "note": f"Could not check Amazon {marketplace} -- {exc}",
+            }
+
+        if not products:
+            return {
+                "marketplace": marketplace,
+                "blocker": "not_listed",
+                "note": f"Not listed on Amazon {marketplace} at all.",
+            }
+
+        parser = KeepaParser(products[0])
+
+        holder = parser.buy_box_holder()
+        amazon_on_listing = parser.is_amazon_on_listing()
+        amazon_in_stock = parser.amazon_in_stock()
+        buy_box_price = parser.buy_box_now()
+
+        currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+        buy_box_price_gbp = CurrencyService.to_gbp(buy_box_price, currency) if buy_box_price else None
+
+        buyable = holder in ("amazon", "fba")
+
+        if buyable:
+            blocker = None
+        elif amazon_on_listing and not amazon_in_stock:
+            # Amazon normally sells this and is simply out right now --
+            # park it, don't kill it (criteria.md: OOS -> revisit on
+            # restock). Checked BEFORE the FBM case on purpose: an FBM
+            # seller holding the box while Amazon is out of stock is
+            # still an "Amazon restocks and this works again" lead.
+            blocker = "amazon_oos"
+        elif holder == "fbm":
+            blocker = "fbm_only"
+        elif holder == "none":
+            blocker = "no_buy_box"
+        else:
+            blocker = "unverified"
+
+        notes = {
+            None: f"Buy box on Amazon {marketplace} is {holder.upper()} -- buyable.",
+            "amazon_oos": f"Amazon {marketplace} sells this but is OUT OF STOCK right now.",
+            "fbm_only": f"Amazon {marketplace} buy box is held by a merchant-fulfilled (FBM) seller -- not buyable for A2A.",
+            "no_buy_box": f"No live buy box on Amazon {marketplace}.",
+            "unverified": f"Could not confirm who holds the Amazon {marketplace} buy box.",
+        }
+
+        return {
+            "marketplace": marketplace,
+            "buy_box_holder": holder,
+            "buyable": buyable,
+            "blocker": blocker,
+            "note": notes[blocker],
+            "amazon_on_listing": amazon_on_listing,
+            "amazon_in_stock": amazon_in_stock,
+            "amazon_availability": parser.amazon_availability(),
+            "offers_fba_present": parser.offers_fba_present(),
+            "offer_count_fba": parser.offer_count_fba(),
+            "buy_box_price": buy_box_price,
+            "buy_box_price_gbp": buy_box_price_gbp,
+            "currency": currency,
+        }
+
+    @staticmethod
+    def compute_source_drop_evidence(
+        asin: str, marketplace: str | None, product, category_name: str,
+    ) -> dict | None:
+        """
+        Day-by-day evidence for "not profitable at today's EU source
+        cost, but genuinely was on enough recent days to be worth
+        watching" -- the A2A-lead mirror of viable_days_90d above (that
+        one holds cost fixed and varies the UK sale price across ITS
+        90-day history; this holds the UK sale price fixed at TODAY's
+        and varies the EU SOURCE cost across its own 90-day history).
+
+        Added 2026-09-03, Tamara: "lots of my VA leads are A2A drops
+        that are not profitable today but on a price drop so may be
+        profitable soon" -- and, in the same breath, "I want to be
+        careful about these... the number of times it has been
+        profitable in a 90 day window should be a factor" (echoing
+        WatchlistService.prune_stale_auto_adds' own hard-won lesson: 94%
+        of the watchlist there was auto-added off a single historical-
+        low snapshot with no day-count evidence at all, and 88% of it
+        never went profitable in 23+ days of rechecking -- a single low
+        day proved almost nothing). See WatchlistService.
+        maybe_auto_watch_lead for how this actually gets used, including
+        why "profitable now" always ranks above this speculative signal.
+
+        Returns {"priced_days", "viable_days_90d", "best_case_profit",
+        "best_case_roi", "recent_low_source_cost_gbp"} or None when
+        there's nothing to check (no marketplace resolved, not an EU
+        one, the UK sale price alone already fails the floor regardless
+        of source cost, or Keepa has no data) -- same None-vs-real-dict
+        convention as check_source_marketplace above.
+
+        Costs ONE Keepa call (full=True, no `offers` -- only the CSV
+        price history matters here, unlike check_source_marketplace's
+        buy-box-holder check), entirely separate from that method's own
+        call. Callers MUST gate this behind "the baseline isn't already
+        profitable" (see maybe_auto_watch_lead) so it's never paid for
+        on a lead that doesn't need it at all.
+        """
+        marketplace = (marketplace or "").strip().upper()
+
+        if marketplace not in EU_SOURCE_MARKETPLACES:
+            return None
+
+        # Same 17%/13%/GBP2/GBP10 floor as OpportunityEngine.MIN_VIABLE_
+        # ROI/MARGIN_PCT/PROFIT_GBP/SALE_PRICE_GBP -- duplicated as
+        # literals rather than imported, same reasoning as
+        # MIN_VIABLE_ROI_PCT in compute_metrics below (this module sits
+        # below OpportunityEngine in the dependency graph).
+        MIN_VIABLE_ROI_PCT = 17.0
+        MIN_VIABLE_MARGIN_PCT = 13.0
+        MIN_VIABLE_PROFIT_GBP = 2.0
+        MIN_SALE_PRICE_GBP = 10.0
+
+        uk_price = max(product.buy_box_now, product.buy_box_90d)
+        if uk_price < MIN_SALE_PRICE_GBP:
+            # UK side alone already fails the sale-price floor -- no EU
+            # cost, however low, makes this viable.
+            return None
+
+        try:
+            service = ProductService()
+            products = service.get_products(
+                [asin], marketplace, full=True,
+                usage_category="verdict_source_drop_check",
+            )
+        except Exception as exc:
+            print(f"Source drop evidence check failed for {asin} on {marketplace}: {exc}")
+            return None
+
+        if not products:
+            return None
+
+        parser = KeepaParser(products[0])
+        currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+        daily_source_prices = parser.daily_buy_box_prices(90)
+
+        priced_days = 0
+        viable_days = 0
+        best_profit = 0.0
+        best_roi = 0.0
+        lowest_cost_gbp = None
+
+        for day_price in daily_source_prices:
+            if not day_price:
+                continue
+
+            priced_days += 1
+            cost_gbp = CurrencyService.to_gbp(day_price, currency)
+
+            if lowest_cost_gbp is None or cost_gbp < lowest_cost_gbp:
+                lowest_cost_gbp = cost_gbp
+
+            hypothetical = replace(
+                product, best_source_marketplace=marketplace, best_source_cost_gbp=cost_gbp,
+            )
+            fees = FeeEngine.calculate(hypothetical, category_name=category_name)
+
+            if (
+                fees.profit >= MIN_VIABLE_PROFIT_GBP
+                and fees.roi >= MIN_VIABLE_ROI_PCT
+                and fees.margin >= MIN_VIABLE_MARGIN_PCT
+            ):
+                viable_days += 1
+                if fees.profit > best_profit:
+                    best_profit = fees.profit
+                    best_roi = fees.roi
+
+        if priced_days == 0:
+            return None
+
+        return {
+            "priced_days": priced_days,
+            "viable_days_90d": viable_days,
+            "best_case_profit": best_profit,
+            "best_case_roi": best_roi,
+            "recent_low_source_cost_gbp": lowest_cost_gbp,
+        }
+
+    @staticmethod
+    def compute_metrics(
+        asin: str, cost_price: float | None = None, source_marketplace: str | None = None,
+    ) -> dict | None:
         """
         Full Keepa-derived metric set for one ASIN (spec section 4:
         profitability, demand/competition, price history/stability).
@@ -179,22 +509,34 @@ class VerdictService:
         route/worker layer and must never be recomputed from Keepa
         (see Lead's docstring in app/database/models.py).
 
-        deep_dive (2026-08-23, sourcing-agent brief section 5): pulls
-        the extra evidence a promising lead deserves that a routine
-        check doesn't -- Keepa's per-seller stock levels (competitor_
-        stock_levels, requesting `stock` on top of the always-on
-        `offers`, ~2.4x the already-priciest include_offers cost,
-        confirmed live) and a free SP-API getItemOffers live price/
-        offer-count cross-check (sp_api_live_check) against Keepa's
-        potentially-stale snapshot. Callers should only pass this for a
-        lead that already looked promising on a cheap deep_dive=False
-        pass, not for every ASIN in a bulk batch -- see
-        app/routes/verdict.py's two-pass orchestration.
+        source_marketplace, if given as an EU code (DE/FR/ES/IT),
+        adds ONE extra Keepa call to verify the lead is actually
+        buyable over there -- Amazon or an FBA seller on the buy box,
+        not FBM, and Amazon not out of stock. Result lands in
+        "source_check" (None when no marketplace was supplied, so a
+        domestic OA lead costs exactly what it did before). See
+        check_source_marketplace above for the full why.
+
+        Returns "deep_dive": False and "sp_api_live_check": None --
+        see add_deep_dive below for promoting an already-computed
+        metrics dict to a real deep dive without a second Keepa call.
+
+        Used to also take a deep_dive param that both requested extra
+        Keepa fields (stock, dropped 2026-08-26 -- see
+        KeepaParser's now-removed competitor_stock_levels, it never
+        actually populated) and ran the free SP-API cross-check inline.
+        Split apart 2026-08-26: with stock gone, deep_dive changed
+        nothing about the Keepa request itself, so a second
+        compute_metrics(deep_dive=True) call was re-fetching byte-for-
+        byte identical Keepa data just to reach the SP-API branch --
+        pure wasted tokens on every BUY/WATCH lead. See
+        app/routes/verdict.py's two-pass orchestration for how the
+        split is actually used now.
         """
         service = ProductService()
         products = service.get_products(
             [asin], "UK", full=True, stats_days=STATS_WINDOW_DAYS,
-            include_rating=True, include_offers=True, include_stock=deep_dive,
+            include_rating=True, include_offers=True,
             usage_category="verdict",
         )
 
@@ -305,32 +647,43 @@ class VerdictService:
                 "days_at_target_roi": days_at_target_roi,
             }
 
+        # Deliberately last: everything above is already paid for by
+        # the UK call, so a source check that fails or is skipped
+        # costs the caller nothing it wouldn't have spent anyway.
+        source_check = VerdictService.check_source_marketplace(asin, source_marketplace)
+
+        # Speculative "not profitable now, but recently was at a lower
+        # EU source cost" tracking (2026-09-03) -- see WatchlistService.
+        # maybe_auto_watch_lead. Only for A2A leads (source_marketplace
+        # resolved) that AREN'T already profitable at today's/90d cost --
+        # a genuinely profitable-now lead gets a real BUY/WATCH verdict
+        # and goes straight to the Review Queue, so this speculative,
+        # lower-trust signal never even runs for it, let alone competes
+        # with it (Tamara: "profitable now should be higher rated than
+        # one that may be profitable in x days").
+        if source_marketplace and max(keepa_estimate_profit or 0, keepa_estimate_profit_90d or 0) <= 0:
+            source_drop_evidence = VerdictService.compute_source_drop_evidence(
+                asin, source_marketplace, product, category_name,
+            )
+            if source_drop_evidence:
+                WatchlistService.maybe_auto_watch_lead(
+                    asin, product.title, product.brand, source_marketplace, source_drop_evidence,
+                )
+
         monthly_sales_as_of = parser.monthly_sales_as_of()
 
-        competitor_stock_levels = None
-        sp_api_live_check = None
-
-        if deep_dive:
-            competitor_stock_levels = parser.competitor_stock_levels()
-
-            sp_client = get_sp_api_client()
-            if sp_client is not None:
-                # None (not a dict) means the call itself failed to
-                # produce a usable answer -- see SPAPIClient.
-                # get_item_offers' own docstring for why that's kept
-                # distinct from "no offer" (a real dict with price=None).
-                sp_api_live_check = sp_client.get_item_offers(asin, "UK")
-
         return {
-            "deep_dive": deep_dive,
-            "competitor_stock_levels": competitor_stock_levels,
-            "sp_api_live_check": sp_api_live_check,
+            "deep_dive": False,
+            "sp_api_live_check": None,
 
             "asin": product.asin,
             "title": product.title,
             "brand": product.brand,
             "category_name": category_name,
             "ean": product.ean,
+
+            # EU A2A buyability -- None for OA/unknown-source leads.
+            "source_check": source_check,
 
             # Profitability -- Keepa estimate only (None if no
             # cost_price was supplied); VA/SAS figures, when present,
@@ -374,3 +727,28 @@ class VerdictService:
             "price_max_90d": parser.buy_box_max_90d(),
             "is_out_of_stock": parser.is_out_of_stock(),
         }
+
+    @staticmethod
+    def add_deep_dive(metrics: dict, asin: str) -> dict:
+        """
+        Promotes an already-computed compute_metrics() dict to a deep
+        dive IN PLACE, no second Keepa call -- pass-1's metrics already
+        has everything a deep dive needs except the live SP-API price
+        cross-check (2026-08-23, sourcing agent brief section 5;
+        per-seller stock was the other deep-dive field, dropped
+        2026-08-26, see compute_metrics' own docstring).
+
+        Only sets deep_dive=True when the SP-API call actually returned
+        something (see SPAPIClient.get_item_offers' own docstring for
+        why a failed/unconfigured call comes back None, not a dict with
+        price=None) -- if it didn't, there's no new evidence over the
+        baseline pass, so the caller should skip re-running Claude
+        rather than spend a second verdict call to say the same thing
+        again with a "not available" line bolted on.
+        """
+        sp_client = get_sp_api_client()
+        sp_api_live_check = sp_client.get_item_offers(asin, "UK") if sp_client is not None else None
+
+        metrics["sp_api_live_check"] = sp_api_live_check
+        metrics["deep_dive"] = sp_api_live_check is not None
+        return metrics

@@ -98,6 +98,12 @@
                                     {% if note.startswith("Auto-added:") %}
                                     <span class="badge bg-info text-dark" title="{{ note }}"><i class="bi bi-magic"></i> Auto</span>
                                     {% endif %}
+                                    {% set days = viable_days.get(p.asin, 0) %}
+                                    {% if days %}
+                                    <span class="badge bg-secondary" title="How many of the last 90 days this ASIN's EU source cost actually cleared the viability floor -- a single low day proves almost nothing, this is real day-count evidence.">
+                                        <i class="bi bi-calendar-check"></i> {{ days }}/90d viable
+                                    </span>
+                                    {% endif %}
                                     {% if note.startswith("Amazon OOS at review") %}
                                         {% if p.offers_now > 0 or p.buy_box_now > 0 %}
                                         <span class="badge bg-success" title="Amazon had no offers/price when you flagged this -- it does now"><i class="bi bi-bell-fill"></i> Back in stock!</span>

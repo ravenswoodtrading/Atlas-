@@ -79,7 +79,8 @@ def gate_remove(gated_id: int = Form(...), return_to: str = Form("/exclusions"))
 
 @router.post("/review/set")
 def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int = Form(0),
-               reason: str = Form(""), return_to: str = Form("/products")):
+               reason: str = Form(""), reason_category: str = Form(""),
+               return_to: str = Form("/products")):
     """
     Canonical "set review" endpoint, used by Products/Discovery/
     Watchlist/Review Queue. listing_id is optional -- only set when
@@ -94,6 +95,12 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     callers (Products/Discovery/Watchlist thumbs, the up/oos buttons)
     simply don't send one, which is fine, see ProductRecord.review_reason.
 
+    reason_category: optional structured reason (atlas-review-queue-
+    backend-v1.md section 5, see review_queue_service.
+    REVIEW_REASON_CATEGORIES) -- additive alongside `reason`, never a
+    replacement for it. Existing callers that don't send it are
+    unaffected (stored as NULL, same as any historical row).
+
     verdict="oos" is a third bucket alongside "up"/"down" -- Amazon is
     out of stock right now, so it's not actionable this instant, but
     worth catching WHEN it restocks rather than losing it entirely to
@@ -107,10 +114,12 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     Atlas's own last scan record for this ASIN (no extra Keepa lookup
     needed here).
     """
-    ProductRepository.set_review(asin, verdict or None, reason=reason or None)
+    ProductRepository.set_review(asin, verdict or None, reason=reason or None, reason_category=reason_category or None)
 
     if listing_id:
-        SellerWatchService.set_review(listing_id, verdict or None, reason=reason or None)
+        SellerWatchService.set_review(
+            listing_id, verdict or None, reason=reason or None, reason_category=reason_category or None
+        )
 
     if verdict == "oos":
         record = ProductRepository.get_last_eu_check(asin)
@@ -230,6 +239,14 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
     # convention) without a schema change.
     notes = {w.asin: w.note for w in watched if w.note}
 
+    # {asin: viable_days_90d} -- same shape as `notes` above, for the
+    # same reason (per-row table built from scan results, not
+    # WatchedProduct directly). 2026-09-03: how many of the last 90
+    # days this ASIN's EU source cost actually cleared the viability
+    # floor -- Tamara's own explicit requirement that this be a real,
+    # visible factor, not just prose buried in the note's hover text.
+    viable_days = {w.asin: w.viable_days_90d for w in watched if w.viable_days_90d}
+
     return templates.TemplateResponse(
         request=request,
         name="watchlist.html",
@@ -237,6 +254,7 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
             "request": request,
             "watched": watched,
             "result": result,
+            "viable_days": viable_days,
             "visible_opportunities": visible_opportunities,
             "hidden_count": hidden_count,
             "profitable_only": profitable_only,

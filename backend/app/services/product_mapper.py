@@ -3,6 +3,29 @@ from app.keepa.parser import KeepaParser
 from app.services.currency_service import CurrencyService
 
 
+# UK customs/import-duty cap on a single EU A2A source cost (2026-08-29,
+# Tamara's own instruction: "we have to limit EU A2A leads for under the
+# import duty"). HMRC's actual current duty-relief line for a commercial
+# consignment entering the UK is GBP 135 (Low Value Consignment relief --
+# confirmed live via gov.uk's Nov 2025 "Reforming the customs treatment of
+# low value imports" proposal; due to be WITHDRAWN entirely by Oct 2028 at
+# the latest, not raised -- https://assets.publishing.service.gov.uk/media/
+# 692576c7aca6213a492dcfda/FINAL_-_Reforming_the_customs_treatment_of_low_
+# value_imports_into_the_United_Kingdom.pdf). Tamara deliberately chose GBP
+# 175 here, above that real GBP 135 line, as her own conservative buffer --
+# not a claim that 175 is HMRC's actual threshold. This is a business-
+# policy cap, not tax advice; re-verify against HMRC's current rules if the
+# underlying £135 relief changes or is withdrawn.
+#
+# Also note: this checks each UNIT's price alone. HMRC's relief is actually
+# assessed per CONSIGNMENT (the whole shipment) -- ordering multiple units
+# of an under-cap item in one order can still push the total shipment value
+# over the real duty line even though every individual unit passed this
+# check. Treat this as a per-unit guardrail, not a guarantee that a
+# multi-unit order stays duty-free.
+EU_A2A_DUTY_CAP_GBP = 175.0
+
+
 # Keepa marketplace domain codes -> the currency that marketplace sells in
 MARKETPLACE_CURRENCY = {
     "UK": "GBP",
@@ -79,6 +102,13 @@ class ProductMapper:
         directly from the third-party seller, never from Amazon, so
         there's no Amazon VAT invoice to reclaim against regardless of
         how good the price/spread looks on paper.
+
+        Same treatment for a marketplace priced above EU_A2A_DUTY_CAP_GBP
+        (see that constant's docstring) -- excluded entirely, not just
+        passed over for the cheaper option, so an over-cap EU price can
+        never surface anywhere downstream (ROI/profit, EU A2A tagging,
+        Discord, Watchlist auto-add, OA candidate pool) as a real,
+        buyable source.
         """
         product = ProductMapper.from_keepa(uk_product)
 
@@ -107,14 +137,21 @@ class ProductMapper:
             if not eu_parser.buy_box_is_amazon_fulfilled():
                 continue
 
+            currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+            cost_gbp = CurrencyService.to_gbp(raw_cost, currency)
+
+            # Above the UK import-duty cap -- treated exactly like an
+            # FBM listing above: not recorded into its raw *_cost
+            # field, never a candidate for best_source_marketplace
+            # (see EU_A2A_DUTY_CAP_GBP's docstring).
+            if cost_gbp > EU_A2A_DUTY_CAP_GBP:
+                continue
+
             field = MARKETPLACE_COST_FIELD.get(marketplace)
             if field:
                 setattr(product, field, raw_cost)
 
             min_90d_by_marketplace[marketplace] = eu_parser.buy_box_min_90d()
-
-            currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
-            cost_gbp = CurrencyService.to_gbp(raw_cost, currency)
 
             if best_cost_gbp is None or cost_gbp < best_cost_gbp:
                 best_cost_gbp = cost_gbp

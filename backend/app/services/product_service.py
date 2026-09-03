@@ -2,6 +2,18 @@ from app.keepa.client import get_keepa_client
 from app.services.token_usage_service import TokenUsageService
 
 
+class KeepaTokensExhaustedError(RuntimeError):
+    """
+    Raised when Keepa rejects a query for lack of tokens (its 429 /
+    NOT_ENOUGH_TOKEN response) rather than any other failure.
+
+    Kept distinct from a generic query failure so callers that want to
+    tell a user "come back in N minutes" can do so -- see
+    ProductService.get_products' `wait=False` note for why this is
+    raised instead of the usual swallow-to-[] treatment.
+    """
+
+
 class ProductService:
 
     def __init__(self):
@@ -17,7 +29,7 @@ class ProductService:
         }
 
     def get_products(self, asins, marketplace="UK", retries=1, full=True, stats_days=90,
-                      include_rating=False, include_offers=False, include_stock=False,
+                      include_rating=False, include_offers=False,
                       usage_category="other"):
         """
         `full=True` (used for UK) requests `stats_days`-day stats too
@@ -67,16 +79,13 @@ class ProductService:
         every bulk scan, but a single manual Verdict Check can afford
         the accuracy.
 
-        include_stock (default False) requests Keepa's `stock` option
-        -- per-seller current stock levels (see KeepaParser.
-        competitor_stock_levels), on top of whatever include_offers
-        already fetches (Keepa requires offers to already be requested;
-        stock alone does nothing). Confirmed live (2026-08-23): this
-        roughly doubles the already-priciest include_offers cost (~5
-        tokens/ASIN -> ~12), so it's gated behind VerdictService's own
-        "only for a promising lead" deep-dive check, not requested on
-        every verdict check by default -- see VerdictService.
-        compute_metrics' deep_dive param.
+        Used to also support include_stock, requesting Keepa's `stock`
+        option for per-seller current stock levels -- removed
+        2026-08-26 after confirming live that Keepa's offers never
+        actually carry the `stockCSV` field that option was meant to
+        populate, so it was paying ~2.4x the already-priciest
+        include_offers cost (~5 tokens/ASIN -> ~12) for nothing every
+        time VerdictService's deep-dive check ran.
 
         usage_category: which Atlas feature is calling this, purely
         for the Settings > Token Usage page (see TokenUsageEvent) --
@@ -95,6 +104,14 @@ class ProductService:
             history=True,
             buybox=True,
             progress_bar=False,
+            # The keepa library's default (wait=True) blocks the whole
+            # request thread with a bare time.sleep() until enough
+            # tokens refill -- found live 2026-08-26: a Verdict Check
+            # run while tokens were exhausted just hung with no
+            # feedback on the page (could be many minutes depending on
+            # the deficit and refill rate). Fail fast instead and let
+            # the except block below turn that into a real error.
+            wait=False,
         )
 
         if full:
@@ -105,9 +122,6 @@ class ProductService:
 
         if include_offers:
             query_kwargs["offers"] = 20
-
-        if include_stock:
-            query_kwargs["stock"] = True
 
         for attempt in range(retries + 1):
             tokens_before = self.api.tokens_left
@@ -120,6 +134,18 @@ class ProductService:
                 )
                 return result
             except Exception as exc:
+                # NOT_ENOUGH_TOKEN (wait=False's fail-fast response to a
+                # 429) won't fix itself on a same-second retry, and
+                # swallowing it to [] makes an out-of-tokens run look
+                # identical to "no data for this ASIN" -- surface it
+                # distinctly so callers that care (VerdictService) can
+                # tell a user to come back in N minutes instead.
+                if "NOT_ENOUGH_TOKEN" in str(exc):
+                    raise KeepaTokensExhaustedError(
+                        f"Keepa is out of tokens -- refills in about "
+                        f"{round(self.api.time_to_refill / 60)} min."
+                    ) from exc
+
                 if attempt < retries:
                     continue
 

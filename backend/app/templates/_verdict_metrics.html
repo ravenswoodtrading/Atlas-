@@ -79,12 +79,46 @@
     <div class="vr-banner-sub">{{ metrics.brand }} &middot; {{ metrics.category_name or "Uncategorised" }}{% if metrics.ean %} &middot; EAN {{ metrics.ean }}{% endif %}</div>
 </div>
 
+{# EU A2A buyability -- absent entirely for OA leads and for any lead whose
+   source marketplace could not be resolved, since no check was run for
+   those (see VerdictService.check_source_marketplace). Sits directly under
+   the verdict banner on purpose: an unbuyable source overrules every
+   profitability figure below it, so it must not be something you scroll to. #}
+{% if metrics.source_check %}
+{% set sc = metrics.source_check %}
+{% set sc_class = "vr-banner-buy" if not sc.blocker else ("vr-banner-watch" if sc.blocker in ["amazon_oos", "unverified", "check_failed"] else "vr-banner-avoid") %}
+{% set sc_icon = "bi-check-circle" if not sc.blocker else ("bi-clock-history" if sc.blocker == "amazon_oos" else ("bi-question-circle" if sc.blocker in ["unverified", "check_failed"] else "bi-x-circle")) %}
+<div class="vr-banner {{ sc_class }} mb-3">
+    <div class="vr-section-title mb-1"><i class="bi {{ sc_icon }}"></i> Source check -- Amazon {{ sc.marketplace }}</div>
+    <div>{{ sc.note }}</div>
+    <div class="vr-banner-sub">
+        {% if sc.buy_box_price %}
+        Buy box there: {{ "%.2f"|format(sc.buy_box_price) }} {{ sc.currency }}{% if sc.buy_box_price_gbp %} (~&pound;{{ "%.2f"|format(sc.buy_box_price_gbp) }}){% endif %} &middot;
+        {% endif %}
+        {% if sc.offer_count_fba is not none %}{{ sc.offer_count_fba }} FBA offer{{ "" if sc.offer_count_fba == 1 else "s" }} &middot; {% endif %}
+        {% if sc.blocker == "amazon_oos" %}
+        Park this rather than rejecting it -- it comes back when Amazon restocks.
+        {% elif sc.blocker in ["fbm_only", "no_buy_box", "not_listed"] %}
+        Only Amazon-fulfilled EU purchases carry a reclaimable VAT invoice, so this can't be bought however good the numbers look.
+        {% elif sc.blocker in ["unverified", "check_failed"] %}
+        Not confirmed either way -- worth eyeballing the listing yourself before committing.
+        {% else %}
+        Amazon or an FBA seller holds the buy box, so this is a real, buyable A2A source.
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 {% set has_profit_figure = (va_ground_truth and va_profit is not none) or metrics.keepa_estimate_profit is not none %}
 {% set profit_value = va_profit if (va_ground_truth and va_profit is not none) else metrics.keepa_estimate_profit %}
 {% set roi_value = va_roi if (va_ground_truth and va_roi is not none) else metrics.keepa_estimate_roi %}
 {% set profit_class = "vr-profit-unknown" if not has_profit_figure else ("vr-profit-positive" if profit_value > 0 else "vr-profit-negative") %}
 
 {% set show_peak = (not va_ground_truth) and metrics.keepa_estimate_roi_peak is not none and metrics.keepa_estimate_roi_peak > (roi_value if roi_value is not none else -999999) %}
+{# show_peak only means "the 90-day peak beats today's figure" -- NOT "today is unprofitable". Confirmed live
+   2026-08-26 (B0CN3D1PJB): today's price was already profitable (+£26.50/44.2% ROI) while the peak was merely
+   better still (+£29.12/48.5%) -- the caption below must say which case this is, not assume the worse one. #}
+{% set today_profitable = has_profit_figure and profit_value > 0 %}
 
 <div class="vr-row">
     <div class="vr-card">
@@ -138,8 +172,13 @@
 <div class="vr-card mb-3" style="background:#fdf3e0;border-color:#f3ddab;">
     <div class="vr-section-title" style="color:#96660a;"><i class="bi bi-exclamation-triangle"></i> Peak-price potential (riskier)</div>
     <div class="small" style="color:#6c7580;margin-bottom:.5rem;">
+        {% if today_profitable %}
+        Already profitable at today's price above -- and this product's price swings higher still, so at its recent
+        90-day high (&pound;{{ "%.2f"|format(metrics.price_max_90d) }}) it would be:
+        {% else %}
         Not profitable at today's price or the 90-day average -- but this product's price swings, and at its recent
         90-day high (&pound;{{ "%.2f"|format(metrics.price_max_90d) }}) it would be:
+        {% endif %}
     </div>
     <div class="vr-metric-value" style="color:#96660a;">
         &pound;{{ "%.2f"|format(metrics.keepa_estimate_profit_peak) }} ({{ "%.1f"|format(metrics.keepa_estimate_roi_peak) }}%)
@@ -198,39 +237,40 @@
     </ul>
 </div>
 
-{% if metrics.deep_dive %}
+{% if metrics.deep_dive and metrics.sp_api_live_check %}
 <div class="vr-card mb-3">
     <div class="vr-section-title"><i class="bi bi-search"></i> Deep dive (this lead cleared an initial pass, so extra evidence was pulled)</div>
-    {% if metrics.competitor_stock_levels %}
-    <div class="small mb-2" style="color:#6c7580;">Per-seller current stock -- Keepa can only confirm EXACT stock up to 10, so "10+" could be higher.</div>
-    <div class="d-flex flex-wrap gap-2 mb-2">
-        {% for s in metrics.competitor_stock_levels[:8] %}
-        <span class="vr-pill {{ 'vr-pill-risk' if s.stock >= 10 else 'vr-pill-safe' }}">
-            {{ "Amazon" if s.is_amazon else ("FBA seller" if s.is_fba else "Non-FBA seller") }}: {{ "10+" if s.stock >= 10 else s.stock }} units
-        </span>
-        {% endfor %}
-    </div>
-    {% else %}
-    <div class="small mb-2" style="color:#6c7580;">No competitor stock data available from Keepa for this listing right now.</div>
-    {% endif %}
-    {% if metrics.sp_api_live_check %}
     <div class="vr-detail-line">
         <span class="vr-detail-label">Live SP-API price cross-check</span>
         <span>{% if metrics.sp_api_live_check.price is not none %}&pound;{{ "%.2f"|format(metrics.sp_api_live_check.price) }}{% else %}no live offer found{% endif %} ({{ metrics.sp_api_live_check.offer_count }} offers)</span>
     </div>
-    {% else %}
-    <div class="small" style="color:#6c7580;">Live SP-API price cross-check not available (not configured, or the live call failed).</div>
-    {% endif %}
+</div>
+{% endif %}
+
+{% if metrics.brand_gating %}
+<div class="vr-card mb-3">
+    <div class="vr-section-title"><i class="bi bi-lock"></i> Gated brand</div>
+    <div class="small mb-0">
+        Atlas is gated on <strong>{{ metrics.brand_gating.brand }}</strong>
+        {% if metrics.brand_gating.category_name %}in {{ metrics.brand_gating.category_name }}{% else %}across all categories{% endif %}
+        -- this stock could not be listed today however good the numbers are.
+        Edit this on the <a href="/exclusions">Exclusions</a> page.
+    </div>
 </div>
 {% endif %}
 
 {% if metrics.similar_rejections %}
 <div class="vr-card mb-3">
-    <div class="vr-section-title"><i class="bi bi-hand-thumbs-down"></i> Past rejections considered for this verdict</div>
+    <div class="vr-section-title"><i class="bi bi-hand-thumbs-down"></i> Past rejections of this ASIN</div>
     <ul class="mb-0 ps-3">
         {% for r in metrics.similar_rejections %}
         <li class="small mb-1">
-            {% if r.match_reason == "same_asin" %}<strong>This exact ASIN</strong> was rejected before{% elif r.match_reason == "same_brand" %}Same brand (<strong>{{ r.brand }}</strong>){% else %}Same category (<strong>{{ r.category_name }}</strong>){% endif %}
+            {# match_reason is always "same_asin" for anything scored from 2026-08-27
+               on, but leads analysed before that have same_brand/same_category
+               entries baked into their stored keepa_metrics blob -- still labelled
+               correctly here so an old verdict's panel stays truthful about what it
+               was actually weighed against. #}
+            {% if r.match_reason == "same_brand" %}Same brand (<strong>{{ r.brand }}</strong>, no longer considered){% elif r.match_reason == "same_category" %}Same category (<strong>{{ r.category_name }}</strong>, no longer considered){% else %}<strong>This exact ASIN</strong> was rejected before{% endif %}
             -- <span class="font-monospace">{{ r.asin }}</span>: "{{ r.decision_reason }}"
         </li>
         {% endfor %}

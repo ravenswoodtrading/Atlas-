@@ -430,62 +430,6 @@ class KeepaParser:
 
         return self._last_value(series) not in (0, None)
 
-    def competitor_stock_levels(self) -> list[dict] | None:
-        """
-        Per-seller current stock, from Keepa's raw `offers` list --
-        only populated when the query requested BOTH offers AND stock
-        (see ProductService.get_products' include_offers/include_stock;
-        VerdictService's deep-dive check is the only caller of
-        include_stock today). Returns None when offers weren't
-        requested at all, or none of the returned offers carry a
-        stockCSV (stock wasn't requested, or Keepa simply has no stock
-        data for this listing yet).
-
-        Each offer's stockCSV is Keepa's raw, UNDECODED [keepaMinutes,
-        stock, keepaMinutes, stock, ...] pair series (confirmed against
-        the keepa package's own field docs, 2026-08-23 -- unlike the
-        top-level product `csv` series, the package does not convert
-        this) -- only the most recent stock value (the last element) is
-        read here; the history isn't needed for a point-in-time deep
-        dive.
-
-        stock is Keepa's own reported figure, capped: Keepa (mirroring
-        Amazon's own listing page) can only confirm EXACT stock up to
-        10 units -- a value of 10 should be read as "10 or more", never
-        as a precise count. Sorted highest-stock-first: the seller most
-        able to sustain being undercut is the real "how much room does
-        this listing have" signal a bare offer COUNT can't answer.
-        """
-        offers = self.product.get("offers")
-
-        if not offers:
-            return None
-
-        levels = []
-        for offer in offers:
-            stock_csv = offer.get("stockCSV")
-
-            if not stock_csv or len(stock_csv) < 2:
-                continue
-
-            stock = stock_csv[-1]
-
-            if stock is None or stock < 0:
-                continue
-
-            levels.append({
-                "seller_id": offer.get("sellerId") or "",
-                "is_amazon": bool(offer.get("isAmazon")),
-                "is_fba": bool(offer.get("isFBA")),
-                "stock": stock,
-            })
-
-        if not levels:
-            return None
-
-        levels.sort(key=lambda o: o["stock"], reverse=True)
-        return levels
-
     def _current_pair_price(self, csv_index: int) -> float:
         """
         Current price for a plain [time, value] PAIR-structured price
@@ -553,6 +497,87 @@ class KeepaParser:
         fba_price = self._current_pair_price(self.CSV_NEW_FBA)
 
         return buy_box_price == amazon_price or buy_box_price == fba_price
+
+    def buy_box_holder(self) -> str:
+        """
+        WHO currently holds the buy box, as a label rather than the
+        yes/no gate buy_box_is_amazon_fulfilled gives:
+        "amazon" | "fba" | "fbm" | "none" | "unknown".
+
+        Prefers Keepa's authoritative stats.buyBoxIsAmazon /
+        stats.buyBoxIsFBA, which are only populated when the query
+        requested the `offers` option -- so this is only ever fully
+        accurate for VerdictService, the one caller that turns
+        include_offers on (see ProductService.get_products' docstring
+        for why bulk scans can't afford it).
+
+        Without those fields it falls back to the same price-match
+        proxy buy_box_is_amazon_fulfilled documents, which CANNOT tell
+        a genuine FBM winner apart from Keepa's per-series snapshots
+        being slightly out of sync. So the fallback returns "unknown"
+        for any non-match, never "fbm" -- claiming a specific seller
+        type Atlas can't actually see would be worse than admitting
+        the gap. The fail-closed BUYABILITY decision still belongs to
+        buy_box_is_amazon_fulfilled; this method only reports.
+        """
+        stats = self.product.get("stats") or {}
+
+        is_amazon = stats.get("buyBoxIsAmazon")
+        is_fba = stats.get("buyBoxIsFBA")
+
+        if is_amazon is not None or is_fba is not None:
+            if is_amazon:
+                return "amazon"
+            if is_fba:
+                return "fba"
+            # Both explicitly false and a live buy-box price exists:
+            # a merchant-fulfilled seller genuinely holds it.
+            return "fbm" if self.buy_box_now() else "none"
+
+        buy_box_price = self.buy_box_now()
+
+        if not buy_box_price:
+            return "none"
+
+        if buy_box_price == self._current_pair_price(self.CSV_AMAZON):
+            return "amazon"
+
+        if buy_box_price == self._current_pair_price(self.CSV_NEW_FBA):
+            return "fba"
+
+        return "unknown"
+
+    def amazon_availability(self):
+        """
+        Keepa's raw availabilityAmazon code, or None if the response
+        doesn't carry it. Keepa's meanings: -1 no Amazon offer exists
+        at all, 0 in stock and shippable, 1 not currently in stock,
+        2 unknown, 3 available with a delay (preorder/backorder).
+        Returned raw so callers can distinguish "Amazon doesn't sell
+        this" from "Amazon sells it but is out of stock right now" --
+        two very different answers for an A2A source check.
+        """
+        return self.product.get("availabilityAmazon")
+
+    def amazon_in_stock(self) -> bool:
+        """
+        True only when Amazon itself has this in stock and shippable
+        RIGHT NOW (availabilityAmazon == 0) -- narrower than
+        is_amazon_on_listing, which is just "does an Amazon offer
+        exist at all" and stays True while Amazon is out of stock.
+
+        Falls back to "the AMAZON price series (index 0) has a current
+        value" for responses that omit availabilityAmazon, same
+        fallback is_amazon_on_listing uses. That fallback can't tell
+        in-stock from recently-in-stock, so it errs towards True; the
+        authoritative field is present on ordinary Keepa responses.
+        """
+        availability = self.amazon_availability()
+
+        if availability is not None:
+            return availability == 0
+
+        return self._current_pair_price(self.CSV_AMAZON) > 0
 
     def offer_trend(self) -> str:
         """

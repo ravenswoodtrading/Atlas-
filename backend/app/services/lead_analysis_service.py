@@ -7,6 +7,7 @@ from app.services.verdict_service import VerdictService
 from app.services.anthropic_client import generate_verdict
 from app.services.keepa_priority import KeepaPriority
 from app.services.activity_log import ActivityLog
+from app.services.product_service import KeepaTokensExhaustedError
 
 # Small batch per tick -- keeps each background pass short, matching the
 # "high priority, near-real-time" spirit of the queue (spec section 5)
@@ -46,7 +47,17 @@ class LeadAnalysisService:
     def _analyze_one(db, lead: Lead):
         try:
             with KeepaPriority.high_priority():
-                metrics = VerdictService.compute_metrics(lead.asin, cost_price=lead.va_cost_price)
+                # source_marketplace is only set on EU A2A sheet rows
+                # (see leads.py's _extract_source_marketplace) and costs
+                # one extra Keepa call when it is -- the price of
+                # catching an FBM-only or Amazon-out-of-stock source
+                # here rather than having a human reject it by hand in
+                # the review queue. NULL on OA rows, which skips it.
+                metrics = VerdictService.compute_metrics(
+                    lead.asin,
+                    cost_price=lead.va_cost_price,
+                    source_marketplace=lead.source_marketplace,
+                )
 
             if metrics is None:
                 LeadAnalysisService._record_failure(db, lead, "Keepa has no data for this ASIN.")
@@ -61,7 +72,21 @@ class LeadAnalysisService:
                     "sale_price": lead.va_sale_price,
                 }
 
-            verdict, rationale = generate_verdict(metrics, va_financials)
+            # Gated brands apply to a VA sheet row exactly as they do
+            # to a manual check (2026-08-27) -- the stock can't be
+            # listed either way, so the verdict shouldn't come back BUY
+            # without saying so. Stamped onto metrics as well so the
+            # Review Queue can show it. This path still doesn't pass
+            # same-ASIN rejection history, which the Verdict Checker
+            # does -- a separate gap, left alone here.
+            brand_gating = VerdictService.get_brand_gating(
+                metrics.get("brand"), metrics.get("category_name")
+            )
+            metrics["brand_gating"] = brand_gating
+
+            verdict, rationale = generate_verdict(
+                metrics, va_financials, brand_gating=brand_gating,
+            )
 
             lead.keepa_metrics = json.dumps(metrics)
             lead.verdict = verdict
@@ -69,6 +94,16 @@ class LeadAnalysisService:
             lead.status = "analyzed"
             lead.analyzed_at = datetime.now(timezone.utc)
             db.commit()
+
+        except KeepaTokensExhaustedError as exc:
+            # Transient, not this ASIN's fault -- leave the lead
+            # "queued" (don't burn one of its MAX_ANALYSIS_ATTEMPTS)
+            # so the next batch tick just picks it up again once
+            # tokens refill, instead of it eventually going permanently
+            # "analyzed"/failed for a reason that had nothing to do
+            # with the ASIN itself.
+            db.rollback()
+            print(f"Lead analysis deferred for lead {lead.id} ({lead.asin}): {exc}")
 
         except Exception as exc:
             db.rollback()

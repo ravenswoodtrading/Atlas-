@@ -2,23 +2,42 @@
 
 {% block title %}Verdict Checker - Atlas{% endblock %}
 
+{% block extra_head %}
+{% if selected_run and selected_run.status == "running" %}
+{# Only while a batch is actually in flight -- same self-refresh
+   convention as the Scan Queue page, but conditional so the page
+   isn't reloading under you while you're typing into the forms. #}
+<meta http-equiv="refresh" content="10">
+{% endif %}
+{% endblock %}
+
 {% block content %}
 
 <h4 class="mb-4">Verdict Checker</h4>
 
 <div class="card metric p-4 mb-4">
     <form method="get" action="/verdict" class="row g-3 align-items-end">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <label class="form-label">ASIN</label>
             <input type="text" class="form-control" name="asin" value="{{ asin }}" placeholder="e.g. B0BSCLTYJT" required>
         </div>
-        <div class="col-md-3">
-            <label class="form-label">Cost price <span class="text-muted">(optional -- for a rough Keepa-estimate ROI)</span></label>
+        <div class="col-md-2">
+            <label class="form-label">Cost price <span class="text-muted">(optional)</span></label>
             <input type="text" class="form-control" name="cost_price" value="{{ cost_price }}" placeholder="e.g. 12.50">
         </div>
         <div class="col-md-3">
             <label class="form-label">Source <span class="text-muted">(optional -- where you'd buy this from)</span></label>
             <input type="text" class="form-control" name="source_detail" value="{{ source_detail }}" placeholder="e.g. Home Bargains, or a URL">
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">EU source <span class="text-muted">(A2A)</span></label>
+            <select class="form-select" name="source_marketplace">
+                <option value="">Not EU A2A / auto-detect</option>
+                <option value="DE"{% if source_marketplace == 'DE' %} selected{% endif %}>Amazon.de</option>
+                <option value="FR"{% if source_marketplace == 'FR' %} selected{% endif %}>Amazon.fr</option>
+                <option value="ES"{% if source_marketplace == 'ES' %} selected{% endif %}>Amazon.es</option>
+                <option value="IT"{% if source_marketplace == 'IT' %} selected{% endif %}>Amazon.it</option>
+            </select>
         </div>
         <div class="col-md-2">
             <button type="submit" class="btn btn-dark w-100">
@@ -38,13 +57,28 @@
     <h5 class="mb-1">Bulk check</h5>
     <div class="small text-muted mb-3">
         One ASIN per line -- add a cost price after a comma or space (e.g. <code>B0BSCLTYJT,12.50</code>) for a Keepa-estimate ROI, or leave it off for demand/competition signals only.
+        Set an EU source below for A2A batches -- Atlas then checks each ASIN is actually buyable there
+        (Amazon or an FBA seller on the buy box, Amazon in stock) instead of only whether it's profitable.
         Up to {{ max_bulk_asins }} at once. Any lead that comes back BUY or WATCH gets a second, deeper pass automatically (competitor stock levels + a live SP-API price check) before its final verdict.
+        Batches run in the background at roughly 10-15 seconds per ASIN -- you can leave this page and come back to it, and every past batch stays listed below.
     </div>
     <form method="post" action="/verdict/bulk">
         <textarea class="form-control mb-3" name="asins_text" rows="6" placeholder="B0BSCLTYJT,12.50&#10;B0ABCDEFGH&#10;B0IJKLMNOP,8.00" required></textarea>
-        <div class="mb-3">
-            <label class="form-label">Source <span class="text-muted">(optional -- applies to the whole batch, e.g. one retailer's clearance page)</span></label>
-            <input type="text" class="form-control" name="source_detail" placeholder="e.g. Home Bargains, or a URL">
+        <div class="row g-3 mb-3">
+            <div class="col-md-8">
+                <label class="form-label">Source <span class="text-muted">(optional -- applies to the whole batch, e.g. one retailer's clearance page)</span></label>
+                <input type="text" class="form-control" name="source_detail" placeholder="e.g. Home Bargains, or a URL">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">EU source <span class="text-muted">(A2A -- costs one extra Keepa call per ASIN)</span></label>
+                <select class="form-select" name="source_marketplace">
+                    <option value="">Not EU A2A / auto-detect</option>
+                    <option value="DE">Amazon.de</option>
+                    <option value="FR">Amazon.fr</option>
+                    <option value="ES">Amazon.es</option>
+                    <option value="IT">Amazon.it</option>
+                </select>
+            </div>
         </div>
         <button type="submit" class="btn btn-dark">
             <i class="bi bi-clipboard-check"></i> Check batch
@@ -52,12 +86,59 @@
     </form>
 </div>
 
-{% if bulk_results is not none %}
+{% if runs %}
 <div class="card metric p-4 mb-4">
-    <h5 class="mb-3">Batch results ({{ bulk_results|length }})</h5>
-    {% if not bulk_results %}
-    <div class="text-muted">No valid ASINs found in the submitted text.</div>
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <h5 class="mb-0">Batch results</h5>
+        <form method="get" action="/verdict" class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 small text-muted">Past batches</label>
+            <select class="form-select form-select-sm" name="run_id" onchange="this.form.submit()" style="min-width: 22rem;">
+                {% for r in runs %}
+                <option value="{{ r.id }}"{% if selected_run and r.id == selected_run.id %} selected{% endif %}>
+                    #{{ r.id }} -- {{ r.started_at.strftime("%d %b %H:%M") }} --
+                    {{ r.asins_submitted }} ASIN{{ "" if r.asins_submitted == 1 else "s" }}
+                    {%- if r.status == "running" %} (running){% elif r.status == "error" %} (failed){% endif %}
+                    {%- if r.source_detail %} -- {{ r.source_detail[:40] }}{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit" class="btn btn-sm btn-outline-secondary">Show</button></noscript>
+        </form>
+    </div>
+
+    {% if selected_run %}
+    {% if selected_run.status == "running" %}
+    <div class="alert alert-primary py-2">
+        <i class="bi bi-arrow-repeat"></i>
+        <strong>Batch #{{ selected_run.id }} is running</strong> --
+        {{ selected_run.asins_completed }} of {{ selected_run.asins_submitted }} checked.
+        Each ASIN is a Keepa call plus a Claude verdict (~10-15s), and BUY/WATCH hits cost a second pass.
+        This page refreshes itself every 10s; it's safe to navigate away and come back.
+    </div>
+    {% elif selected_run.status == "error" %}
+    <div class="alert alert-warning py-2">
+        <i class="bi bi-exclamation-triangle"></i>
+        <strong>Batch #{{ selected_run.id }} stopped:</strong> {{ selected_run.error }}
+        {% if selected_run.asins_completed %}
+        {{ selected_run.asins_completed }} of {{ selected_run.asins_submitted }} were checked before it stopped -- those results are below and their leads were saved.
+        {% endif %}
+    </div>
     {% else %}
+    <div class="small text-muted mb-3">
+        Batch #{{ selected_run.id }}, started {{ selected_run.started_at.strftime("%d %b %Y %H:%M") }}{% if selected_run.completed_at %},
+        finished {{ selected_run.completed_at.strftime("%H:%M") }}{% endif %}.
+        {% if selected_run.source_detail %}Source: {{ selected_run.source_detail }}.{% endif %}
+        {% if selected_run.source_marketplace %}EU source: Amazon.{{ selected_run.source_marketplace|lower }}.{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="mb-3">
+        <span class="badge bg-success">{{ selected_run.buy_count }} BUY</span>
+        <span class="badge bg-warning text-dark">{{ selected_run.watch_count }} WATCH</span>
+        <span class="badge bg-danger">{{ selected_run.avoid_count }} AVOID</span>
+        {% if selected_run.failed_count %}<span class="badge bg-secondary">{{ selected_run.failed_count }} failed</span>{% endif %}
+    </div>
+
     <div class="table-responsive">
         <table class="table table-sm align-middle">
             <thead>
@@ -71,12 +152,14 @@
                 </tr>
             </thead>
             <tbody>
-                {% for r in bulk_results %}
-                <tr>
+                {% for r in run_items %}
+                <tr{% if r.status == "pending" %} class="text-muted"{% endif %}>
                     <td class="small font-monospace">{{ r.asin }}</td>
                     <td class="small">{{ r.title or "--" }}</td>
                     <td>
-                        {% if r.error %}
+                        {% if r.status == "pending" %}
+                        <span class="badge bg-light text-muted border">Queued</span>
+                        {% elif r.status == "failed" %}
                         <span class="badge bg-secondary" title="{{ r.error }}">Failed</span>
                         {% elif r.verdict == "BUY" %}
                         <span class="badge bg-success">BUY</span>
@@ -88,7 +171,7 @@
                     </td>
                     <td class="small">
                         {% if r.keepa_estimate_profit is not none %}
-                        &pound;{{ "%.2f"|format(r.keepa_estimate_profit) }} ({{ "%.1f"|format(r.keepa_estimate_roi) }}%)
+                        &pound;{{ "%.2f"|format(r.keepa_estimate_profit) }} ({{ "%.1f"|format(r.keepa_estimate_roi or 0) }}%)
                         {% else %}
                         <span class="text-muted">--</span>
                         {% endif %}
