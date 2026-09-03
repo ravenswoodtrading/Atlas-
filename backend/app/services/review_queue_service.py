@@ -61,33 +61,49 @@ MAX_CONSIDER_LEADS = 150
 PEAK_WORTH_IT_ROI = 35
 PEAK_WORTH_IT_SCORE = 65
 
-# Unified Review Queue priority (Review Queue backend build,
-# 2026-09-03) -- a common attention layer sitting ABOVE the three
-# pipelines' own, deliberately different, recommendation vocabularies
-# (OpportunityEngine's BUY/CONSIDER/PEAK_WINDOW/... for scan+competitor,
-# Lead.verdict's BUY/WATCH/AVOID for VA). This never re-scores or
-# re-thresholds anything -- see _item_priority -- it only reads what
-# each pipeline already decided and maps it onto one of these four.
+# Unified Review Queue VIEWS (Review Queue backend build, 2026-09-03
+# follow-up -- "unified review queue / one decision per ASIN") -- a
+# common attention layer sitting ABOVE the three pipelines' own,
+# deliberately different, recommendation vocabularies (OpportunityEngine's
+# BUY/CONSIDER/PEAK_WINDOW/... for scan+competitor, Lead.verdict's
+# BUY/WATCH/AVOID for VA). This never re-scores or re-thresholds
+# anything -- see _item_views -- it only reads what each pipeline
+# already decided and maps it onto zero or more of these.
+#
+# IMPORTANT: an item can belong to MULTIPLE views at once (see
+# _build_merged_item's own docstring) -- BUY NOW is a universal view,
+# not a competing bucket with VA TO REVIEW. A VA-submitted BUY with
+# clean economics is simultaneously "a strong current opportunity"
+# (BUY_NOW) and "awaiting your final decision" (VA_TO_REVIEW); one
+# review resolves both (see resolve_item).
 QUEUE_PRIORITY_BUY_NOW = "BUY_NOW"
 QUEUE_PRIORITY_VA_TO_REVIEW = "VA_TO_REVIEW"
 QUEUE_PRIORITY_BORDERLINE = "BORDERLINE"
 QUEUE_PRIORITY_NEEDS_ATTENTION = "NEEDS_ATTENTION"
+
+# Reserved (explicitly NOT built yet, per instruction) for the future
+# "Atlas Attention Queue" -- no item produced today is ever given this
+# view; it exists purely so the views vocabulary already has a slot for
+# it and a later addition isn't a breaking change to this one.
+QUEUE_VIEW_URGENT = "URGENT"
 
 QUEUE_PRIORITIES = (
     QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW,
     QUEUE_PRIORITY_BORDERLINE, QUEUE_PRIORITY_NEEDS_ATTENTION,
 )
 
-# When a merged (cross-source) item's sources disagree on priority, the
-# STRONGEST/most-urgent one wins for sort/attention purposes -- lower
-# rank = takes precedence. NEEDS_ATTENTION always wins (a conflict or a
-# stale/blocked BUY is exactly the thing you'd otherwise miss by only
-# looking at the "best" source).
+# For sorting/the single "primary" view a list needs to sort by -- the
+# STRONGEST/most-urgent view among however many an item belongs to.
+# NEEDS_ATTENTION always wins (a conflict or a stale/blocked BUY is
+# exactly the thing you'd otherwise miss by only looking at the "best"
+# view). Does NOT mean the item only HAS that one view -- see `views`
+# (plural) on the merged item for full membership.
 _PRIORITY_RANK = {
     QUEUE_PRIORITY_NEEDS_ATTENTION: 0,
     QUEUE_PRIORITY_BUY_NOW: 1,
     QUEUE_PRIORITY_VA_TO_REVIEW: 2,
     QUEUE_PRIORITY_BORDERLINE: 3,
+    QUEUE_VIEW_URGENT: 0,
 }
 
 # Reserved for the future "Atlas Attention Queue" (explicitly NOT built
@@ -272,6 +288,79 @@ def classify_offer_freshness(
     if age_hours <= OFFER_FRESHNESS_AGING_HOURS:
         return "AGING"
     return "STALE"
+
+
+def apply_lead_decision(
+    lead: Lead, decision: str, reason: str | None = None, reason_category: str | None = None
+) -> None:
+    """
+    What "deciding" a lead actually means -- shared by /review/decide
+    (a human using Atlas's own UI), the sheet-decision webhook (a
+    human's decision arriving from the VA sheet instead), and
+    ReviewQueueService.resolve_item (the unified cross-source decision,
+    2026-09-03), so none of these three entry points can drift apart on
+    what a decision does. Caller owns the db session/commit; this only
+    mutates the passed-in lead.
+
+    MOVED here from app/routes/leads.py (2026-09-03, unified Review
+    Queue build) so ReviewQueueService can call it directly --
+    routes/leads.py already imports FROM review_queue_service (for
+    /review/history), so the reverse import would have been circular.
+    routes/leads.py now imports this function from here instead; its
+    own behaviour for the existing "approved"/"rejected"/"oos" values
+    is byte-for-byte unchanged.
+
+    decision: "approved" | "rejected" | "oos" | "watch" | "need_more_info".
+    "oos" (Amazon out of stock right now) and "watch" (added 2026-09-03,
+    unified Review Queue build) are both "not actionable this instant,
+    but worth catching later" -- not a real approve/reject. "need_more_info"
+    (also added 2026-09-03) means "flagged for follow-up before I can
+    decide" -- distinct from both. All five clear the lead from the
+    pending Lead Queue the same way (status="reviewed") -- each is its
+    own bucket in Reviewed History (see reviewed_leads.html /
+    list_reviewed_history), never merged into "rejected".
+
+    reason: optional free-text "why not" (2026-08-23) -- see
+    Lead.decision_reason.
+
+    reason_category: optional structured reason (atlas-review-queue-
+    backend-v1.md section 5, see REVIEW_REASON_CATEGORIES below) --
+    additive alongside `reason`, never a replacement for it. The sheet
+    webhook never sends one (the sheet has no such column), so this is
+    None there, same as before.
+
+    "oos" and "watch" BOTH auto-add the ASIN to the existing Watchlist,
+    reusing its already-built re-check machinery (WatchlistService.
+    check_stale runs weekly, or visit /watchlist to force an immediate
+    recheck) instead of building a parallel monitoring mechanism --
+    title/brand come from the lead's own keepa_metrics (see
+    VerdictService/LeadAnalysisService), so no extra Keepa lookup is
+    needed here. "need_more_info" does NOT auto-watch -- it means
+    "flagged for follow-up", not "recheck price/stock periodically", so
+    the Watchlist's own re-check machinery wouldn't actually help here.
+    """
+    lead.decision = decision
+    lead.decision_reason = reason or None
+    lead.decision_reason_category = reason_category or None
+    lead.status = "reviewed"
+    lead.reviewed_at = datetime.now(timezone.utc)
+
+    if decision in ("oos", "watch"):
+        title, brand = "", ""
+
+        if lead.keepa_metrics:
+            try:
+                metrics = json.loads(lead.keepa_metrics)
+                title = metrics.get("title") or ""
+                brand = metrics.get("brand") or ""
+            except Exception:
+                pass
+
+        note = (
+            "Amazon OOS at review -- watching for restock" if decision == "oos"
+            else "Marked WATCH at review -- keeping an eye on this"
+        )
+        ProductRepository.add_watch(lead.asin, title=title, brand=brand, note=note)
 
 
 class ReviewQueueService:
@@ -528,6 +617,77 @@ class ReviewQueueService:
                 row["conflict_note"] = "A Verdict Check on this exact ASIN came back AVOID -- worth a second look before acting."
 
     @staticmethod
+    def _competitor_lead_dict(entry: dict) -> dict:
+        """
+        Shared row shape for a competitor-sourced lead -- used by both
+        the currently_buyable branch (list_notable_buyable) and the
+        historical-evidence-only branch (list_historical_a2a_not_buyable)
+        in list_leads() below, so the two can't drift apart on shape.
+        `entry` is {"listing": SellerNewListing, "record": ProductRecord,
+        "seller": TrackedSeller}, exactly what both SellerWatchService
+        methods return.
+        """
+        listing = entry["listing"]
+        record = entry["record"]
+        seller = entry["seller"]
+
+        parsed_report = {}
+        if record.report_json:
+            try:
+                parsed_report = json.loads(record.report_json)
+            except Exception:
+                parsed_report = {}
+
+        reasoning = {}
+        if listing.sourcing_reasoning_json:
+            try:
+                reasoning = json.loads(listing.sourcing_reasoning_json)
+            except Exception:
+                reasoning = {}
+
+        return {
+            "source": "competitor",
+            "asin": listing.asin,
+            "title": record.title,
+            "brand": record.brand,
+            "best_source_marketplace": record.best_source_marketplace,
+            "best_source_cost_gbp": record.best_source_cost_gbp,
+            "buy_box_now": record.buy_box_now,
+            "profit": record.profit,
+            "roi": record.roi,
+            "profit_90d": record.profit_90d,
+            "roi_90d": record.roi_90d,
+            "score": record.score,
+            "recommendation": record.recommendation,
+            "monthly_sales": record.monthly_sales,
+            "when": listing.detected_at,
+            "parsed_report": parsed_report,
+            "reasoning": reasoning,
+            "rationale": None,
+            "sourcing_tag": listing.sourcing_tag,
+            "currently_buyable": listing.currently_buyable,
+            "seller": seller,
+            "listing_id": listing.id,
+            "conflict_note": None,
+            # Competitor finds don't go through OA Source Discovery's
+            # shopping-match pipeline -- see _scan_lead_dict's comment.
+            "match_tier": record.match_tier,
+            "match_confidence_pct": record.match_confidence_pct,
+            "source_confidence": record.source_confidence,
+            # Competitor rows read best_source_marketplace/cost off
+            # the same ProductRecord the "scan" branch above uses --
+            # see eu_a2a_freshness_service.py's own scope note --
+            # so the same freshness fields apply here too.
+            "freshness": classify_offer_freshness(
+                record.scanned_at, record.last_offer_checked_at, record.last_offer_buyable,
+            ),
+            "last_offer_checked_at": record.last_offer_checked_at,
+            "last_offer_price_gbp": record.last_offer_price_gbp,
+            "last_offer_buyable": record.last_offer_buyable,
+            "review_reason_category": listing.review_reason_category,
+        }
+
+    @staticmethod
     def list_leads(sort: str = "when_desc") -> list:
         scan_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="notable", sort="scanned_desc",
@@ -603,66 +763,23 @@ class ReviewQueueService:
             seen_scan_asins.add(record.asin)
             leads.append(lead)
 
+        seen_competitor_listing_ids = set()
+
         for entry in SellerWatchService.list_notable_buyable(limit=MAX_LEADS):
-            listing = entry["listing"]
-            record = entry["record"]
-            seller = entry["seller"]
+            leads.append(ReviewQueueService._competitor_lead_dict(entry))
+            seen_competitor_listing_ids.add(entry["listing"].id)
 
-            parsed_report = {}
-            if record.report_json:
-                try:
-                    parsed_report = json.loads(record.report_json)
-                except Exception:
-                    parsed_report = {}
-
-            reasoning = {}
-            if listing.sourcing_reasoning_json:
-                try:
-                    reasoning = json.loads(listing.sourcing_reasoning_json)
-                except Exception:
-                    reasoning = {}
-
-            leads.append({
-                "source": "competitor",
-                "asin": listing.asin,
-                "title": record.title,
-                "brand": record.brand,
-                "best_source_marketplace": record.best_source_marketplace,
-                "best_source_cost_gbp": record.best_source_cost_gbp,
-                "buy_box_now": record.buy_box_now,
-                "profit": record.profit,
-                "roi": record.roi,
-                "profit_90d": record.profit_90d,
-                "roi_90d": record.roi_90d,
-                "score": record.score,
-                "recommendation": record.recommendation,
-                "monthly_sales": record.monthly_sales,
-                "when": listing.detected_at,
-                "parsed_report": parsed_report,
-                "reasoning": reasoning,
-                "rationale": None,
-                "sourcing_tag": listing.sourcing_tag,
-                "currently_buyable": listing.currently_buyable,
-                "seller": seller,
-                "listing_id": listing.id,
-                "conflict_note": None,
-                # Competitor finds don't go through OA Source Discovery's
-                # shopping-match pipeline -- see _scan_lead_dict's comment.
-                "match_tier": record.match_tier,
-                "match_confidence_pct": record.match_confidence_pct,
-                "source_confidence": record.source_confidence,
-                # Competitor rows read best_source_marketplace/cost off
-                # the same ProductRecord the "scan" branch above uses --
-                # see eu_a2a_freshness_service.py's own scope note --
-                # so the same freshness fields apply here too.
-                "freshness": classify_offer_freshness(
-                    record.scanned_at, record.last_offer_checked_at, record.last_offer_buyable,
-                ),
-                "last_offer_checked_at": record.last_offer_checked_at,
-                "last_offer_price_gbp": record.last_offer_price_gbp,
-                "last_offer_buyable": record.last_offer_buyable,
-                "review_reason_category": listing.review_reason_category,
-            })
+        # Real historical EU/UK A2A evidence with no CURRENT buyable
+        # offer (section 8's own worked example) -- previously invisible
+        # to the Review Queue entirely, since list_notable_buyable only
+        # ever looks at currently_buyable==True listings. See
+        # SellerWatchService.list_historical_a2a_not_buyable's own
+        # docstring. _item_views (below) is what actually routes these
+        # to NEEDS_ATTENTION, never BUY_NOW.
+        for entry in SellerWatchService.list_historical_a2a_not_buyable(limit=MAX_LEADS):
+            if entry["listing"].id in seen_competitor_listing_ids:
+                continue
+            leads.append(ReviewQueueService._competitor_lead_dict(entry))
 
         leads.extend(ReviewQueueService._pending_leads(LEAD_MAIN_VERDICTS))
 
@@ -715,50 +832,83 @@ class ReviewQueueService:
         return leads
 
     @staticmethod
-    def _item_priority(lead: dict) -> str:
+    def _item_views(lead: dict) -> set:
         """
         Maps ONE per-source lead dict (see _scan_lead_dict/_lead_dict/
-        the competitor branch above) onto one of the four unified
-        QUEUE_PRIORITY_* values -- reuses each pipeline's OWN existing
-        recommendation/verdict vocabulary and existing signals
-        (freshness, conflict_note, the VA first-pass flags from
-        LeadAnalysisService), invents no new thresholds. Pure function
-        of the dict, no DB access.
-        """
-        if lead.get("conflict_note"):
-            return QUEUE_PRIORITY_NEEDS_ATTENTION
+        the competitor branch above) onto the set of unified views it
+        belongs to -- reuses each pipeline's OWN existing recommendation/
+        verdict vocabulary and existing signals (freshness, conflict_note,
+        historical A2A evidence, the VA first-pass flags from
+        LeadAnalysisService), invents no new thresholds. Pure function of
+        the dict, no DB access.
 
+        Returns a SET, not a single value (2026-09-03, unified Review
+        Queue build) -- BUY NOW is a universal view, not one competing
+        bucket among several: a VA lead with a clean BUY verdict belongs
+        in BOTH BUY_NOW (it's a strong current opportunity) AND
+        VA_TO_REVIEW (you still haven't made your own final call on it)
+        at once. Never empty.
+        """
+        views = set()
         recommendation = lead.get("recommendation")
 
         if lead["source"] == "lead":
+            # VA_TO_REVIEW is a WORKFLOW view, true for every VA lead
+            # still awaiting your decision -- NOT a verdict-quality
+            # judgement, and NOT mutually exclusive with BUY_NOW. "It
+            # does NOT mean Atlas doesn't think this is a BUY."
+            views.add(QUEUE_PRIORITY_VA_TO_REVIEW)
+
             if recommendation == "BUY":
-                # A VA BUY is only a clean BUY_NOW if nothing from the
-                # first pass says otherwise (atlas-review-queue-
-                # backend-v1.md section 3's own worked example) --
-                # doesn't reject, just routes it to a human via
-                # NEEDS_ATTENTION instead of the fast lane.
-                if lead.get("already_in_inventory") or lead.get("buyability_blocker") or lead.get("has_similar_rejection"):
-                    return QUEUE_PRIORITY_NEEDS_ATTENTION
-                return QUEUE_PRIORITY_BUY_NOW
+                # A VA BUY additionally earns BUY_NOW only if nothing
+                # from the first pass says otherwise -- doesn't reject,
+                # just also adds NEEDS_ATTENTION so it's not lost among
+                # ordinary VA_TO_REVIEW backlog.
+                if (
+                    lead.get("already_in_inventory") or lead.get("buyability_blocker")
+                    or lead.get("has_similar_rejection") or lead.get("conflict_note")
+                ):
+                    views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
+                else:
+                    views.add(QUEUE_PRIORITY_BUY_NOW)
+            elif recommendation != "WATCH":
+                # AVOID never reaches here (_pending_leads only pulls
+                # BUY/WATCH verdicts) -- an unexpected/missing verdict
+                # is surfaced, not silently dropped.
+                views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
-            if recommendation == "WATCH":
-                return QUEUE_PRIORITY_VA_TO_REVIEW
-
-            # AVOID never reaches here (_pending_leads only pulls BUY/
-            # WATCH verdicts) -- an unexpected/missing verdict is
-            # surfaced, not silently miscategorized as BORDERLINE.
-            return QUEUE_PRIORITY_NEEDS_ATTENTION
+            return views
 
         # scan / competitor -- OpportunityEngine's own vocabulary.
+        if lead.get("conflict_note"):
+            views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
+
         if recommendation == "BUY":
             if lead.get("freshness") in STALE_FRESHNESS_STATES:
-                return QUEUE_PRIORITY_NEEDS_ATTENTION
-            return QUEUE_PRIORITY_BUY_NOW
+                views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
+            else:
+                views.add(QUEUE_PRIORITY_BUY_NOW)
+        elif recommendation in BORDERLINE_RECOMMENDATIONS:
+            views.add(QUEUE_PRIORITY_BORDERLINE)
+        elif not views:
+            views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
-        if recommendation in BORDERLINE_RECOMMENDATIONS:
-            return QUEUE_PRIORITY_BORDERLINE
+        # Competitor-specific (section 8's own worked example): real
+        # historical A2A evidence exists but today's recommendation
+        # isn't BUY -- e.g. the original source dried up and nothing
+        # else currently clears the bar either. That's a genuine "was a
+        # real opportunity, needs a look" case, not silently nothing
+        # (which is what happened before: SellerWatchService.
+        # list_notable_buyable only ever surfaced currently_buyable
+        # listings at all -- see list_leads()'s widened competitor
+        # query). Added ALONGSIDE whatever else already applies, never
+        # replacing it.
+        if lead["source"] == "competitor" and recommendation != "BUY":
+            hist = (lead.get("reasoning") or {}).get("historical_a2a_evidence") or {}
+            if hist.get("eu_a2a") or hist.get("uk_a2a"):
+                views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
-        return QUEUE_PRIORITY_NEEDS_ATTENTION
+        return views
 
     @staticmethod
     def _build_merged_item(asin: str, source_items: list) -> dict:
@@ -769,15 +919,26 @@ class ReviewQueueService:
         SellerNewListing/Lead rows are never touched, and every
         original per-source dict survives intact in source_items).
         """
-        priorities = [ReviewQueueService._item_priority(item) for item in source_items]
-        queue_priority = min(priorities, key=lambda p: _PRIORITY_RANK[p])
+        per_item_views = [ReviewQueueService._item_views(item) for item in source_items]
+        views = set().union(*per_item_views) if per_item_views else set()
 
-        # The source item that actually produced the winning priority --
+        # queue_priority is the single STRONGEST view, for sorting/
+        # anything that needs one value -- `views` (plural, below) is
+        # the real membership: an item can be in BUY_NOW AND
+        # VA_TO_REVIEW at once (section 2/3 -- "BUY NOW is a universal
+        # view", not a competing bucket), so this is a convenience, not
+        # the full picture.
+        queue_priority = min(views, key=lambda v: _PRIORITY_RANK[v]) if views else QUEUE_PRIORITY_NEEDS_ATTENTION
+
+        # The source item that actually contributed the winning view --
         # ties broken by source_items' own order (list_leads()'s
         # existing scan -> competitor -> lead merge order, not re-decided
         # here). This is the "strongest/current recommendation" (section
         # 1) the merged item leads with.
-        primary = next(item for item, p in zip(source_items, priorities) if p == queue_priority)
+        primary = next(
+            (item for item, item_views in zip(source_items, per_item_views) if queue_priority in item_views),
+            source_items[0],
+        )
 
         sources = [item["source"] for item in source_items]
         recommendations = {item["source"]: item.get("recommendation") for item in source_items}
@@ -805,6 +966,12 @@ class ReviewQueueService:
             "asin": asin,
             "category": ATTENTION_CATEGORY_SOURCING,
             "queue_priority": queue_priority,
+            # Full view membership (2026-09-03, unified Review Queue
+            # build) -- an item appears in EVERY view listed here, e.g.
+            # ["BUY_NOW", "VA_TO_REVIEW"] for a clean VA BUY awaiting
+            # your decision. queue_priority above is just views[0] --
+            # kept as its own key for anything that only wants one value.
+            "views": sorted(views, key=lambda v: _PRIORITY_RANK[v]),
             "sources": sources,
             "conflict": is_conflict,
             "conflict_note": next(
@@ -899,19 +1066,29 @@ class ReviewQueueService:
     @staticmethod
     def queue_priority_summary() -> dict:
         """
-        Counts of the deduplicated queue by unified priority, plus how
-        many raw source rows got merged away -- additive alongside
-        count_summary()/consider_summary() (section 8: those existing
+        Counts of the deduplicated queue by unified VIEW membership,
+        plus how many raw source rows got merged away -- additive
+        alongside count_summary()/consider_summary() (those existing
         counts/keys are left completely untouched so the Dashboard
         badges and anything else reading them can't regress; this is a
         NEW set of numbers for whatever UI work wires them in next).
+
+        An item counted into MULTIPLE buckets is intentional (2026-09-03,
+        unified Review Queue build, section 14's own worked example): a
+        clean VA BUY counts toward BOTH buy_now AND va_to_review, because
+        those are genuinely different questions ("is this worth buying"
+        vs "have you made your final call on it") about the SAME one
+        underlying item -- summing the per-view counts will therefore
+        legitimately exceed unique_items whenever any item has more than
+        one view, which is expected, not a bug.
         """
         raw_leads = ReviewQueueService.list_leads() + ReviewQueueService.list_consider_leads()
         items = ReviewQueueService.merge_by_asin(raw_leads)
 
         counts = {p: 0 for p in QUEUE_PRIORITIES}
         for item in items:
-            counts[item["queue_priority"]] += 1
+            for view in item["views"]:
+                counts[view] += 1
 
         return {
             "unique_items": len(items),
@@ -919,6 +1096,113 @@ class ReviewQueueService:
             "duplicates_merged": len(raw_leads) - len(items),
             **{p.lower(): counts[p] for p in QUEUE_PRIORITIES},
         }
+
+    @staticmethod
+    def resolve_item(asin: str, decision: str, reason: str | None = None, reason_category: str | None = None) -> dict:
+        """
+        ONE decision resolves every outstanding source record for this
+        ASIN at once (unified Review Queue build, 2026-09-03 -- "I
+        should NEVER have to review the same ASIN twice simply because
+        it appeared in two queue views"). Reuses each source's OWN
+        existing decision mechanism -- ProductRepository.set_review,
+        SellerWatchService.set_review, apply_lead_decision, exactly the
+        same functions /review/set, /review/decide, and the Competitors
+        page's own review buttons already call -- so this can never
+        drift from what clicking each item's own existing button would
+        have done, and creates no new decision pathway.
+
+        decision: one of DECISION_VALUES ("approved" | "rejected" |
+        "oos" | "watch" | "need_more_info").
+
+        Live-queries each source table directly for whatever is
+        CURRENTLY outstanding for this ASIN -- never trusts a possibly-
+        stale merged item computed earlier in the request/page render.
+        A source is "outstanding" using the exact same tests the rest
+        of this file already uses to decide what's pending (most recent
+        ProductRecord with review IS NULL; every undismissed
+        SellerNewListing with review IS NULL; every Lead with
+        status="analyzed" and decision IS NULL) -- so this never
+        re-decides something already resolved, e.g. it will never
+        overwrite an old, already-reviewed ProductRecord just because a
+        VA later happened to submit the same ASIN.
+
+        Returns which rows were actually touched per source, so a
+        caller can confirm nothing was silently skipped. Underlying
+        rows keep their FULL history -- only their own review/decision
+        columns change; nothing here deletes or merges a source record
+        (section 13).
+        """
+        if decision not in ReviewQueueService.DECISION_VALUES:
+            raise ValueError(f"Unknown decision: {decision!r} -- must be one of {ReviewQueueService.DECISION_VALUES}")
+
+        scan_verdict = {v: k for k, v in ReviewQueueService._SCAN_DECISION_MAP.items()}[decision]
+        resolved = {"scan": False, "competitor": [], "lead": []}
+
+        db = SessionLocal()
+        try:
+            record = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin)
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+            scan_was_outstanding = bool(record and not record.review)
+
+            listing_ids = [
+                row.id for row in
+                db.query(SellerNewListing.id)
+                .filter(SellerNewListing.asin == asin, SellerNewListing.review.is_(None), SellerNewListing.dismissed == False)
+                .all()
+            ]
+
+            lead_ids = [
+                row.id for row in
+                db.query(Lead.id)
+                .filter(Lead.asin == asin, Lead.status == "analyzed", Lead.decision.is_(None))
+                .all()
+            ]
+        finally:
+            db.close()
+
+        if scan_was_outstanding:
+            ProductRepository.set_review(asin, scan_verdict, reason=reason, reason_category=reason_category)
+            resolved["scan"] = True
+
+        for listing_id in listing_ids:
+            SellerWatchService.set_review(listing_id, scan_verdict, reason=reason, reason_category=reason_category)
+            resolved["competitor"].append(listing_id)
+
+        if lead_ids:
+            db2 = SessionLocal()
+            try:
+                for lead_id in lead_ids:
+                    lead = db2.get(Lead, lead_id)
+                    if lead and lead.decision is None:  # re-check freshness under this fresh session
+                        apply_lead_decision(lead, decision, reason, reason_category)
+                        resolved["lead"].append(lead_id)
+                db2.commit()
+            finally:
+                db2.close()
+
+        # "oos"/"watch" on the SCAN side ALSO auto-adds to Watchlist,
+        # mirroring /review/set's own existing single-item behaviour
+        # (see app/routes/watchlist.py) -- reuses the exact same
+        # ProductRepository.add_watch call, not a new mechanism.
+        # "watch" included for the same reason apply_lead_decision
+        # already does this for the Lead side (see its own docstring).
+        if scan_was_outstanding and decision in ("oos", "watch"):
+            last_check = ProductRepository.get_last_eu_check(asin)
+            ProductRepository.add_watch(
+                asin,
+                title=last_check.title if last_check else "",
+                brand=last_check.brand if last_check else "",
+                note=(
+                    "Amazon OOS at review -- watching for restock" if decision == "oos"
+                    else "Marked WATCH at review -- keeping an eye on this"
+                ),
+            )
+
+        return resolved
 
     @staticmethod
     def consider_summary() -> dict:
@@ -1010,10 +1294,17 @@ class ReviewQueueService:
         }
 
     # "up"/"down" (ProductRecord/SellerNewListing's own vocabulary) ->
-    # the Lead Queue's "approved"/"rejected" -- a shared 3-value
-    # decision vocabulary for the merged history view. "oos" already
-    # matches on both sides.
-    _SCAN_DECISION_MAP = {"up": "approved", "down": "rejected", "oos": "oos"}
+    # the Lead Queue's "approved"/"rejected" -- a shared 5-value
+    # decision vocabulary for the merged history view. "oos"/"watch"/
+    # "need_more_info" (the latter two added 2026-09-03, unified Review
+    # Queue build -- see apply_lead_decision/resolve_item) already
+    # match on both sides -- no separate word was needed for the scan/
+    # competitor side of those three.
+    _SCAN_DECISION_MAP = {
+        "up": "approved", "down": "rejected", "oos": "oos",
+        "watch": "watch", "need_more_info": "need_more_info",
+    }
+    DECISION_VALUES = ("approved", "rejected", "oos", "watch", "need_more_info")
 
     @staticmethod
     def _scan_history_dict(record) -> dict:
@@ -1100,7 +1391,7 @@ class ReviewQueueService:
         """
         db = SessionLocal()
         try:
-            counts = {"approved": 0, "rejected": 0, "oos": 0}
+            counts = {v: 0 for v in ReviewQueueService.DECISION_VALUES}
 
             # A reviewed competitor listing's underlying ProductRecord
             # gets counted via the SellerNewListing branch below, not
@@ -1111,7 +1402,7 @@ class ReviewQueueService:
                 SellerNewListing.review.isnot(None), SellerNewListing.product_record_id.isnot(None)
             )
 
-            for raw, mapped in (("up", "approved"), ("down", "rejected"), ("oos", "oos")):
+            for raw, mapped in ReviewQueueService._SCAN_DECISION_MAP.items():
                 counts[mapped] += (
                     db.query(ProductRecord)
                     .filter(ProductRecord.review == raw, ProductRecord.id.notin_(competitor_covered_ids))
@@ -1119,7 +1410,7 @@ class ReviewQueueService:
                 )
                 counts[mapped] += db.query(SellerNewListing).filter(SellerNewListing.review == raw).count()
 
-            for decision in ("approved", "rejected", "oos"):
+            for decision in ReviewQueueService.DECISION_VALUES:
                 counts[decision] += db.query(Lead).filter(Lead.status == "reviewed", Lead.decision == decision).count()
 
             rows = []
@@ -1132,7 +1423,7 @@ class ReviewQueueService:
             # below can exclude whichever ProductRecords a competitor
             # listing already accounts for.
             listing_query = db.query(SellerNewListing).filter(SellerNewListing.review.isnot(None))
-            if decision_filter in ("approved", "rejected", "oos"):
+            if decision_filter in ReviewQueueService.DECISION_VALUES:
                 raw = {v: k for k, v in ReviewQueueService._SCAN_DECISION_MAP.items()}[decision_filter]
                 listing_query = listing_query.filter(SellerNewListing.review == raw)
             listings = listing_query.order_by(SellerNewListing.detected_at.desc()).limit(HISTORY_LIMIT).all()
@@ -1146,14 +1437,14 @@ class ReviewQueueService:
             scan_query = db.query(ProductRecord).filter(ProductRecord.review.isnot(None))
             if covered_record_ids:
                 scan_query = scan_query.filter(ProductRecord.id.notin_(covered_record_ids))
-            if decision_filter in ("approved", "rejected", "oos"):
+            if decision_filter in ReviewQueueService.DECISION_VALUES:
                 raw = {v: k for k, v in ReviewQueueService._SCAN_DECISION_MAP.items()}[decision_filter]
                 scan_query = scan_query.filter(ProductRecord.review == raw)
             for record in scan_query.order_by(ProductRecord.scanned_at.desc()).limit(HISTORY_LIMIT).all():
                 rows.append(ReviewQueueService._scan_history_dict(record))
 
             lead_query = db.query(Lead).filter(Lead.status == "reviewed")
-            if decision_filter in ("approved", "rejected", "oos"):
+            if decision_filter in ReviewQueueService.DECISION_VALUES:
                 lead_query = lead_query.filter(Lead.decision == decision_filter)
             for lead in lead_query.order_by(Lead.reviewed_at.desc()).limit(HISTORY_LIMIT).all():
                 rows.append(ReviewQueueService._lead_history_dict(lead))
@@ -1168,5 +1459,12 @@ class ReviewQueueService:
             "approved_count": counts["approved"],
             "rejected_count": counts["rejected"],
             "oos_count": counts["oos"],
-            "total_count": counts["approved"] + counts["rejected"] + counts["oos"],
+            # Additive (2026-09-03, unified Review Queue build) -- existing
+            # approved_count/rejected_count/oos_count/total_count keys are
+            # untouched in shape; total_count now correctly sums all five
+            # buckets instead of undercounting watch/need_more_info (which
+            # would otherwise vanish from the total silently).
+            "watch_count": counts["watch"],
+            "need_more_info_count": counts["need_more_info"],
+            "total_count": sum(counts.values()),
         }

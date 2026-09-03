@@ -1,18 +1,22 @@
 """
 Tests for the Review Queue backend build (ASIN dedup + unified queue
-priority + VA first-pass improvements), atlas-review-queue-backend-v1.md's
-follow-up task, 2026-09-03.
+views + VA first-pass improvements), atlas-review-queue-backend-v1.md's
+follow-up tasks, 2026-09-03.
 
 Run with `python test_review_queue_backend_build.py` (same plain-script
 style as the other test_*.py files here, no pytest).
 
-merge_by_asin/_item_priority/_build_merged_item are pure functions of
+merge_by_asin/_item_views/_build_merged_item are pure functions of
 already-built per-source dicts (exactly what list_leads()/
 list_consider_leads() already produce) -- every test here constructs
 those dicts directly, no DB or Keepa access needed. A couple of tests
 exercise LeadAnalysisService._fetch_inventory_snapshot's aggregation
 logic directly against a fake SP-API-shaped payload, also no real
 network/DB access.
+
+See test_unified_review_queue.py for the "one decision resolves every
+outstanding view" (resolve_item) tests and the full section-19 scenario
+list -- this file covers the earlier layer resolve_item is built on.
 """
 from app.services.review_queue_service import (
     ReviewQueueService,
@@ -90,36 +94,36 @@ print("dedup: different ASINs stay separate: ok")
 
 
 # =========================================================================
-# PRIORITY
+# VIEWS (an item can belong to more than one -- BUY NOW is universal)
 # =========================================================================
 
 # --- Clear BUY (scan) -----------------------------------------------------
-p = ReviewQueueService._item_priority(item("scan", recommendation="BUY", freshness="FRESH"))
-assert p == QUEUE_PRIORITY_BUY_NOW, p
-print("priority: clear scan BUY -> BUY_NOW: ok")
+views = ReviewQueueService._item_views(item("scan", recommendation="BUY", freshness="FRESH"))
+assert views == {QUEUE_PRIORITY_BUY_NOW}, views
+print("views: clear scan BUY -> {BUY_NOW}: ok")
 
-# --- VA BUY -----------------------------------------------------------------
-p = ReviewQueueService._item_priority(item(
+# --- VA BUY -- clean, so BOTH BUY_NOW and VA_TO_REVIEW at once -----------
+views = ReviewQueueService._item_views(item(
     "lead", recommendation="BUY", already_in_inventory=False, buyability_blocker=None, has_similar_rejection=False,
 ))
-assert p == QUEUE_PRIORITY_BUY_NOW, p
-print("priority: clean VA BUY -> BUY_NOW: ok")
+assert views == {QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("views: clean VA BUY -> {BUY_NOW, VA_TO_REVIEW} (BUY NOW is a universal view): ok")
 
 # --- Borderline -------------------------------------------------------------
 for rec in ("CONSIDER", "PEAK_WINDOW", "LOW_CONFIDENCE", "LOW_SCORE"):
-    p = ReviewQueueService._item_priority(item("scan", recommendation=rec))
-    assert p == QUEUE_PRIORITY_BORDERLINE, (rec, p)
-print("priority: CONSIDER/PEAK_WINDOW/LOW_CONFIDENCE/LOW_SCORE -> BORDERLINE: ok")
+    views = ReviewQueueService._item_views(item("scan", recommendation=rec))
+    assert views == {QUEUE_PRIORITY_BORDERLINE}, (rec, views)
+print("views: CONSIDER/PEAK_WINDOW/LOW_CONFIDENCE/LOW_SCORE -> {BORDERLINE}: ok")
 
 # --- Stale BUY (previously BUY, now stale) ----------------------------------
-p = ReviewQueueService._item_priority(item("scan", recommendation="BUY", freshness="STALE"))
-assert p == QUEUE_PRIORITY_NEEDS_ATTENTION, p
-print("priority: stale BUY -> NEEDS_ATTENTION: ok")
+views = ReviewQueueService._item_views(item("scan", recommendation="BUY", freshness="STALE"))
+assert views == {QUEUE_PRIORITY_NEEDS_ATTENTION}, views
+print("views: stale BUY -> {NEEDS_ATTENTION}: ok")
 
 # --- No buyable offer --------------------------------------------------------
-p = ReviewQueueService._item_priority(item("scan", recommendation="BUY", freshness="UNAVAILABLE"))
-assert p == QUEUE_PRIORITY_NEEDS_ATTENTION, p
-print("priority: no buyable offer (UNAVAILABLE) -> NEEDS_ATTENTION: ok")
+views = ReviewQueueService._item_views(item("scan", recommendation="BUY", freshness="UNAVAILABLE"))
+assert views == {QUEUE_PRIORITY_NEEDS_ATTENTION}, views
+print("views: no buyable offer (UNAVAILABLE) -> {NEEDS_ATTENTION}: ok")
 
 # --- Conflicting recommendations (merged item) ------------------------------
 leads = [
@@ -130,12 +134,12 @@ leads[0]["conflict_note"] = "Atlas's own scan pipeline currently marks this ASIN
 merged = ReviewQueueService.merge_by_asin(leads)
 assert merged[0]["queue_priority"] == QUEUE_PRIORITY_NEEDS_ATTENTION, merged[0]["queue_priority"]
 assert merged[0]["conflict"] is True
-print("priority: conflicting sources -> NEEDS_ATTENTION, conflict flag set: ok")
+print("views: conflicting sources -> primary queue_priority=NEEDS_ATTENTION, conflict flag set: ok")
 
-# --- VA WATCH -> VA_TO_REVIEW -------------------------------------------
-p = ReviewQueueService._item_priority(item("lead", recommendation="WATCH"))
-assert p == QUEUE_PRIORITY_VA_TO_REVIEW, p
-print("priority: VA WATCH -> VA_TO_REVIEW: ok")
+# --- VA WATCH -> VA_TO_REVIEW only (not also BUY_NOW) -----------------------
+views = ReviewQueueService._item_views(item("lead", recommendation="WATCH"))
+assert views == {QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("views: VA WATCH -> {VA_TO_REVIEW} only: ok")
 
 
 # =========================================================================
@@ -143,41 +147,52 @@ print("priority: VA WATCH -> VA_TO_REVIEW: ok")
 # =========================================================================
 
 # --- BUY VA lead, clean -----------------------------------------------------
-p = ReviewQueueService._item_priority(item(
+views = ReviewQueueService._item_views(item(
     "lead", recommendation="BUY", already_in_inventory=False, buyability_blocker=None, has_similar_rejection=False,
 ))
-assert p == QUEUE_PRIORITY_BUY_NOW, p
-print("VA: clean BUY -> BUY_NOW: ok")
+assert QUEUE_PRIORITY_BUY_NOW in views and QUEUE_PRIORITY_VA_TO_REVIEW in views, views
+print("VA: clean BUY -> BUY_NOW + VA_TO_REVIEW: ok")
 
 # --- Rejected-history match --------------------------------------------------
-p = ReviewQueueService._item_priority(item(
+views = ReviewQueueService._item_views(item(
     "lead", recommendation="BUY", already_in_inventory=False, buyability_blocker=None, has_similar_rejection=True,
 ))
-assert p == QUEUE_PRIORITY_NEEDS_ATTENTION, p
-print("VA: BUY with a matching rejection-history entry -> NEEDS_ATTENTION: ok")
+assert views == {QUEUE_PRIORITY_NEEDS_ATTENTION, QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("VA: BUY with a matching rejection-history entry -> NEEDS_ATTENTION (not BUY_NOW), still VA_TO_REVIEW: ok")
 
 # --- Inventory match ----------------------------------------------------------
-p = ReviewQueueService._item_priority(item(
+views = ReviewQueueService._item_views(item(
     "lead", recommendation="BUY", already_in_inventory=True, buyability_blocker=None, has_similar_rejection=False,
 ))
-assert p == QUEUE_PRIORITY_NEEDS_ATTENTION, p
-print("VA: BUY already in inventory -> NEEDS_ATTENTION (flagged, not auto-rejected): ok")
+assert views == {QUEUE_PRIORITY_NEEDS_ATTENTION, QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("VA: BUY already in inventory -> NEEDS_ATTENTION (flagged, not auto-rejected), still VA_TO_REVIEW: ok")
 
 # --- Buyability failure --------------------------------------------------------
-p = ReviewQueueService._item_priority(item(
+views = ReviewQueueService._item_views(item(
     "lead", recommendation="BUY", already_in_inventory=False, buyability_blocker="fbm_only", has_similar_rejection=False,
 ))
-assert p == QUEUE_PRIORITY_NEEDS_ATTENTION, p
-print("VA: BUY with a buyability blocker -> NEEDS_ATTENTION: ok")
+assert views == {QUEUE_PRIORITY_NEEDS_ATTENTION, QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("VA: BUY with a buyability blocker -> NEEDS_ATTENTION, still VA_TO_REVIEW: ok")
 
 # --- WATCH VA lead --------------------------------------------------------------
-p = ReviewQueueService._item_priority(item("lead", recommendation="WATCH"))
-assert p == QUEUE_PRIORITY_VA_TO_REVIEW, p
-print("VA: WATCH -> VA_TO_REVIEW: ok")
+views = ReviewQueueService._item_views(item("lead", recommendation="WATCH"))
+assert views == {QUEUE_PRIORITY_VA_TO_REVIEW}, views
+print("VA: WATCH -> VA_TO_REVIEW only: ok")
 
 
 # =========================================================================
-# Merged item field coverage (section 1's field list) + attention category
+# Competitor: historical A2A evidence but no current BUY -> NEEDS_ATTENTION
+# =========================================================================
+views = ReviewQueueService._item_views(item(
+    "competitor", recommendation="IGNORE",
+    reasoning={"historical_a2a_evidence": {"eu_a2a": {"DE": {"viable_days": 3}}}},
+))
+assert QUEUE_PRIORITY_NEEDS_ATTENTION in views, views
+print("competitor: historical EU A2A evidence, no current BUY -> NEEDS_ATTENTION: ok")
+
+
+# =========================================================================
+# Merged item field coverage (section 5's field list) + attention category
 # =========================================================================
 leads = [
     item("scan", recommendation="BUY", freshness="FRESH", title="Widget", brand="Acme",
@@ -189,6 +204,7 @@ leads = [
 ]
 merged = ReviewQueueService.merge_by_asin(leads)[0]
 assert merged["category"] == ATTENTION_CATEGORY_SOURCING
+assert set(merged["views"]) == {QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW}
 assert merged["title"] == "Widget"
 assert merged["best_source_marketplace"] == "DE"
 assert merged["buy_box_now"] == 25.0
@@ -196,7 +212,7 @@ assert merged["profit"] == 8.0 and merged["roi"] == 45.0
 assert merged["va_info"]["lead_id"] == 42
 assert merged["va_info"]["rationale"] == "Looks solid"
 assert "scan" in merged["historical_sourcing_evidence"]
-print("merged item: display fields, va_info, historical evidence, category=SOURCING all present: ok")
+print("merged item: display fields, va_info, historical evidence, multi-view, category=SOURCING all present: ok")
 
 
 # =========================================================================
@@ -235,6 +251,7 @@ for it in real_items[:25]:
     assert it["queue_priority"] in (
         QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW, QUEUE_PRIORITY_BORDERLINE, QUEUE_PRIORITY_NEEDS_ATTENTION,
     )
+    assert it["queue_priority"] == it["views"][0], "queue_priority must be the strongest (first) view"
     assert it["category"] == ATTENTION_CATEGORY_SOURCING
     assert isinstance(it["source_items"], list) and len(it["source_items"]) >= 1
 
@@ -245,7 +262,7 @@ print(f"regression guard (list_queue_items against real data, {len(real_items)} 
       f"{summary['duplicates_merged']} duplicates merged): ok")
 
 # Existing count_summary/consider_summary keys must be byte-for-byte
-# unchanged -- Dashboard badges read these exact keys (section 8).
+# unchanged -- Dashboard badges read these exact keys.
 cs = ReviewQueueService.count_summary()
 assert set(cs.keys()) == {"total", "star_buys", "buys", "peak", "low_confidence", "low_score", "competitor", "leads"}, cs.keys()
 consider = ReviewQueueService.consider_summary()

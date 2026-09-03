@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.database.database import SessionLocal
 from app.database.models import Lead
 from app.services.product_repository import ProductRepository
-from app.services.review_queue_service import ReviewQueueService
+from app.services.review_queue_service import ReviewQueueService, apply_lead_decision
 from app.routes.verdict import highlight_figures
 from app.services.verdict_service import resolve_source_marketplace
 
@@ -290,63 +290,6 @@ def review_history_page(request: Request, decision: str = ""):
             "total_count": history["total_count"],
         }
     )
-
-
-def apply_lead_decision(
-    lead: Lead, decision: str, reason: str | None = None, reason_category: str | None = None
-) -> None:
-    """
-    What "deciding" a lead actually means -- shared by /review/decide
-    (a human using Atlas's own UI) and the sheet-decision webhook (a
-    human's decision arriving from the VA sheet instead), so the two
-    entry points can't drift apart on what a decision does. Caller owns
-    the db session/commit; this only mutates the passed-in lead.
-
-    decision: "approved" | "rejected" | "oos" (Amazon out of stock
-    right now -- not actionable this instant, but worth catching WHEN
-    it restocks rather than losing it entirely to a plain reject). All
-    three clear the lead from the pending Lead Queue the same way
-    (status="reviewed") -- "oos" is just a third bucket in Reviewed
-    History (see reviewed_leads.html) rather than a real approve/
-    reject verdict.
-
-    reason: optional free-text "why not" (2026-08-23) -- see
-    Lead.decision_reason.
-
-    reason_category: optional structured reason (atlas-review-queue-
-    backend-v1.md section 5, see review_queue_service.
-    REVIEW_REASON_CATEGORIES) -- additive alongside `reason`, never a
-    replacement for it. The sheet webhook never sends one (the sheet
-    has no such column), so this is None there, same as before.
-
-    "oos" ALSO auto-adds the ASIN to the existing Watchlist, reusing
-    its already-built re-check machinery (WatchlistService.check_stale
-    runs weekly, or visit /watchlist to force an immediate recheck)
-    instead of building a parallel monitoring mechanism -- title/brand
-    come from the lead's own keepa_metrics (see VerdictService/
-    LeadAnalysisService), so no extra Keepa lookup is needed here.
-    """
-    lead.decision = decision
-    lead.decision_reason = reason or None
-    lead.decision_reason_category = reason_category or None
-    lead.status = "reviewed"
-    lead.reviewed_at = datetime.now(timezone.utc)
-
-    if decision == "oos":
-        title, brand = "", ""
-
-        if lead.keepa_metrics:
-            try:
-                metrics = json.loads(lead.keepa_metrics)
-                title = metrics.get("title") or ""
-                brand = metrics.get("brand") or ""
-            except Exception:
-                pass
-
-        ProductRepository.add_watch(
-            lead.asin, title=title, brand=brand,
-            note="Amazon OOS at review -- watching for restock",
-        )
 
 
 @router.post("/review/decide")

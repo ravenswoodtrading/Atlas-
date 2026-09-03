@@ -899,6 +899,52 @@ class SellerWatchService:
             db.close()
 
     @staticmethod
+    def list_historical_a2a_not_buyable(limit: int = 200):
+        """
+        Real EU/UK A2A historical sourcing evidence (see
+        SourcingClassifier), but NOT currently buyable -- the exact
+        gap the unified Review Queue build's audit found: list_notable_
+        buyable above only ever surfaces currently_buyable==True
+        listings, so a competitor's genuine historical opportunity
+        whose original source has since dried up (or never became
+        buyable today under a DIFFERENT marketplace) never reached the
+        Review Queue AT ALL, regardless of anything in
+        ReviewQueueService's own priority logic downstream.
+        atlas-review-queue-backend-v1.md's follow-up build (section 8):
+        "an historical A2A classification can remain valid even when
+        there is currently no buyable offer... that should become
+        NEEDS ATTENTION... rather than incorrectly turning it into OA."
+
+        Deliberately NOT gated on ProductRepository.is_notable (that
+        bar is about "worth buying right now" -- ROI/sales evidence at
+        TODAY's price -- which doesn't apply to a purely historical
+        finding) -- gated on having a real sourcing_tag instead, which
+        IS itself the evidence bar (SourcingClassifier only ever sets
+        "EU A2A"/"UK A2A" off genuine day-level ROI/dip evidence, see
+        its own docstring). No new profitability calculation.
+        """
+        db = SessionLocal()
+
+        try:
+            rows = (
+                db.query(SellerNewListing, TrackedSeller, ProductRecord)
+                .join(TrackedSeller, SellerNewListing.tracked_seller_id == TrackedSeller.id)
+                .join(ProductRecord, SellerNewListing.product_record_id == ProductRecord.id)
+                .filter(SellerNewListing.currently_buyable == False)
+                .filter(SellerNewListing.sourcing_tag.in_(("EU A2A", "UK A2A")))
+                .filter(SellerNewListing.dismissed == False)
+                .filter(SellerNewListing.review.is_(None))
+                .filter(ProductRecord.review.is_(None))
+                .order_by(SellerNewListing.detected_at.desc())
+                .limit(limit)
+                .all()
+            )
+
+            return [{"listing": listing, "seller": seller, "record": record} for listing, seller, record in rows]
+        finally:
+            db.close()
+
+    @staticmethod
     def dismiss_detection(listing_id: int):
         db = SessionLocal()
 
