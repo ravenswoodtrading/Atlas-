@@ -32,7 +32,7 @@
     {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention"] %}
     <li class="nav-item">
         <a class="nav-link {{ 'active' if view == v }}"
-           href="?view={{ v }}&source={{ source }}&sort={{ sort }}">
+           href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}">
             {{ view_labels[v] }}
             <span class="badge {{ 'bg-light text-dark' if view != v else 'bg-white text-dark' }} ms-1">
                 {{ unique_total if v == "all" else summary.get(v, 0) }}
@@ -42,16 +42,34 @@
     {% endfor %}
 </ul>
 
-<!-- Secondary filter: source type (section 20 -- subtle, not primary nav) -->
-<div class="mb-3 small">
-    <span class="text-muted me-2">Source:</span>
-    {% for s in ["all", "scan", "competitor", "lead"] %}
-    <a href="?view={{ view }}&source={{ s }}&sort={{ sort }}"
-       class="text-decoration-none {{ 'fw-bold text-dark' if source == s else 'text-muted' }} me-3">
-        {{ "All sources" if s == "all" else source_type_labels[s] }}
-    </a>
-    {% endfor %}
-</div>
+<!-- Secondary controls: search / source / sort (UI redesign pass, 2026-09-03) -->
+<form method="get" action="/review-queue" class="row g-2 align-items-center mb-3">
+    <input type="hidden" name="view" value="{{ view }}">
+    <div class="col-12 col-md-4">
+        <div class="input-group input-group-sm">
+            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+            <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search ASIN or product name...">
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="all" {{ "selected" if source == "all" }}>Source: All</option>
+            {% for s in ["scan", "competitor", "lead"] %}
+            <option value="{{ s }}" {{ "selected" if source == s }}>Source: {{ source_type_labels[s] }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-3">
+        <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+            {% for value, label in sort_labels.items() %}
+            <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-12 col-md-2 d-grid">
+        <button type="submit" class="btn btn-sm btn-outline-dark">Apply</button>
+    </div>
+</form>
 
 {% if not items %}
 <div class="card metric p-4 text-center text-muted">
@@ -62,16 +80,16 @@
 
 <div id="qi-list">
 {% for item in items %}
-<div class="card mb-2 qi-row" style="border-radius:12px;">
+<div class="card mb-2 qi-row" style="border-radius:12px;" data-row-asin="{{ item.asin }}">
     <div class="card-body py-2 px-3">
         <div class="d-flex justify-content-between align-items-start flex-wrap" style="gap:.5rem;">
-            <div>
+            <div class="qi-open-btn" data-asin="{{ item.asin }}" style="cursor:pointer;">
                 <div class="fw-semibold">
                     {{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}
                 </div>
                 <div class="text-muted small">
                     {{ item.asin }}
-                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN" onclick="event.stopPropagation();"><i class="bi bi-clipboard"></i></button>
                 </div>
                 <div class="mt-1">
                     {% for view_name in item.views %}
@@ -81,44 +99,71 @@
                     {% if item.conflict %}
                         <span class="badge bg-dark" title="{{ item.conflict_note or 'Sources disagree -- worth a second look.' }}"><i class="bi bi-exclamation-diamond"></i> Conflict</span>
                     {% endif %}
-                </div>
-            </div>
-            <div class="text-end">
-                <div class="mb-1">
                     {% for src in item.sources %}
                     <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
                     {% endfor %}
                 </div>
-                <button type="button" class="btn btn-sm btn-outline-primary qi-review-btn" data-asin="{{ item.asin }}">
-                    <i class="bi bi-eye"></i> Review
+            </div>
+
+            <div class="d-flex align-items-start flex-shrink-0" style="gap:.35rem;">
+                <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ item.asin }}">
+                    <i class="bi bi-check-lg"></i> Buy
                 </button>
+                <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ item.asin }}">
+                    <i class="bi bi-x-lg"></i> Reject
+                </button>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"></button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item qi-open-btn" href="#" data-asin="{{ item.asin }}"><i class="bi bi-eye"></i> More info</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><h6 class="dropdown-header">Quick reject</h6></li>
+                        {% for value, label in quick_reject_reasons %}
+                        <li><a class="dropdown-item qi-quickreject-btn" href="#" data-asin="{{ item.asin }}" data-reason="{{ value }}">{{ label }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
             </div>
         </div>
-        <div class="row mt-2 small">
-            <div class="col-6 col-md-3">
-                <div class="text-muted">Current source</div>
+
+        <div class="d-flex flex-wrap small mt-2" style="gap:1.25rem;">
+            <div style="min-width:70px;">
+                <div class="text-muted">Source</div>
                 <div>
                     {% if item.best_source_marketplace %}
                         {{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace }}
-                        &pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}
                     {% else %}
                         <span class="text-muted">--</span>
                     {% endif %}
                 </div>
             </div>
-            <div class="col-6 col-md-3">
-                <div class="text-muted">UK price</div>
+            <div style="min-width:70px;">
+                <div class="text-muted">Buy price</div>
+                <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
+            </div>
+            <div style="min-width:80px;">
+                <div class="text-muted">Amazon price</div>
                 <div>{{ "£%.2f"|format(item.buy_box_now) if item.buy_box_now else "--" }}</div>
             </div>
-            <div class="col-6 col-md-3">
+            <div style="min-width:70px;">
                 <div class="text-muted">Profit</div>
                 <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">
                     &pound;{{ "%.2f"|format(item.profit or 0) }}
                 </div>
             </div>
-            <div class="col-6 col-md-3">
+            <div style="min-width:50px;">
                 <div class="text-muted">ROI</div>
                 <div>{{ "%.0f"|format(item.roi or 0) }}%</div>
+            </div>
+            <div style="min-width:50px;">
+                <div class="text-muted">Score</div>
+                <div class="{{ 'text-success' if (item.score or 0) >= 70 else ('text-warning' if (item.score or 0) >= 40 else 'text-muted') }}">
+                    {{ item.score if item.score is not none else "--" }}
+                </div>
+            </div>
+            <div style="min-width:70px;">
+                <div class="text-muted">Added</div>
+                <div>{{ item.when | ago }}</div>
             </div>
         </div>
     </div>
@@ -138,20 +183,43 @@
     </div>
 </div>
 
+<!-- Undo toast (UI redesign pass, 2026-09-03) -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1090;">
+    <div id="qi-toast" class="toast align-items-center text-bg-dark border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body" id="qi-toast-body">Reviewed.</div>
+            <button type="button" class="btn btn-sm btn-link text-white me-1" id="qi-toast-undo">Undo</button>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+
 <script>
+// Shared row-action JS (UI redesign pass, 2026-09-03) -- identical copy
+// also lives in dashboard.html's Buy Now table (each route module/
+// template owns its own script block in this codebase already, e.g.
+// review_queue.py's own _days_ago vs dashboard.py's _format_ago; kept
+// consistent by hand rather than adding a new static-file mount, which
+// would touch app wiring beyond this task's UI-only scope).
+//
 // base.html loads bootstrap.bundle.min.js near the END of <body>, after
-// this content block -- constructing bootstrap.Offcanvas here directly
-// (rather than inside DOMContentLoaded) throws "bootstrap is not
-// defined" before it ever reaches document.addEventListener, silently
-// disabling every Review button on the page. DOMContentLoaded only
-// fires once the WHOLE document (including that later script tag) has
-// finished parsing/executing, so deferring to it is enough.
+// this content block -- constructing bootstrap.Offcanvas/Toast here
+// directly (rather than inside DOMContentLoaded) throws "bootstrap is
+// not defined" before this ever registers its click handlers, silently
+// disabling every button on the page. DOMContentLoaded only fires once
+// the WHOLE document (including that later script tag) has finished
+// parsing/executing, so deferring to it is enough.
 document.addEventListener('DOMContentLoaded', function () {
     var panelEl = document.getElementById('qi-detail-panel');
-    var panel = new bootstrap.Offcanvas(panelEl);
+    var panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
     var body = document.getElementById('qi-detail-body');
+    var toastEl = document.getElementById('qi-toast');
+    var toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    var toastBody = document.getElementById('qi-toast-body');
+    var toastUndoBtn = document.getElementById('qi-toast-undo');
 
     function openAsin(asin) {
+        if (!panel || !body) return;
         body.innerHTML = '<div class="text-muted">Loading...</div>';
         panel.show();
         fetch('/review-queue/item/' + encodeURIComponent(asin))
@@ -160,10 +228,62 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
     }
 
+    function resolve(asin, decision, reasonCategory, reason) {
+        var params = new URLSearchParams({
+            asin: asin, decision: decision,
+            reason: reason || '', reason_category: reasonCategory || '',
+        });
+        fetch('/review-queue/resolve', {method: 'POST', body: params})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
+                if (panel) panel.hide();
+                showUndo(asin, data.resolved, decision);
+            })
+            .catch(function () { alert('Could not save this decision -- please try again.'); });
+    }
+
+    function showUndo(asin, resolved, decision) {
+        if (!toast) { return; }
+        var label = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
+        toastBody.textContent = label;
+        toastUndoBtn.onclick = function () {
+            var params = new URLSearchParams({
+                asin: asin,
+                scan: resolved.scan ? '1' : '',
+                competitor: (resolved.competitor || []).join(','),
+                lead: (resolved.lead || []).join(','),
+            });
+            fetch('/review-queue/undo', {method: 'POST', body: params}).then(function () { location.reload(); });
+        };
+        toast.show();
+    }
+
     document.addEventListener('click', function (e) {
-        var btn = e.target.closest('.qi-review-btn');
-        if (!btn) return;
-        openAsin(btn.dataset.asin);
+        var openBtn = e.target.closest('.qi-open-btn');
+        if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
+
+        var buyBtn = e.target.closest('.qi-buy-btn');
+        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null); return; }
+
+        var rejectBtn = e.target.closest('.qi-reject-btn');
+        if (rejectBtn) { resolve(rejectBtn.dataset.asin, 'rejected', null); return; }
+
+        var qrBtn = e.target.closest('.qi-quickreject-btn');
+        if (qrBtn) { e.preventDefault(); resolve(qrBtn.dataset.asin, 'rejected', qrBtn.dataset.reason); return; }
+    });
+
+    // Detail panel's own Review Actions form (see
+    // _review_queue_item_detail.html) -- delegated here since that
+    // partial is injected after this listener is already attached.
+    document.addEventListener('submit', function (e) {
+        var form = e.target.closest('.qi-detail-actions-form');
+        if (!form) return;
+        e.preventDefault();
+        var asin = form.querySelector('[name="asin"]').value;
+        var decision = e.submitter ? e.submitter.value : form.querySelector('[name="decision"]').value;
+        var note = form.querySelector('[name="reason"]');
+        resolve(asin, decision, null, note ? note.value : '');
     });
 });
 </script>

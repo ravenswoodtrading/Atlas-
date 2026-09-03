@@ -5,53 +5,149 @@
 
 {% block content %}
 {% set source_labels = {"scan": "Atlas", "competitor": "Competitor", "lead": "VA"} %}
+{% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
+{% set view_style = {
+    "BUY_NOW": ("success", "bi-cart-check-fill"), "VA_TO_REVIEW": ("primary", "bi-people-fill"),
+    "BORDERLINE": ("warning", "bi-graph-up"), "NEEDS_ATTENTION": ("danger", "bi-exclamation-triangle-fill"),
+} %}
+{% set view_short_label = {
+    "BUY_NOW": "Buy Now", "VA_TO_REVIEW": "VA to Review",
+    "BORDERLINE": "Borderline", "NEEDS_ATTENTION": "Needs Attention",
+} %}
 
-<!-- COMMAND CENTRE (Command Centre UI build) -- the primary "what needs
-     my attention" surface. Counts/preview items come from ONE call to
-     ReviewQueueService.list_queue_items() (see dashboard.py's
-     _command_centre) -- the same unified, deduplicated queue
-     /review-queue itself renders, so this can never disagree with it. -->
-<div class="mb-3">
-    <h4 class="mb-0">{{ greeting }}</h4>
-    <div class="text-muted">Here's what needs your attention.</div>
+<!-- COMMAND CENTRE (Command Centre UI build; refined 2026-09-03 pass 2
+     -- Buy Now made the visually dominant section, per the mock-up's
+     own "buying command centre, not admin database" direction). Counts/
+     preview items come from ONE call to ReviewQueueService.
+     list_queue_items() (see dashboard.py's _command_centre) -- the
+     same unified, deduplicated queue /review-queue itself renders, so
+     this can never disagree with it. -->
+<div class="d-flex justify-content-between align-items-end mb-3">
+    <div>
+        <h4 class="mb-0">{{ greeting }}</h4>
+        <div class="text-muted">Here's what needs your attention.</div>
+    </div>
+    <div class="text-muted small">Last updated: {{ last_updated }}</div>
 </div>
 
+<!-- BUY NOW -- the dominant, full-width action queue. Any strong BUY
+     from Scan/Competitor/VA appears here regardless of source (section
+     1); rows carry their own BUY/Reject/Quick-reject actions so a
+     routine decision never requires opening the detail panel first
+     (section 2/3). -->
+<div class="card mb-3" style="border:2px solid #198754; border-radius:14px;">
+    <div class="card-body p-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+                <span class="badge bg-success" style="font-size:.85rem;"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
+                <span class="text-muted small ms-2">Strongest opportunities across every source</span>
+            </div>
+            <div class="d-flex align-items-center" style="gap:.75rem;">
+                <span class="fs-4 fw-bold text-success">{{ command_centre.counts.BUY_NOW }}</span>
+                <a href="/review-queue?view=buy_now" class="small text-decoration-none">View all &rarr;</a>
+            </div>
+        </div>
+
+        {% if command_centre.buy_now_preview %}
+        <div id="cc-buy-now-list">
+        {% for item in command_centre.buy_now_preview %}
+        <div class="d-flex align-items-center justify-content-between border-top py-2" data-row-asin="{{ item.asin }}">
+            <div class="qi-open-btn" data-asin="{{ item.asin }}" style="cursor:pointer; min-width:0; flex: 1 1 auto;">
+                <div class="fw-semibold small text-truncate">
+                    {{ (item.title[:55] if item.title else item.asin) }}{% if item.title and item.title|length > 55 %}...{% endif %}
+                </div>
+                <div class="text-muted" style="font-size:.75rem;">
+                    {{ item.asin }}
+                    {% for view_name in item.views %}
+                        {% if view_name != "BUY_NOW" %}
+                        {% set cls, icon = view_style[view_name] %}
+                        <span class="badge bg-{{ cls }}">{{ view_short_label[view_name] }}</span>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="d-none d-md-flex text-center small mx-3" style="gap:1.25rem; white-space:nowrap;">
+                <div><div class="text-muted" style="font-size:.7rem;">SOURCE</div><div>{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }}</div></div>
+                <div><div class="text-muted" style="font-size:.7rem;">BUY</div><div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div></div>
+                <div><div class="text-muted" style="font-size:.7rem;">AMAZON</div><div>&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div></div>
+                <div><div class="text-muted" style="font-size:.7rem;">PROFIT</div><div class="text-success">&pound;{{ "%.2f"|format(item.profit or 0) }}</div></div>
+                <div><div class="text-muted" style="font-size:.7rem;">ROI</div><div>{{ "%.0f"|format(item.roi or 0) }}%</div></div>
+            </div>
+            <div class="d-flex flex-shrink-0" style="gap:.35rem;">
+                <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ item.asin }}"><i class="bi bi-check-lg"></i> Buy</button>
+                <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ item.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
+                <div class="dropdown">
+                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"></button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><a class="dropdown-item qi-open-btn" href="#" data-asin="{{ item.asin }}"><i class="bi bi-eye"></i> More info</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><h6 class="dropdown-header">Quick reject</h6></li>
+                        {% for value, label in quick_reject_reasons %}
+                        <li><a class="dropdown-item qi-quickreject-btn" href="#" data-asin="{{ item.asin }}" data-reason="{{ value }}">{{ label }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-muted small py-3">No current BUY opportunities.</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Secondary workflow cards -- same weight as each other, deliberately
+     lighter than Buy Now above (border, no fill) so Buy Now reads as
+     primary at a glance (section 5 -- hierarchy). Each carries a small
+     breakdown line: informative tallies, not a strict partition (an
+     item can land in more than one bucket -- see dashboard.py's
+     _command_centre for exactly what each counts). -->
 <div class="row g-3 mb-3">
-    <div class="col-6 col-md-3">
-        <a href="/review-queue?view=buy_now" class="text-decoration-none text-reset">
-            <div class="card metric p-3 h-100" style="border-left:5px solid #198754;">
-                <div class="small fw-bold text-uppercase text-success"><i class="bi bi-cart-check-fill"></i> Buy Now</div>
-                <h2 class="mb-0">{{ command_centre.counts.BUY_NOW }}</h2>
-                <div class="small text-muted">Strong buys</div>
+    <div class="col-md-4">
+        <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="fw-bold text-primary"><i class="bi bi-people-fill"></i> VA TO REVIEW</div>
+                <span class="fs-4 fw-bold">{{ command_centre.counts.VA_TO_REVIEW }}</span>
             </div>
-        </a>
+            <div class="small text-muted mb-2">VA leads awaiting your decision</div>
+            <ul class="list-unstyled small mb-2">
+                <li>{{ command_centre.va_breakdown.strong_buy }} Strong buy candidates</li>
+                <li>{{ command_centre.va_breakdown.borderline }} Borderline</li>
+                <li>{{ command_centre.va_breakdown.need_more_info }} Need more info</li>
+            </ul>
+            <a href="/review-queue?view=va_to_review" class="small text-decoration-none">View all &rarr;</a>
+        </div>
     </div>
-    <div class="col-6 col-md-3">
-        <a href="/review-queue?view=va_to_review" class="text-decoration-none text-reset">
-            <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
-                <div class="small fw-bold text-uppercase text-primary"><i class="bi bi-people-fill"></i> VA to Review</div>
-                <h2 class="mb-0">{{ command_centre.counts.VA_TO_REVIEW }}</h2>
-                <div class="small text-muted">Awaiting your decision</div>
+    <div class="col-md-4">
+        <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="fw-bold" style="color:#fd7e14;"><i class="bi bi-graph-up"></i> BORDERLINE</div>
+                <span class="fs-4 fw-bold">{{ command_centre.counts.BORDERLINE }}</span>
             </div>
-        </a>
+            <div class="small text-muted mb-2">Worth checking before buying</div>
+            <ul class="list-unstyled small mb-2">
+                <li>{{ command_centre.borderline_breakdown.from_competitor }} From Competitors</li>
+                <li>{{ command_centre.borderline_breakdown.from_va }} From VA</li>
+                <li>{{ command_centre.borderline_breakdown.from_scan }} From Atlas scans</li>
+            </ul>
+            <a href="/review-queue?view=borderline" class="small text-decoration-none">View all &rarr;</a>
+        </div>
     </div>
-    <div class="col-6 col-md-3">
-        <a href="/review-queue?view=borderline" class="text-decoration-none text-reset">
-            <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
-                <div class="small fw-bold text-uppercase" style="color:#fd7e14;"><i class="bi bi-graph-up"></i> Borderline</div>
-                <h2 class="mb-0">{{ command_centre.counts.BORDERLINE }}</h2>
-                <div class="small text-muted">Worth checking</div>
+    <div class="col-md-4">
+        <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="fw-bold text-danger"><i class="bi bi-exclamation-triangle-fill"></i> NEEDS ATTENTION</div>
+                <span class="fs-4 fw-bold">{{ command_centre.counts.NEEDS_ATTENTION }}</span>
             </div>
-        </a>
-    </div>
-    <div class="col-6 col-md-3">
-        <a href="/review-queue?view=needs_attention" class="text-decoration-none text-reset">
-            <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
-                <div class="small fw-bold text-uppercase text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</div>
-                <h2 class="mb-0">{{ command_centre.counts.NEEDS_ATTENTION }}</h2>
-                <div class="small text-muted">Action or investigation</div>
-            </div>
-        </a>
+            <div class="small text-muted mb-2">Conflicts, issues or missing info</div>
+            <ul class="list-unstyled small mb-2">
+                <li>{{ command_centre.attention_breakdown.historical_not_buyable }} Historical A2A, not currently buyable</li>
+                <li>{{ command_centre.attention_breakdown.conflict }} Conflicts between sources</li>
+                <li>{{ command_centre.attention_breakdown.other }} Other issues</li>
+            </ul>
+            <a href="/review-queue?view=needs_attention" class="small text-decoration-none">View all &rarr;</a>
+        </div>
     </div>
 </div>
 
@@ -68,16 +164,19 @@
         <tr>
             <td>
                 <div class="fw-semibold small">
-                    {{ (item.title[:45] if item.title else item.asin) }}{% if item.title and item.title|length > 45 %}...{% endif %}
+                    {{ (item.title[:40] if item.title else item.asin) }}{% if item.title and item.title|length > 40 %}...{% endif %}
                 </div>
                 <div class="text-muted" style="font-size:.75rem;">
                     {{ item.asin }}
-                    {% for src in item.sources %}<span class="badge bg-light text-dark border">{{ source_labels[src] }}</span>{% endfor %}
+                    {% for view_name in item.views %}
+                        {% set cls, vicon = view_style[view_name] %}
+                        <span class="badge bg-{{ cls }}">{{ view_short_label[view_name] }}</span>
+                    {% endfor %}
                 </div>
             </td>
             <td class="text-end small" style="white-space:nowrap;">
-                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-muted' }}">&pound;{{ "%.2f"|format(item.profit or 0) }}</div>
-                <div class="text-muted">{{ "%.0f"|format(item.roi or 0) }}% ROI</div>
+                <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }} &rarr; &pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
+                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-muted' }}">&pound;{{ "%.2f"|format(item.profit or 0) }} &middot; {{ "%.0f"|format(item.roi or 0) }}% ROI</div>
             </td>
         </tr>
         {% endfor %}
@@ -91,10 +190,10 @@
 
 <div class="row">
     <div class="col-md-4">
-        {{ preview_card("Buy Now -- strongest opportunities", "bi-cart-check-fill", "success", "buy_now", command_centre.buy_now_preview, "No current BUY opportunities.") }}
+        {{ preview_card("VA to Review", "bi-people-fill", "primary", "va_to_review", command_centre.va_to_review_preview, "Nothing awaiting your review.") }}
     </div>
     <div class="col-md-4">
-        {{ preview_card("VA to Review", "bi-people-fill", "primary", "va_to_review", command_centre.va_to_review_preview, "Nothing awaiting your review.") }}
+        {{ preview_card("Borderline", "bi-graph-up", "warning", "borderline", command_centre.borderline_preview, "Nothing borderline right now.") }}
     </div>
     <div class="col-md-4">
         {{ preview_card("Needs Attention", "bi-exclamation-triangle-fill", "danger", "needs_attention", command_centre.needs_attention_preview, "Nothing needs investigation right now.") }}
@@ -107,9 +206,29 @@
      SPAPIClient.get_fba_fulfilled_shipments_units only returns UNIT
      counts, never revenue -- so neither section can be built from real
      data without either a new integration (out of scope for this UI
-     task) or showing fabricated numbers (explicitly disallowed,
-     section 23: "The Home page should not contain fake or estimated
-     numbers"). See the implementation report for the full finding. -->
+     task) or showing fabricated numbers (explicitly disallowed). See
+     the implementation report for the full finding. -->
+
+<!-- Shared detail panel + undo toast (same as review_queue.html) -- the
+     Buy Now table above also opens item detail/quick-reject from here. -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="qi-detail-panel" style="width:480px;">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title">Review item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
+    </div>
+    <div class="offcanvas-body" id="qi-detail-body">
+        <div class="text-muted">Loading...</div>
+    </div>
+</div>
+<div class="toast-container position-fixed bottom-0 end-0 p-3" style="z-index:1090;">
+    <div id="qi-toast" class="toast align-items-center text-bg-dark border-0" role="alert">
+        <div class="d-flex">
+            <div class="toast-body" id="qi-toast-body">Reviewed.</div>
+            <button type="button" class="btn btn-sm btn-link text-white me-1" id="qi-toast-undo">Undo</button>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
 
 <hr class="my-4">
 
@@ -270,6 +389,15 @@
     <a href="/review-queue">Review Queue</a> and <a href="/review">Lead Queue</a>.
 </p>
 
+<h6>Buy Now / VA to Review / Borderline / Needs Attention</h6>
+<p>
+    These four cards are the same unified Review Queue <a href="/review-queue">Review Queue</a> itself shows,
+    just summarised. Buy Now is the master action queue -- any strong BUY Atlas has found, from any source (OA,
+    Wholesale, UK/EU A2A, Competitor Watch, or a VA submission), appears there regardless of where it came from. An
+    item can legitimately appear in more than one card at once (e.g. a VA-submitted lead that's also a strong BUY) --
+    reviewing it once resolves it everywhere it appears.
+</p>
+
 <h6>The top row</h6>
 <ul>
     <li><strong>Products scanned</strong> is an all-time count across every scan ever run, most-recent-scan-per-ASIN
@@ -314,17 +442,6 @@
     cadence) from one that's simply between ticks. Lead analysis runs every ~30 seconds, so it's shown as
     "continuous" rather than a literal countdown.
 </p>
-
-<h6>The alerts below</h6>
-<p>
-    The Review Queue alert and the VA/manual-verdict alert only appear when there's something in them. The Review
-    Queue count is read directly from what <a href="/review-queue">Review Queue</a> itself would show you right
-    now -- star buys (confirmed sales + 25%+ ROI), BUY recommendations, PEAK (risky) leads that clear the stricter
-    35% ROI/65 score bar, and buyable competitor finds -- so this number and that page can never disagree. There's
-    no separate "reset" for it any more: it naturally goes to zero as you review things, and a small (or empty)
-    queue just means nothing right now clears Atlas's bar for "worth pursuing" -- see the
-    <a href="/help#star-buy">glossary</a> for the exact star-buy rule.
-</p>
 {% endcall %}
 
 {% if stats.total_scanned == 0 %}
@@ -343,5 +460,67 @@
         </a>
     </div>
 {% endif %}
+
+<script>
+// Same qi-buy-btn/qi-reject-btn/qi-quickreject-btn/qi-open-btn handlers
+// as review_queue.html -- see that template's script block for the
+// full comment on why this is duplicated inline rather than a shared
+// static file. Only the Buy Now table on this page uses these classes.
+document.addEventListener('DOMContentLoaded', function () {
+    var panelEl = document.getElementById('qi-detail-panel');
+    var panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+    var body = document.getElementById('qi-detail-body');
+    var toastEl = document.getElementById('qi-toast');
+    var toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    var toastBody = document.getElementById('qi-toast-body');
+    var toastUndoBtn = document.getElementById('qi-toast-undo');
+
+    function openAsin(asin) {
+        if (!panel || !body) return;
+        body.innerHTML = '<div class="text-muted">Loading...</div>';
+        panel.show();
+        fetch('/review-queue/item/' + encodeURIComponent(asin))
+            .then(function (r) { return r.text(); })
+            .then(function (html) { body.innerHTML = html; })
+            .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
+    }
+
+    function resolve(asin, decision, reasonCategory) {
+        var params = new URLSearchParams({asin: asin, decision: decision, reason: '', reason_category: reasonCategory || ''});
+        fetch('/review-queue/resolve', {method: 'POST', body: params})
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
+                if (panel) panel.hide();
+                showUndo(asin, data.resolved, decision);
+            })
+            .catch(function () { alert('Could not save this decision -- please try again.'); });
+    }
+
+    function showUndo(asin, resolved, decision) {
+        if (!toast) return;
+        toastBody.textContent = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
+        toastUndoBtn.onclick = function () {
+            var params = new URLSearchParams({
+                asin: asin, scan: resolved.scan ? '1' : '',
+                competitor: (resolved.competitor || []).join(','), lead: (resolved.lead || []).join(','),
+            });
+            fetch('/review-queue/undo', {method: 'POST', body: params}).then(function () { location.reload(); });
+        };
+        toast.show();
+    }
+
+    document.addEventListener('click', function (e) {
+        var openBtn = e.target.closest('.qi-open-btn');
+        if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
+        var buyBtn = e.target.closest('.qi-buy-btn');
+        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null); return; }
+        var rejectBtn = e.target.closest('.qi-reject-btn');
+        if (rejectBtn) { resolve(rejectBtn.dataset.asin, 'rejected', null); return; }
+        var qrBtn = e.target.closest('.qi-quickreject-btn');
+        if (qrBtn) { e.preventDefault(); resolve(qrBtn.dataset.asin, 'rejected', qrBtn.dataset.reason); return; }
+    });
+});
+</script>
 
 {% endblock %}

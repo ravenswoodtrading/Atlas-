@@ -153,6 +153,13 @@ SORT_OPTIONS = {
     "when_asc": (_sort_when, False),
     "score_desc": (lambda lead: lead["score"] or 0, True),
     "score_asc": (lambda lead: lead["score"] or 0, False),
+    # Added for the Review Queue's sort control (UI redesign pass,
+    # 2026-09-03) -- same shape as the two pairs above, just keyed on
+    # profit/roi instead of score. Both fields already exist on every
+    # lead dict (see _scan_lead_dict/_lead_dict/_competitor_lead_dict);
+    # this is a display ordering choice, not a new computed value.
+    "profit_desc": (lambda lead: lead["profit"] or 0, True),
+    "roi_desc": (lambda lead: lead["roi"] or 0, True),
 }
 
 # Canonical origin values for /review-queue's source filter -- one per
@@ -196,6 +203,14 @@ REVIEW_REASON_CATEGORIES = (
     "EU_PLUG",
     "EBAY",
     "OTHER",
+    # Added for the Quick Reject menu (UI redesign pass, 2026-09-03) --
+    # a generic "not interested" that isn't any of the more specific
+    # reasons above and isn't vague enough to need free text either.
+    # Purely additive, same TEXT-column vocabulary extension pattern as
+    # every other value in this tuple -- nothing validates against this
+    # list (grepped: no caller does membership-checking on it), so this
+    # is display/reporting vocabulary only, not a new decision pathway.
+    "NOT_INTERESTED",
 )
 
 REVIEW_REASON_CATEGORY_LABELS = {
@@ -214,6 +229,7 @@ REVIEW_REASON_CATEGORY_LABELS = {
     "EU_PLUG": "EU plug",
     "EBAY": "eBay",
     "OTHER": "Other",
+    "NOT_INTERESTED": "Don't want",
 }
 
 # Categories that mean "the opportunity expired between Atlas's check
@@ -400,6 +416,13 @@ class ReviewQueueService:
             "profit_90d": record.profit_90d,
             "roi_90d": record.roi_90d,
             "score": record.score,
+            # Passthrough of the existing ProductRecord.confidence column
+            # (UI redesign pass, 2026-09-03) -- OpportunityEngine already
+            # computes and stores this 0-100 int for every scan record;
+            # it just wasn't threaded into this dict before. Used to show
+            # a real (never estimated) High/Medium/Low confidence badge
+            # in the detail panel's "Atlas First Pass" section.
+            "confidence": record.confidence,
             "recommendation": record.recommendation,
             "monthly_sales": record.monthly_sales,
             "when": record.scanned_at,
@@ -486,6 +509,11 @@ class ReviewQueueService:
             "recommendation": lead.verdict,  # "BUY" | "WATCH" (AVOID never reaches here)
             "monthly_sales": metrics.get("monthly_sales") or 0,
             "when": lead.analyzed_at,
+            # No OpportunityEngine confidence score exists for a Lead
+            # (see _scan_lead_dict's own comment on match_tier just
+            # below) -- left None rather than guessed, so the detail
+            # panel simply omits the Confidence line for a VA-only item.
+            "confidence": None,
             "parsed_report": {},
             "reasoning": sourcing_classification.get("reasoning") or {},
             "rationale": lead.rationale,
@@ -658,6 +686,7 @@ class ReviewQueueService:
             "profit_90d": record.profit_90d,
             "roi_90d": record.roi_90d,
             "score": record.score,
+            "confidence": record.confidence,
             "recommendation": record.recommendation,
             "monthly_sales": record.monthly_sales,
             "when": listing.detected_at,
@@ -982,6 +1011,7 @@ class ReviewQueueService:
             "title": display.get("title") or primary.get("title"),
             "brand": display.get("brand") or primary.get("brand"),
             "score": display.get("score"),
+            "confidence": display.get("confidence"),
             "sourcing_tag": display.get("sourcing_tag") or primary.get("sourcing_tag"),
             "sourcing_tag_source": display.get("sourcing_tag_source") or primary.get("sourcing_tag_source"),
             "best_source_marketplace": display.get("best_source_marketplace"),
@@ -1265,6 +1295,64 @@ class ReviewQueueService:
             )
 
         return resolved
+
+    @staticmethod
+    def unresolve_item(asin: str, resolved: dict) -> dict:
+        """
+        Reverses exactly the rows a just-completed resolve_item call
+        touched (Quick Reject/BUY undo toast, UI redesign pass,
+        2026-09-03) -- takes the SAME `resolved` dict resolve_item
+        returned, so it only ever reopens rows THIS action closed,
+        never a fresh "whatever's outstanding right now" re-query that
+        could accidentally reopen something else.
+
+        Reuses set_review's own already-supported verdict=None ("clear")
+        path for scan/competitor rows -- not a new capability, the exact
+        same clear ProductRepository.set_review/SellerWatchService.
+        set_review already offered before this build. For Lead rows
+        (apply_lead_decision has no None path), this directly reverses
+        the fields that function set, restoring status="analyzed" so
+        the lead reappears in the pending queue exactly as it was
+        before the decision.
+
+        Caveat inherited from set_review itself: it targets "the most
+        recent scan record for this ASIN" at undo time, not a specific
+        row id -- if a background scan happened to land a NEW record
+        for this exact ASIN in the few seconds the undo toast was up,
+        this would clear that new record's (already-empty) review
+        instead of reopening the one actually resolved. Accepted as a
+        rare, harmless edge case rather than adding a new column to
+        pin an exact row, same trade-off set_review already lives with
+        everywhere else it's used.
+
+        Only meaningful within the short window the UI's own undo
+        toast is visible -- calling this after a later action has
+        already touched the same rows again just clears/reopens them,
+        same as any other review action would.
+        """
+        if resolved.get("scan"):
+            ProductRepository.set_review(asin, None)
+
+        for listing_id in resolved.get("competitor") or []:
+            SellerWatchService.set_review(listing_id, None)
+
+        lead_ids = resolved.get("lead") or []
+        if lead_ids:
+            db = SessionLocal()
+            try:
+                for lead_id in lead_ids:
+                    lead = db.get(Lead, lead_id)
+                    if lead:
+                        lead.decision = None
+                        lead.decision_reason = None
+                        lead.decision_reason_category = None
+                        lead.status = "analyzed"
+                        lead.reviewed_at = None
+                db.commit()
+            finally:
+                db.close()
+
+        return {"ok": True}
 
     @staticmethod
     def consider_summary() -> dict:

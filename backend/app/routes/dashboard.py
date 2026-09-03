@@ -15,6 +15,11 @@ from app.services.review_queue_service import (
 )
 from app.services.oa_source_discovery_service import OaSourceDiscoveryService
 from app.services.activity_log import ActivityLog
+# Quick Reject reason list (UI redesign pass, 2026-09-03) -- the Buy Now
+# table's row-level quick-reject dropdown on this page uses the exact
+# same six reasons as /review-queue's own rows, imported rather than
+# duplicated so the two can't drift apart.
+from app.routes.review_queue import QUICK_REJECT_REASONS
 
 router = APIRouter()
 
@@ -61,14 +66,18 @@ COMMAND_CENTRE_PREVIEW_SIZE = 5
 
 def _command_centre():
     """
-    Home page Command Centre (Command Centre UI build, 2026-09-03) --
-    ONE call to ReviewQueueService.list_queue_items(), reused for both
-    the four workflow counts and the BUY NOW/VA TO REVIEW/NEEDS
-    ATTENTION preview lists below, so the Dashboard doesn't pay for the
-    full unified-queue computation (hundreds of rows across four scan
-    filters plus both competitor queries) twice on the same page load.
-    No new dedup/priority logic here -- just reading the `views` each
-    already-merged item carries.
+    Home page Command Centre (Command Centre UI build, 2026-09-03;
+    refined 2026-09-03 pass 2 -- Buy Now made the dominant section, a
+    Borderline preview added, and a small sub-breakdown line added to
+    each of the three secondary cards). ONE call to
+    ReviewQueueService.list_queue_items(), reused for the four workflow
+    counts, the sub-breakdowns, and all four preview lists, so the
+    Dashboard doesn't pay for the full unified-queue computation
+    (hundreds of rows across four scan filters plus both competitor
+    queries) more than once on the same page load. No new dedup/
+    priority logic here -- everything below is just tallying/grouping
+    the `views`/`sources`/`conflict`/`historical_sourcing_evidence`
+    fields each already-merged item already carries.
     """
     items = ReviewQueueService.list_queue_items()
 
@@ -83,12 +92,54 @@ def _command_centre():
     def preview(view_name):
         return [i for i in items if view_name in i["views"]][:COMMAND_CENTRE_PREVIEW_SIZE]
 
+    # Sub-breakdown lines for the three secondary cards -- a quick "what
+    # kind of thing is actually in here" without opening the full view.
+    # These are informative tallies, not a strict partition: an item can
+    # land in more than one bucket (e.g. a Borderline item sourced from
+    # both Competitor and VA counts in both), so bucket totals are not
+    # guaranteed to sum to the card's own headline count.
+    va_items = [i for i in items if QUEUE_PRIORITY_VA_TO_REVIEW in i["views"]]
+    va_breakdown = {
+        "strong_buy": sum(1 for i in va_items if QUEUE_PRIORITY_BUY_NOW in i["views"]),
+        "borderline": sum(
+            1 for i in va_items
+            if QUEUE_PRIORITY_BORDERLINE in i["views"] and QUEUE_PRIORITY_BUY_NOW not in i["views"]
+        ),
+        "need_more_info": sum(
+            1 for i in va_items
+            if QUEUE_PRIORITY_BUY_NOW not in i["views"] and QUEUE_PRIORITY_BORDERLINE not in i["views"]
+        ),
+    }
+
+    borderline_items = [i for i in items if QUEUE_PRIORITY_BORDERLINE in i["views"]]
+    borderline_breakdown = {
+        "from_competitor": sum(1 for i in borderline_items if "competitor" in i["sources"]),
+        "from_va": sum(1 for i in borderline_items if "lead" in i["sources"]),
+        "from_scan": sum(1 for i in borderline_items if "scan" in i["sources"]),
+    }
+
+    attention_items = [i for i in items if QUEUE_PRIORITY_NEEDS_ATTENTION in i["views"]]
+    attention_breakdown = {
+        "historical_not_buyable": sum(
+            1 for i in attention_items
+            if i.get("historical_sourcing_evidence") and QUEUE_PRIORITY_BUY_NOW not in i["views"]
+        ),
+        "conflict": sum(1 for i in attention_items if i.get("conflict")),
+    }
+    attention_breakdown["other"] = max(
+        0, len(attention_items) - attention_breakdown["historical_not_buyable"] - attention_breakdown["conflict"]
+    )
+
     return {
         "unique_total": len(items),
         "counts": counts,
         "buy_now_preview": preview(QUEUE_PRIORITY_BUY_NOW),
         "va_to_review_preview": preview(QUEUE_PRIORITY_VA_TO_REVIEW),
+        "borderline_preview": preview(QUEUE_PRIORITY_BORDERLINE),
         "needs_attention_preview": preview(QUEUE_PRIORITY_NEEDS_ATTENTION),
+        "va_breakdown": va_breakdown,
+        "borderline_breakdown": borderline_breakdown,
+        "attention_breakdown": attention_breakdown,
     }
 
 
@@ -296,6 +347,8 @@ def dashboard(request: Request):
             "gated_opportunity": _best_gated_opportunity(),
             "command_centre": _command_centre(),
             "greeting": _greeting(),
+            "last_updated": datetime.now().strftime("%H:%M"),
+            "quick_reject_reasons": QUICK_REJECT_REASONS,
             # review_queue_summary/consider_summary intentionally no
             # longer computed here (2026-09-03, Command Centre UI
             # build) -- they were only ever used by the three alert
