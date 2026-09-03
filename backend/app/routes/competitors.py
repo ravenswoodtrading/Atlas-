@@ -117,7 +117,12 @@ def _google_search_url_variants(title: str, ean: str, asin: str) -> dict:
 def build_competitors_context(tab: str = "", buyable_only: bool = False,
                                review_filter: str = "", category: str = "", since_days: int = 0,
                                check_result: str = "") -> dict:
-    """Shared with the Leads hub's "Automated" group (leads_hub.py) -- see scan_queue.py's own comment for why."""
+    """
+    Kept as its own function (not inlined into competitors_legacy_page)
+    even though /competitors-legacy is its only caller now -- Leads Hub
+    used to be a second caller (removed 2026-09-04, Navigation redesign:
+    it duplicated this page's own, better-maintained detections feed).
+    """
     tab = tab if tab in SOURCING_TAG_BY_TAB else DEFAULT_TAB
     sourcing_tag = SOURCING_TAG_BY_TAB[tab]
 
@@ -215,9 +220,10 @@ def competitors_legacy_page(request: Request, tab: str = "", buyable_only: bool 
     The PRE-redesign detections-table page (Competitor Watch redesign,
     2026-09-03) -- kept reachable at its own URL, unchanged, purely as
     a fallback/reference while the new /competitors Opportunities feed
-    beds in. build_competitors_context/_competitors_content.html are
-    still the Leads Hub's own embedded view too (leads_hub.py) -- both
-    untouched, byte-for-byte the same behaviour as before this pass.
+    beds in. Not linked from the sidebar (Navigation redesign,
+    2026-09-04) -- direct URL only. Candidate for removal alongside
+    build_competitors_context/_competitors_content.html once the new
+    Opportunities feed is fully trusted.
     """
     return templates.TemplateResponse(
         request=request,
@@ -473,13 +479,16 @@ def competitors_page(request: Request, tab: str = "opportunities", view: str = "
     """
     Competitor Watch, redesigned 2026-09-03 -- "turn competitor
     activity into sourcing opportunities" rather than a flat detections
-    table. Three internal views via `tab` (see COMPETITOR_WATCH_TABS),
-    no new top-level sidebar nav.
+    table. Three internal views via `tab` (see COMPETITOR_WATCH_TABS) --
+    no SEPARATE top-level nav entries for them (Opportunities/Source
+    Finder/Competitors all stay inside this one route); this page as a
+    whole got its first real sidebar entry ("Opportunities", under
+    Find) in the Navigation redesign, 2026-09-04.
 
     IMPORTANT: this is a DIFFERENT `tab` than build_competitors_context's
     own `tab` param (EU A2A/UK A2A/Wholesale/OA) -- that one still
-    exists, unchanged, on /competitors-legacy and inside leads_hub.py's
-    embedded "Automated" group. To avoid exactly this ambiguity within
+    exists, unchanged, on /competitors-legacy (no longer linked from the
+    sidebar, direct URL only). To avoid exactly this ambiguity within
     THIS route, the equivalent sourcing-tag filter here is named
     `source` instead (see OPPORTUNITY_SOURCE_FILTERS).
     """
@@ -581,7 +590,11 @@ def competitors_find_source(asin: str = Form(...)):
 
 
 def build_competitors_sellers_context(check_result: str = "") -> dict:
-    """Shared with the Leads hub's "Automated" group (leads_hub.py)."""
+    """
+    Kept as its own function even though /competitors/sellers is its
+    only caller now -- Leads Hub used to be a second caller (removed
+    2026-09-04, Navigation redesign).
+    """
     return {
         "sellers": SellerWatchService.list_tracked_sellers(),
         "stats": SellerWatchService.get_seller_stats(),

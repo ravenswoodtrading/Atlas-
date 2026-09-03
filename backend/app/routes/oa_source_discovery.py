@@ -33,7 +33,11 @@ DETECTION_WINDOW_OPTIONS = [
 
 def build_oa_discovery_context(run_id: int = 0,
                                 since_days: int = DEFAULT_DETECTION_WINDOW_DAYS) -> dict:
-    """Shared with the Leads hub's "Web-Sourced" group (leads_hub.py) -- see scan_queue.py's own comment for why."""
+    """
+    Kept as its own function even though /oa-discovery is its only
+    caller now -- Leads Hub used to be a second caller (removed
+    2026-09-04, Navigation redesign).
+    """
     db = SessionLocal()
 
     try:

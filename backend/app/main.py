@@ -33,7 +33,7 @@ from app.routes import (
     dashboard, keepa, scan, analyse, opportunities_view, products, watchlist,
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
-    token_usage, criteria, shortlist, leads_hub, inventory_cleanup, storage_fee_watch,
+    token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -434,7 +434,6 @@ app.include_router(help_route.router)
 app.include_router(token_usage.router)
 app.include_router(criteria.router)
 app.include_router(shortlist.router)
-app.include_router(leads_hub.router)
 app.include_router(inventory_cleanup.router)
 app.include_router(storage_fee_watch.router)
 

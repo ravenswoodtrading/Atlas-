@@ -142,9 +142,10 @@ def _eu_history_view(eu_history_json: str, target_roi_pct: float) -> dict:
 def build_signals_context(signal_type: str = "", category: str = "",
                            sort: str = "newest", check_result: str = "") -> dict:
     """
-    Shared with the Leads hub's "Automated" group (leads_hub.py) --
-    see build_scan_queue_context's own comment for why this is split
-    out rather than duplicated.
+    Kept as its own function even though /signals is its only caller
+    now -- Leads Hub used to be a second caller (removed 2026-09-04,
+    Navigation redesign: Signals got a real sidebar entry of its own,
+    under Find).
     """
     queries = ProductRepository.list_signal_queries()
     matches = ProductRepository.list_signal_matches(include_dismissed=False, limit=500)
@@ -221,7 +222,11 @@ def signals_page(request: Request, signal_type: str = "", category: str = "",
 
 
 def build_signal_queries_context(check_result: str = "") -> dict:
-    """Shared with the Leads hub's "Automated" group (leads_hub.py)."""
+    """
+    Kept as its own function even though /signals/queries is its only
+    caller now -- Leads Hub used to be a second caller (removed
+    2026-09-04, Navigation redesign).
+    """
     return {
         "queries": ProductRepository.list_signal_queries(),
         "signal_types": SIGNAL_TYPES,

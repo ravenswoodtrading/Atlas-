@@ -52,10 +52,11 @@ def _describe_tick(result: dict) -> str:
 
 def build_scan_queue_context(tick_result: str = "") -> dict:
     """
-    Shared with the Leads hub's "Automated" group (leads_hub.py) --
-    keeps the hub's tab and this page's own route reading from exactly
-    the same logic, so a future change here can't silently drift out
-    of sync between the two.
+    Kept as its own function even though /scan-queue is its only caller
+    now -- Leads Hub used to be a second caller (removed 2026-09-04,
+    Navigation redesign: Scan Queue got a real sidebar entry of its own,
+    under System > Automation, instead of only being reachable via the
+    hub's "Automated" tab).
     """
     items = ScanQueueService.list_items()
     performance = ProductRepository.get_brand_performance([item.brand for item in items])
