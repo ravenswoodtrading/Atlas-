@@ -13,6 +13,7 @@ from app.services.watchlist_service import WatchlistService
 from app.config.exclusions import is_gated_by_name
 from app.keepa.parser import KeepaParser
 from app.sp_api.client import get_sp_api_client
+from app.services.sourcing_classifier import SourcingClassifier
 
 # Cap on VerdictService.get_similar_rejections' output -- a verdict
 # prompt with 30 past rejections crammed in is worse than one with the
@@ -372,6 +373,17 @@ class VerdictService:
             "buy_box_price": buy_box_price,
             "buy_box_price_gbp": buy_box_price_gbp,
             "currency": currency,
+            # Internal only -- the raw Keepa payload this call already
+            # paid for, which (per ProductService.get_products' own
+            # docstring) always carries history=True regardless of the
+            # `full` flag, i.e. the same day-by-day price-change series
+            # SourcingClassifier needs. compute_metrics pops this back
+            # off before the result is ever persisted/shown, so a real
+            # sourcing classification can be computed for a Lead with
+            # ZERO additional Keepa calls instead of duplicating this
+            # fetch. Never leaks into keepa_metrics/the Claude prompt --
+            # see compute_metrics' own handling.
+            "_raw_product": products[0],
         }
 
     @staticmethod
@@ -651,6 +663,50 @@ class VerdictService:
         # the UK call, so a source check that fails or is skipped
         # costs the caller nothing it wouldn't have spent anyway.
         source_check = VerdictService.check_source_marketplace(asin, source_marketplace)
+        eu_raw_product = source_check.pop("_raw_product", None) if source_check else None
+
+        # Sourcing classification (2026-09-03, Review Queue backend
+        # build) -- reuses SourcingClassifier (already built/tested for
+        # Competitor Watch) against data ALREADY fetched above: `raw`
+        # (this ASIN's UK payload, always fetched) covers UK A2A
+        # regardless of source_marketplace; eu_raw_product (popped off
+        # source_check just above) covers EU A2A ONLY for the ONE
+        # marketplace the VA/sheet already told us about -- NOT a full
+        # DE/FR/ES/IT search the way Competitor Watch does for a
+        # completely unknown competitor detection, since that would
+        # cost 3-4 NEW Keepa calls per lead and nothing here already
+        # knows which marketplace to even ask about for an OA lead.
+        # ZERO additional Keepa calls either way. Never persisted raw --
+        # only the resulting sourcing_tag/reasoning below survives into
+        # the returned metrics dict.
+        sourcing_classification = None
+        try:
+            fee_context = FeeEngine.calculate(product, category_name=category_name)
+            product.fba_fee = fee_context.fba_fee
+            product.eu_vat_rate_used = fee_context.eu_vat_rate_used
+
+            eu_products_for_classifier = (
+                {source_marketplace: eu_raw_product} if (source_marketplace and eu_raw_product) else {}
+            )
+            recent_evidence = SourcingClassifier.compute_recent_evidence(
+                raw, eu_products_for_classifier, product, category_name,
+            )
+            for field_name, value in recent_evidence.items():
+                setattr(product, field_name, value)
+
+            # No cross-lead "same seller relisted this brand" signal
+            # exists for a Lead the way it does for a tracked
+            # competitor's storefront history -- brand_repeat_count=0
+            # just means that ONE wholesale signal never fires here;
+            # the small-seller-count and multipack-title signals still
+            # can (see SourcingClassifier._check_wholesale).
+            classification = SourcingClassifier.classify(product, brand_repeat_count=0)
+            sourcing_classification = {
+                "sourcing_tag": classification.sourcing_tag,
+                "reasoning": classification.reasoning,
+            }
+        except Exception as exc:
+            print(f"Sourcing classification failed for {asin}: {exc}")
 
         # Speculative "not profitable now, but recently was at a lower
         # EU source cost" tracking (2026-09-03) -- see WatchlistService.
@@ -684,6 +740,12 @@ class VerdictService:
 
             # EU A2A buyability -- None for OA/unknown-source leads.
             "source_check": source_check,
+
+            # How Atlas thinks this was/would be sourced (EU A2A / UK
+            # A2A / Wholesale (likely) / OA / unclear) -- independent
+            # of, and never overriding, whatever sourcing_type the VA
+            # typed into the sheet. See SourcingClassifier.
+            "sourcing_classification": sourcing_classification,
 
             # Profitability -- Keepa estimate only (None if no
             # cost_price was supplied); VA/SAS figures, when present,
