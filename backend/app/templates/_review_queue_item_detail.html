@@ -1,0 +1,182 @@
+{% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
+
+{% if not item %}
+<div class="text-muted">
+    This item is no longer outstanding -- it may have just been reviewed (from another tab, or a moment ago).
+</div>
+{% else %}
+
+<!-- PRODUCT (section 14) -->
+<div class="d-flex align-items-start mb-3" style="gap:.75rem;">
+    <div class="d-flex align-items-center justify-content-center bg-light rounded" style="width:56px;height:56px;flex:none;">
+        <i class="bi bi-box-seam text-muted" style="font-size:1.5rem;"></i>
+    </div>
+    <div>
+        <div class="fw-semibold">{{ item.title or item.asin }}</div>
+        <div class="text-muted small">
+            {{ item.asin }}
+            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+        </div>
+        <div class="mt-1">
+            {% for src in item.sources %}
+            <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- CURRENT OPPORTUNITY (section 14) -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">Current Opportunity</div>
+    <div class="p-2 rounded border">
+        <div class="row small g-2">
+            <div class="col-6">
+                <div class="text-muted">Source</div>
+                <div>{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Source cost</div>
+                <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">UK price</div>
+                <div>&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Profit</div>
+                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">&pound;{{ "%.2f"|format(item.profit or 0) }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">ROI</div>
+                <div>{{ "%.0f"|format(item.roi or 0) }}%</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Recommendation</div>
+                <div>{{ item.strongest_recommendation or "--" }}</div>
+            </div>
+        </div>
+        <div class="mt-2">
+            {% if "BUY_NOW" in item.views %}
+                <span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
+            {% elif "NEEDS_ATTENTION" in item.views and item.historical_sourcing_evidence %}
+                <span class="badge bg-secondary">No current buy</span>
+                <div class="small text-muted mt-1">
+                    Historical evidence remains valid, but today's best opportunity does not currently qualify as BUY.
+                </div>
+            {% elif item.freshness in ("STALE", "UNAVAILABLE") %}
+                <span class="badge bg-danger">{{ item.freshness }}</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- SOURCING HISTORY (competitor items -- section 16) -->
+{% set competitor_source = item.source_items | selectattr("source", "equalto", "competitor") | first %}
+{% if competitor_source %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">Sourcing History (Competitor)</div>
+    {% if competitor_source.sourcing_tag in ("EU A2A", "UK A2A") and competitor_source.reasoning.get("guessed_buy_date") %}
+        <div class="p-2 rounded" style="background:#eaf6ec;">
+            <div class="small text-muted">Historical source</div>
+            <div class="fw-semibold">
+                {{ flags.get(competitor_source.reasoning.marketplace, "") }}
+                {{ competitor_source.reasoning.marketplace or competitor_source.sourcing_tag }}
+            </div>
+            <div>&pound;{{ "%.2f"|format(competitor_source.reasoning.guessed_buy_price_gbp or 0) }} &middot; {{ competitor_source.reasoning.guessed_buy_date | days_ago }}</div>
+            <div class="small text-muted">Competitor likely sourced here -- inferred from price history, not a confirmed purchase.</div>
+        </div>
+        {% if item.best_source_marketplace and item.best_source_marketplace != competitor_source.reasoning.marketplace %}
+        <div class="text-center text-muted my-1"><i class="bi bi-arrow-down"></i></div>
+        <div class="p-2 rounded" style="background:#eaf6ec;border:1px solid #bfe3c6;">
+            <div class="small text-muted">Current best source</div>
+            <div class="fw-semibold">{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace }}</div>
+            <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}
+                {% if "BUY_NOW" in item.views %}<span class="badge bg-success ms-1">BUY NOW</span>{% endif %}
+            </div>
+        </div>
+        {% endif %}
+    {% else %}
+        {% set hist = item.historical_sourcing_evidence.get("competitor", {}) %}
+        {% for kind, label in (("eu_a2a", "EU A2A"), ("uk_a2a", "UK A2A")) %}
+            {% set entries = hist.get(kind) %}
+            {% if entries is mapping %}
+                {% for mkt, ev in entries.items() %}
+                <div class="p-2 rounded mb-1" style="background:#fff8e6;border:1px solid #f0dca0;">
+                    <div class="small text-muted">Historical {{ label }} evidence (no longer current)</div>
+                    <div class="fw-semibold">{{ flags.get(mkt, "") }} {{ mkt }}</div>
+                    <div>&pound;{{ "%.2f"|format(ev.best_buy_price or 0) }} &middot; {{ ev.best_date | days_ago }}</div>
+                </div>
+                {% endfor %}
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- VA SUBMISSION / ATLAS FIRST PASS (section 17) -->
+{% if item.va_info %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">VA Submission</div>
+    <div class="small text-muted">Submitted via: {{ item.va_info.lead_subsource or "manual" }}</div>
+
+    <div class="text-uppercase text-muted small fw-bold mt-2 mb-1">Atlas First Pass</div>
+    <span class="badge bg-{{ 'success' if item.va_info.verdict == 'BUY' else ('warning text-dark' if item.va_info.verdict == 'WATCH' else 'secondary') }}">
+        {{ item.va_info.verdict or "Pending" }}
+    </span>
+    {% if item.va_info.rationale %}
+    <div class="small mt-1">{{ item.va_info.rationale }}</div>
+    {% endif %}
+
+    {% if item.va_info.similar_rejections %}
+    <div class="small text-danger mt-2"><i class="bi bi-exclamation-triangle"></i>
+        {{ item.va_info.similar_rejections|length }} similar past rejection{{ "s" if item.va_info.similar_rejections|length != 1 }} on this exact ASIN</div>
+    {% endif %}
+    {% if item.va_info.buyability_blocker %}
+    <div class="small text-danger mt-1"><i class="bi bi-x-circle"></i> Buyability issue: {{ item.va_info.buyability_blocker }}</div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- INVENTORY (section 18) -->
+{% if item.va_info and item.va_info.inventory_detail %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">Inventory</div>
+    <div class="small {{ 'text-warning' if item.va_info.already_in_inventory else 'text-muted' }}">
+        {% if item.va_info.already_in_inventory %}<i class="bi bi-exclamation-triangle"></i>{% endif %}
+        Already in inventory: {{ item.va_info.inventory_detail.fulfillable or 0 }} unit{{ "s" if item.va_info.inventory_detail.fulfillable != 1 }}
+    </div>
+</div>
+{% endif %}
+
+<!-- SOURCES (section 15) -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">Sources</div>
+    {% for src in ["scan", "competitor", "lead"] %}
+    <div class="d-flex justify-content-between border-bottom py-1 small">
+        <span>{{ source_type_labels[src] }}</span>
+        <span>
+            {% if src in item.sources %}<i class="bi bi-check-lg text-success"></i>{% else %}<span class="text-muted">--</span>{% endif %}
+        </span>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- REVIEW ACTIONS (section 19) -->
+<div class="mb-2">
+    <div class="text-uppercase text-muted small fw-bold mb-2">Review Actions</div>
+    <form method="post" action="/review-queue/resolve"
+          onsubmit="this.reason.value = prompt('Add a comment? (optional)') || ''; return true;">
+        <input type="hidden" name="asin" value="{{ item.asin }}">
+        <input type="hidden" name="reason" value="">
+        <input type="hidden" name="return_to" value="/review-queue">
+        <div class="d-grid gap-2">
+            {% for value, label, color, icon in decision_buttons %}
+            <button type="submit" name="decision" value="{{ value }}" class="btn btn-{{ color }}">
+                <i class="bi {{ icon }}"></i> {{ label }}
+            </button>
+            {% endfor %}
+        </div>
+    </form>
+</div>
+
+{% endif %}

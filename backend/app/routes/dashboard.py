@@ -9,7 +9,10 @@ from app.services.product_repository import ProductRepository
 from app.services.product_service import ProductService
 from app.services.scan_queue_service import ScanQueueService
 from app.services.seller_watch_service import SellerWatchService
-from app.services.review_queue_service import ReviewQueueService
+from app.services.review_queue_service import (
+    ReviewQueueService, QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW,
+    QUEUE_PRIORITY_BORDERLINE, QUEUE_PRIORITY_NEEDS_ATTENTION,
+)
 from app.services.oa_source_discovery_service import OaSourceDiscoveryService
 from app.services.activity_log import ActivityLog
 
@@ -48,6 +51,45 @@ ACTIVITY_LABELS = {
     "oa_discovery_run": "OA Discovery runs",
     "lead_analysis": "Leads analyzed",
 }
+
+
+# How many items to show in each Home page preview list before "View
+# all" -- the Command Centre is a summary, not the full queue (that's
+# what /review-queue itself is for).
+COMMAND_CENTRE_PREVIEW_SIZE = 5
+
+
+def _command_centre():
+    """
+    Home page Command Centre (Command Centre UI build, 2026-09-03) --
+    ONE call to ReviewQueueService.list_queue_items(), reused for both
+    the four workflow counts and the BUY NOW/VA TO REVIEW/NEEDS
+    ATTENTION preview lists below, so the Dashboard doesn't pay for the
+    full unified-queue computation (hundreds of rows across four scan
+    filters plus both competitor queries) twice on the same page load.
+    No new dedup/priority logic here -- just reading the `views` each
+    already-merged item carries.
+    """
+    items = ReviewQueueService.list_queue_items()
+
+    counts = {
+        QUEUE_PRIORITY_BUY_NOW: 0, QUEUE_PRIORITY_VA_TO_REVIEW: 0,
+        QUEUE_PRIORITY_BORDERLINE: 0, QUEUE_PRIORITY_NEEDS_ATTENTION: 0,
+    }
+    for item in items:
+        for view in item["views"]:
+            counts[view] += 1
+
+    def preview(view_name):
+        return [i for i in items if view_name in i["views"]][:COMMAND_CENTRE_PREVIEW_SIZE]
+
+    return {
+        "unique_total": len(items),
+        "counts": counts,
+        "buy_now_preview": preview(QUEUE_PRIORITY_BUY_NOW),
+        "va_to_review_preview": preview(QUEUE_PRIORITY_VA_TO_REVIEW),
+        "needs_attention_preview": preview(QUEUE_PRIORITY_NEEDS_ATTENTION),
+    }
 
 
 def _lead_counts():
@@ -223,6 +265,18 @@ def _todays_activity():
     ]
 
 
+def _greeting() -> str:
+    """Time-of-day greeting for the Command Centre header (section 3) --
+    no user-name field exists anywhere in Atlas's data model, so this
+    deliberately stays generic ("Good evening.") rather than inventing one."""
+    hour = datetime.now(timezone.utc).hour
+    if hour < 12:
+        return "Good morning."
+    if hour < 18:
+        return "Good afternoon."
+    return "Good evening."
+
+
 @router.get("/")
 def dashboard(request: Request):
     stats = ProductRepository.get_summary_stats()
@@ -240,8 +294,17 @@ def dashboard(request: Request):
             "scan_queue_health": _scan_queue_health(),
             "new_competitor_detections": _new_competitor_detections_today(),
             "gated_opportunity": _best_gated_opportunity(),
-            "review_queue_summary": ReviewQueueService.count_summary(),
-            "consider_summary": ReviewQueueService.consider_summary(),
+            "command_centre": _command_centre(),
+            "greeting": _greeting(),
+            # review_queue_summary/consider_summary intentionally no
+            # longer computed here (2026-09-03, Command Centre UI
+            # build) -- they were only ever used by the three alert
+            # banners now removed from dashboard.html (superseded by
+            # command_centre above), and each call re-runs a full
+            # list_leads()-equivalent scan (~2s) -- paying for that
+            # twice on every Home page load for banners that no longer
+            # render would be pure waste. Nothing else in the app reads
+            # these two context keys.
             "oa_discovery": _oa_discovery_activity(),
             "new_signal_matches": ProductRepository.count_new_signal_matches(),
             "today_activity": _todays_activity(),

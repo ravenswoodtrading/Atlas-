@@ -1044,6 +1044,68 @@ class ReviewQueueService:
         return [ReviewQueueService._build_merged_item(asin, by_asin[asin]) for asin in order]
 
     @staticmethod
+    def get_queue_item(asin: str) -> dict | None:
+        """
+        Efficient single-ASIN lookup (Command Centre UI build, 2026-09-03)
+        -- list_queue_items() recomputes the ENTIRE unified queue
+        (hundreds of rows across four review_filter passes plus both
+        competitor queries) just to extract one item; measured at
+        several seconds per call, far too slow for a detail panel
+        opened on every row click. Reuses the EXACT SAME dict-builders
+        (_scan_lead_dict/_competitor_lead_dict/_lead_dict),
+        _flag_conflicts, and _build_merged_item as list_leads()/
+        list_consider_leads() do -- no new dedup/priority/decision
+        logic, purely scoped `WHERE asin = ...` queries in place of the
+        full-table scans those methods need for a whole-queue view.
+
+        Returns None if nothing is currently outstanding for this ASIN
+        (already resolved, or never had a pending source record at all).
+        """
+        db = SessionLocal()
+        try:
+            source_dicts = []
+
+            record = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin, ProductRecord.review.is_(None))
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+            if record:
+                source_dicts.append(ReviewQueueService._scan_lead_dict(record))
+
+            listings = (
+                db.query(SellerNewListing, TrackedSeller, ProductRecord)
+                .join(TrackedSeller, SellerNewListing.tracked_seller_id == TrackedSeller.id)
+                .join(ProductRecord, SellerNewListing.product_record_id == ProductRecord.id)
+                .filter(
+                    SellerNewListing.asin == asin, SellerNewListing.review.is_(None),
+                    SellerNewListing.dismissed == False,
+                )
+                .all()
+            )
+            for listing, seller, competitor_record in listings:
+                source_dicts.append(ReviewQueueService._competitor_lead_dict(
+                    {"listing": listing, "record": competitor_record, "seller": seller}
+                ))
+
+            pending_leads = (
+                db.query(Lead)
+                .filter(Lead.asin == asin, Lead.status == "analyzed", Lead.decision.is_(None))
+                .all()
+            )
+            for lead in pending_leads:
+                source_dicts.append(ReviewQueueService._lead_dict(lead))
+        finally:
+            db.close()
+
+        if not source_dicts:
+            return None
+
+        ReviewQueueService._flag_conflicts(source_dicts)
+        return ReviewQueueService._build_merged_item(asin, source_dicts)
+
+    @staticmethod
     def list_queue_items(sort: str = "when_desc") -> list:
         """
         The unified, deduplicated Review Queue -- BUY_NOW/VA_TO_REVIEW/

@@ -4,9 +4,117 @@
 {% block title %}Dashboard - Atlas{% endblock %}
 
 {% block content %}
+{% set source_labels = {"scan": "Atlas", "competitor": "Competitor", "lead": "VA"} %}
+
+<!-- COMMAND CENTRE (Command Centre UI build) -- the primary "what needs
+     my attention" surface. Counts/preview items come from ONE call to
+     ReviewQueueService.list_queue_items() (see dashboard.py's
+     _command_centre) -- the same unified, deduplicated queue
+     /review-queue itself renders, so this can never disagree with it. -->
+<div class="mb-3">
+    <h4 class="mb-0">{{ greeting }}</h4>
+    <div class="text-muted">Here's what needs your attention.</div>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-md-3">
+        <a href="/review-queue?view=buy_now" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #198754;">
+                <div class="small fw-bold text-uppercase text-success"><i class="bi bi-cart-check-fill"></i> Buy Now</div>
+                <h2 class="mb-0">{{ command_centre.counts.BUY_NOW }}</h2>
+                <div class="small text-muted">Strong buys</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/review-queue?view=va_to_review" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
+                <div class="small fw-bold text-uppercase text-primary"><i class="bi bi-people-fill"></i> VA to Review</div>
+                <h2 class="mb-0">{{ command_centre.counts.VA_TO_REVIEW }}</h2>
+                <div class="small text-muted">Awaiting your decision</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/review-queue?view=borderline" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
+                <div class="small fw-bold text-uppercase" style="color:#fd7e14;"><i class="bi bi-graph-up"></i> Borderline</div>
+                <h2 class="mb-0">{{ command_centre.counts.BORDERLINE }}</h2>
+                <div class="small text-muted">Worth checking</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md-3">
+        <a href="/review-queue?view=needs_attention" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
+                <div class="small fw-bold text-uppercase text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</div>
+                <h2 class="mb-0">{{ command_centre.counts.NEEDS_ATTENTION }}</h2>
+                <div class="small text-muted">Action or investigation</div>
+            </div>
+        </a>
+    </div>
+</div>
+
+{% macro preview_card(title, icon, color, view, items, empty_text) %}
+<div class="card metric p-3 mb-3">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-bold"><i class="bi {{ icon }} text-{{ color }}"></i> {{ title }}</div>
+        <a href="/review-queue?view={{ view }}" class="small text-decoration-none">View all &rarr;</a>
+    </div>
+    {% if items %}
+    <table class="table table-sm mb-0">
+        <tbody>
+        {% for item in items %}
+        <tr>
+            <td>
+                <div class="fw-semibold small">
+                    {{ (item.title[:45] if item.title else item.asin) }}{% if item.title and item.title|length > 45 %}...{% endif %}
+                </div>
+                <div class="text-muted" style="font-size:.75rem;">
+                    {{ item.asin }}
+                    {% for src in item.sources %}<span class="badge bg-light text-dark border">{{ source_labels[src] }}</span>{% endfor %}
+                </div>
+            </td>
+            <td class="text-end small" style="white-space:nowrap;">
+                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-muted' }}">&pound;{{ "%.2f"|format(item.profit or 0) }}</div>
+                <div class="text-muted">{{ "%.0f"|format(item.roi or 0) }}% ROI</div>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="text-muted small">{{ empty_text }}</div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+<div class="row">
+    <div class="col-md-4">
+        {{ preview_card("Buy Now -- strongest opportunities", "bi-cart-check-fill", "success", "buy_now", command_centre.buy_now_preview, "No current BUY opportunities.") }}
+    </div>
+    <div class="col-md-4">
+        {{ preview_card("VA to Review", "bi-people-fill", "primary", "va_to_review", command_centre.va_to_review_preview, "Nothing awaiting your review.") }}
+    </div>
+    <div class="col-md-4">
+        {{ preview_card("Needs Attention", "bi-exclamation-triangle-fill", "danger", "needs_attention", command_centre.needs_attention_preview, "Nothing needs investigation right now.") }}
+    </div>
+</div>
+
+<!-- Purchasing Today / Amazon Sales Today (section 22/23) -- deliberately
+     OMITTED. Confirmed via inspection: Atlas has no purchasing/spend-
+     tracking feature anywhere (no route, service, or nav item), and
+     SPAPIClient.get_fba_fulfilled_shipments_units only returns UNIT
+     counts, never revenue -- so neither section can be built from real
+     data without either a new integration (out of scope for this UI
+     task) or showing fabricated numbers (explicitly disallowed,
+     section 23: "The Home page should not contain fake or estimated
+     numbers"). See the implementation report for the full finding. -->
+
+<hr class="my-4">
 
 <div class="d-flex align-items-center mb-3">
-    <h4 class="mb-0">Dashboard</h4>
+    <h5 class="mb-0 text-muted">More detail</h5>
     {{ help_button("dashboard") }}
 </div>
 
@@ -147,79 +255,14 @@
     </div>
 </div>
 
-{% if review_queue_summary.total > 0 %}
-{% set shown = namespace(any=false) %}
-<div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
-    <div>
-        {% if review_queue_summary.star_buys > 0 %}
-            <i class="bi bi-star-fill"></i>
-            <strong>{{ review_queue_summary.star_buys }}</strong> star buy{{ "s" if review_queue_summary.star_buys != 1 }}
-            {% set shown.any = true %}
-        {% endif %}
-        {% if review_queue_summary.buys > 0 %}
-            {% if shown.any %}&middot;{% endif %}
-            <i class="bi bi-hand-thumbs-up-fill"></i>
-            <strong>{{ review_queue_summary.buys }}</strong> BUY recommendation{{ "s" if review_queue_summary.buys != 1 }}
-            {% set shown.any = true %}
-        {% endif %}
-        {% if review_queue_summary.peak > 0 %}
-            {% if shown.any %}&middot;{% endif %}
-            <i class="bi bi-exclamation-triangle"></i>
-            <strong>{{ review_queue_summary.peak }}</strong> riskier PEAK lead{{ "s" if review_queue_summary.peak != 1 }}
-            {% set shown.any = true %}
-        {% endif %}
-        {% if review_queue_summary.low_confidence > 0 %}
-            {% if shown.any %}&middot;{% endif %}
-            <i class="bi bi-question-diamond"></i>
-            <strong>{{ review_queue_summary.low_confidence }}</strong> low-confidence lead{{ "s" if review_queue_summary.low_confidence != 1 }}
-            {% set shown.any = true %}
-        {% endif %}
-        {% if review_queue_summary.low_score > 0 %}
-            {% if shown.any %}&middot;{% endif %}
-            <i class="bi bi-graph-down"></i>
-            <strong>{{ review_queue_summary.low_score }}</strong> low-score lead{{ "s" if review_queue_summary.low_score != 1 }}
-            {% set shown.any = true %}
-        {% endif %}
-        {% if review_queue_summary.competitor > 0 %}
-            {% if shown.any %}&middot;{% endif %}
-            <i class="bi bi-binoculars"></i>
-            <strong>{{ review_queue_summary.competitor }}</strong> buyable competitor find{{ "s" if review_queue_summary.competitor != 1 }}
-        {% endif %}
-        in your <a href="/review-queue">Review Queue</a> --
-        <strong>{{ review_queue_summary.total }}</strong> total that need reviewing.
-    </div>
-    <a href="/review-queue" class="btn btn-success btn-sm">Take a look</a>
-</div>
-{% endif %}
-
-{% if consider_summary.total > 0 %}
-<div class="alert alert-secondary d-flex justify-content-between align-items-center mb-4">
-    <div>
-        <i class="bi bi-eye"></i>
-        <strong>{{ consider_summary.today }}</strong> new Consider lead{{ "s" if consider_summary.today != 1 }} today
-        &middot; <strong>{{ consider_summary.total }}</strong> total in the Consider backlog -- this one isn't meant
-        to be cleared to zero, just browsed as you have time.
-    </div>
-    <a href="/review-queue?view=consider" class="btn btn-outline-secondary btn-sm">Browse Consider</a>
-</div>
-{% endif %}
-
-{% if sheet_leads_waiting > 0 or manual_leads_waiting > 0 %}
-<div class="alert alert-success d-flex justify-content-between align-items-center mb-4">
-    <div>
-        {% if sheet_leads_waiting > 0 %}
-            <i class="bi bi-file-earmark-spreadsheet"></i>
-            <strong>{{ sheet_leads_waiting }}</strong> VA lead{{ "s" if sheet_leads_waiting != 1 }} waiting to be reviewed
-        {% endif %}
-        {% if sheet_leads_waiting > 0 and manual_leads_waiting > 0 %}&middot;{% endif %}
-        {% if manual_leads_waiting > 0 %}
-            <i class="bi bi-clipboard-check"></i>
-            <strong>{{ manual_leads_waiting }}</strong> manual verdict check{{ "s" if manual_leads_waiting != 1 }} waiting to be reviewed
-        {% endif %}
-    </div>
-    <a href="/review" class="btn btn-success btn-sm">Take a look</a>
-</div>
-{% endif %}
+{# The three alert banners that used to live here (Review Queue summary,
+   Consider backlog, VA/manual leads waiting) are superseded by the
+   Command Centre cards/previews at the top of this page -- removed to
+   avoid showing the same "what needs reviewing" information twice in
+   two different framings. review_queue_summary/consider_summary/
+   sheet_leads_waiting/manual_leads_waiting are still computed and
+   passed into this template's context (unchanged, in case anything
+   else ever needs them), just no longer rendered here. #}
 
 {% call help_modal("dashboard", "Dashboard") %}
 <p>
