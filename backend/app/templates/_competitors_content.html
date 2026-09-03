@@ -119,7 +119,7 @@
                     <th>Monthly sales</th>
                     <th>Competitor</th>
                     <th>Detected</th>
-                    <th>Buyable now</th>
+                    <th>Sourcing / Buy</th>
                     <th>Reviewed?</th>
                     <th></th>
                 </tr>
@@ -182,8 +182,11 @@
                     <td class="small">{{ entry.seller.nickname or entry.seller.seller_id }}</td>
                     <td class="small text-muted">{{ listing.detected_at.strftime("%Y-%m-%d %H:%M") if listing.detected_at else "" }}</td>
                     <td>
+                        <span class="badge bg-secondary">{{ listing.sourcing_tag }}</span>
                         {% if listing.currently_buyable %}
-                            <span class="badge bg-success"><i class="bi bi-lightning-fill"></i> Buyable now</span>
+                            <span class="badge bg-success" title="Today's best source (across all 4 EU marketplaces) clears a real BUY recommendation -- see the Why? panel for historical vs current source, which can differ.">
+                                <i class="bi bi-cart-check-fill"></i> BUY
+                            </span>
                         {% endif %}
                     </td>
                     <td>
@@ -259,22 +262,51 @@
                                 {% if listing.sourcing_tag == "EU A2A" and entry.reasoning.get("guessed_buy_date") %}
                                 <div class="alert py-2 px-3 small mb-2" style="background:#eaf6ec;border-color:#bfe3c6;color:#1e7a41;">
                                     <i class="bi bi-lightbulb"></i>
-                                    <strong>Best guess:</strong> likely bought from <strong>{{ entry.reasoning.marketplace }}</strong> around <strong>{{ entry.reasoning.guessed_buy_date }}</strong> for roughly <strong>&pound;{{ "%.2f"|format(entry.reasoning.guessed_buy_price_gbp) }}</strong> -- the day in the last {{ entry.reasoning.recent_window_days }} days with the strongest margin. Inferred from price history, not a confirmed purchase.
+                                    <strong>Historical source:</strong> {{ entry.reasoning.marketplace }} &mdash; &pound;{{ "%.2f"|format(entry.reasoning.guessed_buy_price_gbp) }}, around {{ entry.reasoning.guessed_buy_date }} (competitor likely sourced here -- inferred from price history, not a confirmed purchase).
                                     {% if entry.reasoning.uk_dip_also_present %}
                                     <br>Also a UK price dip to &pound;{{ "%.2f"|format(entry.reasoning.uk_price_min_recent) }} around {{ entry.reasoning.uk_price_min_recent_date }} -- possibly bought that way instead.
+                                    {% endif %}
+                                    <hr class="my-2">
+                                    {# Historical sourcing and current buying opportunity are two
+                                       separate questions (atlas-competitor-watch-classification-v1.md)
+                                       -- currently_buyable/best_source_marketplace here come from the
+                                       LINKED ProductRecord's own OpportunityEngine result for TODAY's
+                                       best source across all 4 marketplaces, never recalculated here,
+                                       and can legitimately be a different marketplace entirely from
+                                       the historical one named above. #}
+                                    {% if listing.currently_buyable and record %}
+                                        {% if record.best_source_marketplace == entry.reasoning.marketplace %}
+                                        <strong>Still the best source today (<span class="badge bg-success">BUY</span>)</strong>
+                                        {% else %}
+                                        <strong>Current source:</strong> {{ record.best_source_marketplace }} &mdash; &pound;{{ "%.2f"|format(record.best_source_cost_gbp) }} <span class="badge bg-success">BUY</span>
+                                        {% endif %}
+                                        <br>Current UK price: &pound;{{ "%.2f"|format(record.buy_box_now) }}
+                                        <br>Current profit/ROI: &pound;{{ "%.2f"|format(record.profit) }} / {{ "%.1f"|format(record.roi) }}%
+                                    {% else %}
+                                        <span class="text-muted">No current buying opportunity (today's best source doesn't clear a BUY recommendation).</span>
                                     {% endif %}
                                 </div>
                                 {% elif listing.sourcing_tag == "UK A2A" and entry.reasoning.get("guessed_buy_date") %}
                                 <div class="alert py-2 px-3 small mb-2" style="background:#eaf6ec;border-color:#bfe3c6;color:#1e7a41;">
                                     <i class="bi bi-lightbulb"></i>
                                     <strong>Best guess:</strong> likely bought at the UK price dip around <strong>{{ entry.reasoning.guessed_buy_date }}</strong> for roughly <strong>&pound;{{ "%.2f"|format(entry.reasoning.guessed_buy_price_gbp) }}</strong> -- the lowest UK price in the last {{ entry.reasoning.recent_window_days }} days. Inferred from price history, not a confirmed purchase.
+                                    <hr class="my-2">
+                                    {% if listing.currently_buyable and record %}
+                                        <strong>Current source:</strong> {{ record.best_source_marketplace or "UK" }} &mdash; &pound;{{ "%.2f"|format(record.best_source_cost_gbp) }} <span class="badge bg-success">BUY</span>
+                                        <br>Current UK price: &pound;{{ "%.2f"|format(record.buy_box_now) }}
+                                        <br>Current profit/ROI: &pound;{{ "%.2f"|format(record.profit) }} / {{ "%.1f"|format(record.roi) }}%
+                                    {% else %}
+                                        <span class="text-muted">No current buying opportunity (today's best source doesn't clear a BUY recommendation).</span>
+                                    {% endif %}
                                 </div>
                                 {% endif %}
                                 {% set hist = entry.reasoning.historical_a2a_evidence %}
                                 {% if hist and listing.sourcing_tag != "EU A2A" and hist.eu_a2a %}
                                 <div class="alert py-2 px-3 small mb-2" style="background:#fff8e6;border-color:#f0dca0;color:#8a6d1f;">
                                     <i class="bi bi-clock-history"></i>
-                                    <strong>Historical EU A2A evidence</strong> found {{ hist.eu_a2a.first_found_at[:10] }} from <strong>{{ hist.eu_a2a.marketplace }}</strong> (no longer the current classification -- see Sourcing reasoning below for why).
+                                    <strong>Historical EU A2A evidence</strong> found in
+                                    {% for mkt, ev in hist.eu_a2a.items() %}{{ mkt }} ({{ ev.first_found_at[:10] }}){{ ", " if not loop.last }}{% endfor %}
+                                    (no longer the current classification -- see Sourcing reasoning below for why).
                                 </div>
                                 {% endif %}
                                 {% if hist and listing.sourcing_tag != "UK A2A" and hist.uk_a2a %}

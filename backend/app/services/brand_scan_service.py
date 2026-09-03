@@ -904,9 +904,21 @@ class BrandScanService:
             # Python over data already fetched this scan. See
             # SourcingClassifier.compute_recent_evidence and Product's
             # own field docstrings for what each value means.
+            #
+            # Passes the FULL eu_products dict (2026-09-03,
+            # atlas-competitor-watch-classification-v1.md's follow-up
+            # fix) -- used to only pass eu_products.get(product.
+            # best_source_marketplace), i.e. only TODAY's cheapest
+            # marketplace's history, which meant a real historical A2A
+            # opportunity in a DIFFERENT marketplace (or in one that
+            # isn't buyable at all today, so best_source_marketplace is
+            # blank) was silently invisible to the historical
+            # classifier. All four marketplaces are already fetched
+            # above for from_keepa_multi -- still zero extra Keepa
+            # calls, just no longer discarding 3 of the 4 payloads
+            # before compute_recent_evidence gets a look at them.
             recent_evidence = SourcingClassifier.compute_recent_evidence(
-                uk_product, eu_products.get(product.best_source_marketplace),
-                product, category_name,
+                uk_product, eu_products, product, category_name,
             )
             for field_name, value in recent_evidence.items():
                 setattr(product, field_name, value)

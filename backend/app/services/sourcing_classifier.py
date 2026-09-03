@@ -76,22 +76,37 @@ MULTIPACK_PATTERN = re.compile(
 @dataclass
 class SourcingClassification:
     sourcing_tag: str
-    currently_buyable: bool
     # JSON-serializable -- the numbers behind the tag, so the "why" is
     # inspectable rather than just the label. See SellerNewListing.sourcing_reasoning_json.
     reasoning: dict = field(default_factory=dict)
 
-    # This round's raw EU A2A / UK A2A evidence (the same shape
-    # _check_eu_a2a/_check_uk_a2a's own `reasoning` would have
-    # produced), independent of which one actually won as the primary
-    # sourcing_tag -- None when that check found nothing this round.
-    # Exists purely so a caller (see merge_evidence below) can archive
-    # BOTH kinds of evidence found this round, not just whichever one
-    # is reflected in `reasoning`/`sourcing_tag` above (e.g. when both
-    # EU and UK evidence exist, `reasoning` above only carries EU's,
-    # per classify()'s own precedence).
+    # This round's raw EU A2A / UK A2A evidence, independent of which
+    # one actually won as the primary sourcing_tag -- None when that
+    # check found nothing this round. Exists purely so a caller (see
+    # merge_evidence below) can archive BOTH kinds of evidence found
+    # this round, not just whichever is reflected in `reasoning`/
+    # `sourcing_tag` above (e.g. when both EU and UK evidence exist,
+    # `reasoning` above only carries EU's, per classify()'s own
+    # precedence). eu_evidence is the FULL per-marketplace dict (see
+    # Product.eu_source_evidence_by_marketplace) -- possibly covering
+    # more than one qualifying EU marketplace at once (e.g. DE and ES
+    # both), not just whichever one is "primary" in `reasoning` above.
     eu_evidence: dict | None = None
     uk_evidence: dict | None = None
+
+    # NOTE (2026-09-03, atlas-competitor-watch-classification-v1.md):
+    # there is deliberately NO currently_buyable field here any more.
+    # "Can we buy this right now" is a completely separate question
+    # from "how did the competitor likely source it" -- it's already
+    # answered by the existing OpportunityEngine/ProductRecord.
+    # recommendation for whatever the CURRENT best source actually is,
+    # which may be a different marketplace entirely from whatever
+    # justified this historical classification. Computing a second,
+    # SourcingClassifier-owned buyability signal here would silently
+    # duplicate that (and could disagree with it) -- see
+    # SellerWatchService._persist_classification, the one place
+    # currently_buyable actually gets set now, reading it straight off
+    # the linked ProductRecord instead.
 
 
 class SourcingClassifier:
@@ -132,7 +147,7 @@ class SourcingClassifier:
     """
 
     @staticmethod
-    def compute_recent_evidence(uk_raw: dict, eu_raw: dict | None, product: Product,
+    def compute_recent_evidence(uk_raw: dict, eu_products: dict, product: Product,
                                  category_name: str) -> dict:
         """
         Builds the day-by-day recent-window fields consumed by
@@ -143,23 +158,35 @@ class SourcingClassifier:
         same "caller assembles Product" convention FeeEngine.calculate's
         FeeResult already uses.
 
-        eu_raw: the raw Keepa dict for product.best_source_marketplace
-        SPECIFICALLY (not all 4 EU marketplaces) -- pass None if no EU
-        source was found, or if it's genuinely unavailable; the EU side
-        of the evidence is simply left at 0 in that case, same "no real
-        data, don't guess" convention as everywhere else in this file.
+        eu_products: {"DE": raw_keepa_dict_or_None, "FR": ..., "ES": ...,
+        "IT": ...} -- ALL FOUR EU marketplaces (2026-09-03,
+        atlas-competitor-watch-classification-v1.md's follow-up fix --
+        this used to only receive product.best_source_marketplace's own
+        data). The caller (BrandScanService.scan) already fetches all
+        four to pick TODAY's cheapest source (see ProductMapper.
+        from_keepa_multi) -- passing the whole dict here costs NO extra
+        Keepa calls, it's data already in scope. Historical evidence is
+        examined INDEPENDENTLY per marketplace, because a real
+        opportunity a competitor could have sourced from is not
+        necessarily the marketplace that happens to be cheapest today
+        (or ANY marketplace at all today -- see _check_eu_a2a's own
+        docstring for why the old best_source_marketplace guard was
+        removed). A marketplace with no data (None) is simply skipped,
+        same "no real data, don't guess" convention as everywhere else
+        in this file.
 
-        product must already have fba_fee/eu_vat_rate_used/
-        best_source_marketplace/buy_box_90d set (i.e. called AFTER
-        FeeEngine.calculate has been applied to it), since the ROI math
-        here needs real fee/VAT context, not defaults.
+        product must already have fba_fee/eu_vat_rate_used/buy_box_90d
+        set (i.e. called AFTER FeeEngine.calculate has been applied to
+        it), since the ROI math here needs real fee/VAT context, not
+        defaults.
 
         Also identifies, for the "best guess" shown on the Competitors
         page -- the single day within the window that best explains a
         likely purchase: the lowest UK price (for UK A2A -- buying at
-        the dip) and the day with the strongest EU margin (for EU A2A
-        -- the day buying would have made most sense), each with its
-        real calendar date and price. Keepa has no actual purchase
+        the dip) and, independently for EACH EU marketplace, the day
+        with the strongest EU margin (for EU A2A -- the day buying
+        would have made most sense from THAT marketplace), each with
+        its real calendar date and price. Keepa has no actual purchase
         record, so this is always an inference from price history, not
         a confirmed fact -- labelled as a "best guess" everywhere it's
         shown (see _check_eu_a2a/_check_uk_a2a and competitors.html).
@@ -185,57 +212,86 @@ class SourcingClassifier:
             dip_cutoff = product.buy_box_90d * DIP_THRESHOLD
             uk_dip_days_recent = sum(1 for p in uk_daily if p and p <= dip_cutoff)
 
-        eu_priced_days_recent = 0
-        eu_viable_days_recent = 0
-        eu_rois = []
-        eu_best_roi = None
-        eu_best_roi_date = ""
-        eu_best_roi_cost_gbp = 0.0
+        # ---- EU side: independently, per marketplace ----------------
+        eu_source_evidence_by_marketplace = {}
 
-        if eu_raw and product.best_source_marketplace:
+        best_marketplace = ""
+        best_priced_days = 0
+        best_viable_days = 0
+        best_roi = None
+        best_roi_date = ""
+        best_roi_cost_gbp = 0.0
+
+        for marketplace, eu_raw in (eu_products or {}).items():
+            if not eu_raw:
+                continue
+
             eu_daily = KeepaParser(eu_raw).daily_buy_box_prices(RECENT_WINDOW_DAYS)
 
             # Convert each day's EU cost to GBP before comparing it
             # against the (already-GBP) UK price -- eu_daily comes back
             # in the EU marketplace's own currency (EUR cents/100), and
             # FeeEngine.roi_at_price expects both price and cost_gross
-            # in the same currency (see its own docstring). This was
-            # previously missing here (raw EUR values were being fed in
-            # directly), which understated ROI on every DE/FR/ES/IT day
-            # by however far EUR/GBP is from 1:1 -- see CurrencyService's
-            # docstring for the same class of bug already fixed for the
-            # main profit/roi fields.
-            currency = MARKETPLACE_CURRENCY.get(product.best_source_marketplace, "EUR")
+            # in the same currency (see its own docstring).
+            currency = MARKETPLACE_CURRENCY.get(marketplace, "EUR")
+
+            priced_days = 0
+            viable_days = 0
+            market_best_roi = None
+            market_best_roi_date = ""
+            market_best_roi_cost_gbp = 0.0
 
             for i, (uk_price, eu_price_raw) in enumerate(zip(uk_daily, eu_daily)):
                 if not uk_price or not eu_price_raw:
                     continue
 
-                eu_priced_days_recent += 1
+                priced_days += 1
                 eu_cost_gbp = CurrencyService.to_gbp(eu_price_raw, currency)
 
                 roi = FeeEngine.roi_at_price(
                     uk_price, eu_cost_gbp, category_name, product.fba_fee, product.eu_vat_rate_used,
                 )
-                eu_rois.append(roi)
 
                 if roi >= RECENT_VIABLE_ROI_PCT:
-                    eu_viable_days_recent += 1
+                    viable_days += 1
 
-                if eu_best_roi is None or roi > eu_best_roi:
-                    eu_best_roi = roi
-                    eu_best_roi_date = date_for_index(i)
-                    eu_best_roi_cost_gbp = eu_cost_gbp
+                if market_best_roi is None or roi > market_best_roi:
+                    market_best_roi = roi
+                    market_best_roi_date = date_for_index(i)
+                    market_best_roi_cost_gbp = eu_cost_gbp
+
+            if viable_days:
+                eu_source_evidence_by_marketplace[marketplace] = {
+                    "viable_days": viable_days,
+                    "best_roi": market_best_roi,
+                    "best_buy_price": market_best_roi_cost_gbp,
+                    "best_date": market_best_roi_date,
+                }
+
+            # Track the single strongest marketplace (by best ROI) to
+            # populate the scalar eu_source_* fields below -- see
+            # Product's own field docstrings: these now describe "the
+            # best evidence found across all 4", not "today's cheapest
+            # one's evidence".
+            if market_best_roi is not None and (best_roi is None or market_best_roi > best_roi):
+                best_marketplace = marketplace
+                best_priced_days = priced_days
+                best_viable_days = viable_days
+                best_roi = market_best_roi
+                best_roi_date = market_best_roi_date
+                best_roi_cost_gbp = market_best_roi_cost_gbp
 
         return {
             "uk_dip_days_recent": uk_dip_days_recent,
             "uk_price_min_recent": uk_price_min_recent,
             "uk_price_min_recent_date": uk_price_min_recent_date,
-            "eu_source_priced_days_recent": eu_priced_days_recent,
-            "eu_source_viable_days_recent": eu_viable_days_recent,
-            "eu_source_best_roi_recent": max(eu_rois) if eu_rois else 0.0,
-            "eu_source_best_roi_cost_gbp": eu_best_roi_cost_gbp,
-            "eu_source_best_roi_date": eu_best_roi_date,
+            "eu_source_priced_days_recent": best_priced_days,
+            "eu_source_viable_days_recent": best_viable_days,
+            "eu_source_best_roi_recent": best_roi or 0.0,
+            "eu_source_best_roi_cost_gbp": best_roi_cost_gbp,
+            "eu_source_best_roi_date": best_roi_date,
+            "eu_source_best_roi_marketplace": best_marketplace,
+            "eu_source_evidence_by_marketplace": eu_source_evidence_by_marketplace,
         }
 
     @staticmethod
@@ -300,13 +356,13 @@ class SourcingClassifier:
         eu = SourcingClassifier._check_eu_a2a(product)
         uk = SourcingClassifier._check_uk_a2a(product)
 
-        # Captured BEFORE any cross-referencing mutation below, but as
-        # the SAME dict objects (not copies) -- see merge_evidence's
-        # docstring for why eu_evidence deliberately ends up including
-        # the uk_dip_also_present note when both matched: that note IS
-        # part of what justified EU A2A this round, worth archiving
-        # alongside it.
-        eu_evidence = eu.reasoning if eu is not None else None
+        # eu_evidence is the FULL per-marketplace breakdown (possibly
+        # more than one qualifying EU marketplace), read straight off
+        # the Product regardless of which single marketplace ends up
+        # named in `reasoning`/`eu.reasoning` below -- see merge_evidence
+        # for why archiving needs the complete picture, not just the
+        # "primary" one classify() picked for display.
+        eu_evidence = product.eu_source_evidence_by_marketplace or None
         uk_evidence = uk.reasoning if uk is not None else None
 
         if eu is not None and uk is not None:
@@ -355,23 +411,36 @@ class SourcingClassifier:
         dict (already json.loads'd by the caller), or None/{} for a
         brand-new detection with nothing to preserve yet.
 
-        Write rule, per marketplace kind (eu_a2a / uk_a2a),
-        independently:
-          - classification found real evidence of that kind THIS ROUND
-            (eu_evidence/uk_evidence is not None) -> set/refresh it,
-            stamping last_confirmed_at now (first_found_at carried
-            forward from whatever was already stored, or now if this
-            is the first time).
-          - classification found NOTHING of that kind this round (the
-            30-day window has moved past the original opportunity, or
-            it genuinely never existed) -> leave whatever was
-            previously stored EXACTLY as it was. This is what lets
-            sourcing_tag flip freely back to "OA / unclear"/"Wholesale
-            (likely)" as evidence ages out of the window (see
-            classify()'s own docstring -- that reversal is correct,
-            expected behaviour, NOT something this guards against)
-            while the fact that a real EU/UK A2A opportunity was ever
-            found stays visible indefinitely.
+        EU side (2026-09-03 follow-up fix): eu_a2a is now a dict KEYED
+        BY MARKETPLACE ({"DE": {...}, "ES": {...}}), not a single
+        entry -- each marketplace's evidence is refreshed/preserved
+        INDEPENDENTLY. Concretely: if this round found evidence in ES
+        but not DE (DE's opportunity has since aged out of the window,
+        or DE just isn't buyable today), ES gets set/refreshed while
+        DE's previously-recorded entry is carried forward completely
+        untouched -- DE is never removed just because ES is the story
+        now, and vice versa. classification.eu_evidence is the FULL
+        per-marketplace dict this round found (see Product.
+        eu_source_evidence_by_marketplace) -- a marketplace simply
+        absent from it this round is left alone, exactly like the
+        single-entry rule below already does for "found nothing".
+
+        UK side: single entry, same refresh-on-find/preserve-on-miss
+        rule as before (there is only one UK marketplace, so no
+        per-marketplace breakdown is meaningful there) --
+        classification.uk_evidence not None -> set/refresh, stamping
+        last_confirmed_at now (first_found_at carried forward from
+        whatever was already stored, or now if this is the first
+        time); None -> leave whatever was previously stored exactly as
+        it was.
+
+        Either way, "found nothing this round" NEVER erases what was
+        already recorded -- that's what lets sourcing_tag flip freely
+        back to "OA / unclear"/"Wholesale (likely)" as evidence ages
+        out of the window (see classify()'s own docstring -- that
+        reversal is correct, expected behaviour, NOT something this
+        guards against) while the fact that a real EU/UK A2A
+        opportunity was ever found stays visible indefinitely.
 
         Pure function, no DB access -- SellerWatchService (the only
         caller) owns reading the listing's existing
@@ -381,23 +450,29 @@ class SourcingClassifier:
         """
         previous = previous_reasoning or {}
         previous_evidence = previous.get("historical_a2a_evidence") or {}
+        previous_eu_by_marketplace = previous_evidence.get("eu_a2a") or {}
+        previous_uk = previous_evidence.get("uk_a2a")
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        def merged_entry(key: str, fresh_evidence: dict | None) -> dict | None:
-            existing = previous_evidence.get(key)
-
-            if fresh_evidence is None:
-                return existing
-
-            entry = dict(fresh_evidence)
+        merged_eu_by_marketplace = dict(previous_eu_by_marketplace)
+        for marketplace, fresh in (classification.eu_evidence or {}).items():
+            existing = previous_eu_by_marketplace.get(marketplace)
+            entry = dict(fresh)
             entry["first_found_at"] = existing["first_found_at"] if existing else now_iso
             entry["last_confirmed_at"] = now_iso
-            return entry
+            merged_eu_by_marketplace[marketplace] = entry
+
+        if classification.uk_evidence is not None:
+            merged_uk = dict(classification.uk_evidence)
+            merged_uk["first_found_at"] = previous_uk["first_found_at"] if previous_uk else now_iso
+            merged_uk["last_confirmed_at"] = now_iso
+        else:
+            merged_uk = previous_uk
 
         merged = dict(classification.reasoning)
         merged["historical_a2a_evidence"] = {
-            "eu_a2a": merged_entry("eu_a2a", classification.eu_evidence),
-            "uk_a2a": merged_entry("uk_a2a", classification.uk_evidence),
+            "eu_a2a": merged_eu_by_marketplace,
+            "uk_a2a": merged_uk,
         }
         return merged
 
@@ -405,18 +480,34 @@ class SourcingClassifier:
     def _check_eu_a2a(product: Product) -> SourcingClassification | None:
         """
         Real evidence of a genuinely viable EU-sourced margin on at
-        least one of the last RECENT_WINDOW_DAYS days, computed
-        day-by-day against THAT day's actual UK price and THAT day's
-        actual EU cost (see compute_recent_evidence) -- not today's
-        price, not a 90-day average, and not a single cheap EU day
-        that could sit anywhere in a much wider 90-day window.
+        least one of the last RECENT_WINDOW_DAYS days, in ANY of
+        DE/FR/ES/IT independently, computed day-by-day against THAT
+        day's actual UK price and THAT day's actual EU cost (see
+        compute_recent_evidence) -- not today's price, not a 90-day
+        average, and not a single cheap EU day that could sit anywhere
+        in a much wider 90-day window.
 
-        currently_buyable reflects TODAY's live price specifically
-        (product.profit > 0), same convention as before -- a listing
-        can have real recent EU A2A evidence without being buyable at
-        this exact instant if today's price/cost has since moved.
+        IMPORTANT (2026-09-03 follow-up fix, atlas-competitor-watch-
+        classification-v1.md): deliberately NOT gated on
+        product.best_source_marketplace any more. That field is
+        TODAY's live cheapest-marketplace pick (see ProductMapper.
+        from_keepa_multi) -- a completely different, separate question
+        from "did a real EU A2A opportunity exist in the last 30
+        days". A competitor may have sourced from Germany 10 days ago;
+        Germany can be unbuyable (or simply not the cheapest) today
+        and that historical evidence must still count. This was
+        confirmed as the actual cause of real false negatives: a
+        blank best_source_marketplace (no EU marketplace currently has
+        a qualifying Amazon/FBA-held buy box) used to block this whole
+        check regardless of how strong the historical evidence was.
+
+        There is deliberately no currently_buyable check here any
+        more either -- "can we buy it right now" is answered
+        separately and independently by the linked ProductRecord's own
+        OpportunityEngine recommendation (see SourcingClassification's
+        own docstring for why duplicating that here would be wrong).
         """
-        if not product.best_source_marketplace or not product.eu_source_priced_days_recent:
+        if not product.eu_source_priced_days_recent:
             return None
 
         if not product.eu_source_viable_days_recent:
@@ -424,9 +515,8 @@ class SourcingClassifier:
 
         return SourcingClassification(
             sourcing_tag="EU A2A",
-            currently_buyable=product.profit > 0,
             reasoning={
-                "marketplace": product.best_source_marketplace,
+                "marketplace": product.eu_source_best_roi_marketplace,
                 "recent_window_days": RECENT_WINDOW_DAYS,
                 "priced_days_recent": product.eu_source_priced_days_recent,
                 "viable_days_recent": product.eu_source_viable_days_recent,
@@ -451,10 +541,13 @@ class SourcingClassifier:
         stale relative to when this listing was actually detected) --
         see Product.uk_dip_days_recent / compute_recent_evidence.
 
-        If the price hasn't recovered yet -- current price is still
-        down near the dip -- this is flagged as a live opportunity in
-        its own right (currently_buyable=True), not just historical
-        evidence of how they likely sourced it.
+        No currently_buyable check here -- see SourcingClassification's
+        own docstring: "can we buy it right now" is answered
+        separately by the linked ProductRecord's OpportunityEngine
+        recommendation, not computed here. `recovered`/`recovery_pct`
+        are still recorded in the reasoning below purely as
+        explanatory context (has the dip already closed?), not as a
+        buyability verdict.
         """
         if not product.buy_box_90d or not product.uk_dip_days_recent:
             return None
@@ -464,7 +557,6 @@ class SourcingClassifier:
 
         return SourcingClassification(
             sourcing_tag="UK A2A",
-            currently_buyable=not recovered,
             reasoning={
                 "recent_window_days": RECENT_WINDOW_DAYS,
                 "uk_dip_days_recent": product.uk_dip_days_recent,
@@ -504,7 +596,6 @@ class SourcingClassifier:
 
         return SourcingClassification(
             sourcing_tag="Wholesale (likely)",
-            currently_buyable=False,
             reasoning={
                 "offer_count": product.offers_now,
                 "small_seller_count_threshold": WHOLESALE_MAX_SELLERS,
@@ -530,7 +621,6 @@ class SourcingClassifier:
         """
         return SourcingClassification(
             sourcing_tag="OA / unclear",
-            currently_buyable=False,
             reasoning={
                 "recent_window_days": RECENT_WINDOW_DAYS,
                 "eu_a2a_checked": True,

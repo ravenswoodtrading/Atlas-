@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -148,14 +148,38 @@ class Product:
 
     # How many of the recent-window days had both a real UK price and a
     # real EU source price to compare -- i.e. were actually priceable.
+    #
+    # 2026-09-03 (atlas-competitor-watch-classification-v1.md's
+    # follow-up fix): these eu_source_* fields now describe the BEST
+    # evidence found across ALL FOUR EU marketplaces (DE/FR/ES/IT),
+    # not just whichever one happens to be best_source_marketplace
+    # (today's cheapest) -- see SourcingClassifier.compute_recent_
+    # evidence and eu_source_evidence_by_marketplace below for the
+    # full per-marketplace breakdown these are summarized from.
     eu_source_priced_days_recent: int = 0
 
     # Of those priced days, how many cleared a genuinely viable margin
     # (that day's real UK price against that day's real EU cost).
     eu_source_viable_days_recent: int = 0
 
-    # Best ROI actually achievable on any single recent-window day.
+    # Best ROI actually achievable on any single recent-window day,
+    # across any of the 4 EU marketplaces.
     eu_source_best_roi_recent: float = 0.0
+
+    # WHICH EU marketplace produced eu_source_best_roi_recent -- may
+    # differ from best_source_marketplace (today's cheapest), which is
+    # exactly the point: a competitor's historical sourcing evidence
+    # and today's live buying opportunity are two separate questions.
+    eu_source_best_roi_marketplace: str = ""
+
+    # Full per-marketplace breakdown -- {"DE": {"viable_days": int,
+    # "best_roi": float, "best_buy_price": float, "best_date": str},
+    # "ES": {...}, ...} -- only marketplaces with at least one genuinely
+    # viable day in the window are included. This is what lets DE
+    # evidence and ES evidence be tracked/preserved independently (see
+    # SourcingClassifier.merge_evidence) rather than only the single
+    # strongest one surviving.
+    eu_source_evidence_by_marketplace: dict = field(default_factory=dict)
 
     # How many recent-window days had the UK price down at/near a
     # genuine dip (see SourcingClassifier.DIP_THRESHOLD) relative to

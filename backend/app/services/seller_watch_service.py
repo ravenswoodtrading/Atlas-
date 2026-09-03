@@ -134,23 +134,42 @@ class SellerWatchService:
         )
 
     @staticmethod
-    def _persist_classification(listing: SellerNewListing, classification) -> None:
+    def _persist_classification(listing: SellerNewListing, classification, recommendation: str | None) -> None:
         """
-        Writes a fresh SourcingClassifier result onto an EXISTING
-        listing -- shared by rescan_unscored/reclassify_all so both
+        Writes a fresh SourcingClassifier result onto a listing --
+        shared by run_check/rescan_unscored/reclassify_all so all three
         call sites go through SourcingClassifier.merge_evidence rather
         than each doing its own json.dumps(classification.reasoning)
         (which is what silently discarded historical A2A evidence
-        before atlas-competitor-watch-classification-v1.md's fix: a
-        later reclassify blindly overwrote sourcing_reasoning_json
+        before atlas-competitor-watch-classification-v1.md's first
+        fix: a later reclassify blindly overwrote sourcing_reasoning_json
         with only THIS round's findings, losing whatever real EU/UK
         A2A evidence a previous round had recorded).
 
-        sourcing_tag/currently_buyable are still overwritten outright
-        every call -- see merge_evidence's own docstring for why that's
-        correct: the CURRENT classification is meant to change freely
-        as evidence ages out of the window. Only the evidence archive
-        inside sourcing_reasoning_json is preserve-on-miss.
+        sourcing_tag is still overwritten outright every call -- see
+        merge_evidence's own docstring for why that's correct: the
+        CURRENT classification is meant to change freely as evidence
+        ages out of the window. Only the evidence archive inside
+        sourcing_reasoning_json is preserve-on-miss.
+
+        recommendation (2026-09-03 follow-up fix): the LINKED
+        ProductRecord's own OpportunityEngine recommendation for
+        TODAY's actual best source across all 4 marketplaces --
+        "BUY" | "CONSIDER" | "WATCH" | "IGNORE" | etc, or None if
+        there's no linked record at all. currently_buyable is derived
+        from this DIRECTLY -- ONLY "BUY" counts, matching the locked
+        definition (CONSIDER/WATCH/anything else is explicitly NOT a
+        confirmed buying lead, per Tamara's own instruction). This
+        used to be computed independently inside SourcingClassifier
+        (a profit>0/recovered-price check tied to the HISTORICAL
+        marketplace) -- that was a second, parallel profitability
+        signal duplicating what OpportunityEngine already decides, and
+        could disagree with it (e.g. still say "buyable" via the
+        historical DE evidence when DE itself is no longer viable
+        today and a DIFFERENT marketplace, ES, is the real current
+        opportunity). "Can we buy this now" and "how did they source
+        it" are answered by two genuinely independent computations now
+        -- see SourcingClassification's own docstring.
         """
         previous_reasoning = None
         if listing.sourcing_reasoning_json:
@@ -160,7 +179,7 @@ class SellerWatchService:
                 previous_reasoning = None
 
         listing.sourcing_tag = classification.sourcing_tag
-        listing.currently_buyable = classification.currently_buyable
+        listing.currently_buyable = recommendation == "BUY"
         listing.sourcing_reasoning_json = json.dumps(
             SourcingClassifier.merge_evidence(previous_reasoning, classification)
         )
@@ -241,47 +260,45 @@ class SellerWatchService:
                     # scoring appear here (see BrandScanService.scan
                     # Step 5) -- e.g. a dead listing, excluded category,
                     # or one with no current UK buy-box price at all
-                    # still won't have a product dict to classify
+                    # still won't have an opportunity to classify
                     # against (missing EU source alone no longer drops
-                    # it, see include_no_eu_source above).
+                    # it, see include_no_eu_source above). Keeps the
+                    # whole opp (product + report) -- report["recommendation"]
+                    # is what currently_buyable now derives from (see
+                    # _persist_classification's own docstring), not
+                    # just the product dict.
                     scored_by_asin = {
-                        opp["product"]["asin"]: opp["product"]
+                        opp["product"]["asin"]: opp
                         for opp in scan_result.get("opportunities", [])
                     }
                     record_ids = ProductRepository.get_latest_record_ids(new_asins_list)
 
                     for asin in new_asins_list:
-                        product_dict = scored_by_asin.get(asin)
-                        sourcing_tag = None
-                        currently_buyable = False
-                        reasoning_json = None
+                        opp = scored_by_asin.get(asin)
 
-                        if product_dict:
-                            product = Product(**product_dict)
+                        listing = SellerNewListing(
+                            tracked_seller_id=seller.id,
+                            asin=asin,
+                            product_record_id=record_ids.get(asin),
+                        )
+
+                        if opp:
+                            product = Product(**opp["product"])
                             brand_repeat = SellerWatchService._brand_repeat_count(
                                 db, seller.id, product.brand
                             )
                             classification = SourcingClassifier.classify(
                                 product, brand_repeat_count=brand_repeat
                             )
-                            sourcing_tag = classification.sourcing_tag
-                            currently_buyable = classification.currently_buyable
+                            recommendation = (opp.get("report") or {}).get("recommendation")
                             # No previous stored reasoning to preserve --
-                            # a brand-new detection (see merge_evidence's
-                            # own docstring for what this call does for
-                            # an existing listing being reclassified).
-                            reasoning_json = json.dumps(
-                                SourcingClassifier.merge_evidence(None, classification)
-                            )
+                            # a brand-new detection (see
+                            # _persist_classification's own docstring
+                            # for what this does on an existing listing
+                            # being reclassified instead).
+                            SellerWatchService._persist_classification(listing, classification, recommendation)
 
-                        db.add(SellerNewListing(
-                            tracked_seller_id=seller.id,
-                            asin=asin,
-                            product_record_id=record_ids.get(asin),
-                            sourcing_tag=sourcing_tag,
-                            currently_buyable=currently_buyable,
-                            sourcing_reasoning_json=reasoning_json,
-                        ))
+                        db.add(listing)
 
                     total_new += len(new_asins_list)
 
@@ -350,7 +367,7 @@ class SellerWatchService:
             )
 
             scored_by_asin = {
-                opp["product"]["asin"]: opp["product"]
+                opp["product"]["asin"]: opp
                 for opp in scan_result.get("opportunities", [])
             }
             record_ids = ProductRepository.get_latest_record_ids(asins_list)
@@ -358,20 +375,21 @@ class SellerWatchService:
             updated = 0
 
             for listing in unscored:
-                product_dict = scored_by_asin.get(listing.asin)
-                if not product_dict:
+                opp = scored_by_asin.get(listing.asin)
+                if not opp:
                     continue
 
-                product = Product(**product_dict)
+                product = Product(**opp["product"])
                 brand_repeat = SellerWatchService._brand_repeat_count(
                     db, listing.tracked_seller_id, product.brand
                 )
                 classification = SourcingClassifier.classify(
                     product, brand_repeat_count=brand_repeat
                 )
+                recommendation = (opp.get("report") or {}).get("recommendation")
 
                 listing.product_record_id = record_ids.get(listing.asin)
-                SellerWatchService._persist_classification(listing, classification)
+                SellerWatchService._persist_classification(listing, classification, recommendation)
                 updated += 1
 
             db.commit()
@@ -451,32 +469,33 @@ class SellerWatchService:
                     break
 
                 scored_by_asin = {
-                    opp["product"]["asin"]: opp["product"]
+                    opp["product"]["asin"]: opp
                     for opp in scan_result.get("opportunities", [])
                 }
                 record_ids = ProductRepository.get_latest_record_ids(batch_asins)
                 now = datetime.now(timezone.utc)
 
                 for asin in batch_asins:
-                    product_dict = scored_by_asin.get(asin)
+                    opp = scored_by_asin.get(asin)
 
                     for listing in rows_by_asin[asin]:
                         listing.sourcing_reclassified_at = now
 
-                        if not product_dict:
+                        if not opp:
                             continue
 
                         previous_tag = listing.sourcing_tag
-                        product = Product(**product_dict)
+                        product = Product(**opp["product"])
                         brand_repeat = SellerWatchService._brand_repeat_count(
                             db, listing.tracked_seller_id, product.brand
                         )
                         classification = SourcingClassifier.classify(
                             product, brand_repeat_count=brand_repeat
                         )
+                        recommendation = (opp.get("report") or {}).get("recommendation")
 
                         listing.product_record_id = record_ids.get(asin) or listing.product_record_id
-                        SellerWatchService._persist_classification(listing, classification)
+                        SellerWatchService._persist_classification(listing, classification, recommendation)
                         updated += 1
 
                         if previous_tag != listing.sourcing_tag:
