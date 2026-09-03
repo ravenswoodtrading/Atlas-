@@ -270,10 +270,23 @@
                                     <strong>Best guess:</strong> likely bought at the UK price dip around <strong>{{ entry.reasoning.guessed_buy_date }}</strong> for roughly <strong>&pound;{{ "%.2f"|format(entry.reasoning.guessed_buy_price_gbp) }}</strong> -- the lowest UK price in the last {{ entry.reasoning.recent_window_days }} days. Inferred from price history, not a confirmed purchase.
                                 </div>
                                 {% endif %}
+                                {% set hist = entry.reasoning.historical_a2a_evidence %}
+                                {% if hist and listing.sourcing_tag != "EU A2A" and hist.eu_a2a %}
+                                <div class="alert py-2 px-3 small mb-2" style="background:#fff8e6;border-color:#f0dca0;color:#8a6d1f;">
+                                    <i class="bi bi-clock-history"></i>
+                                    <strong>Historical EU A2A evidence</strong> found {{ hist.eu_a2a.first_found_at[:10] }} from <strong>{{ hist.eu_a2a.marketplace }}</strong> (no longer the current classification -- see Sourcing reasoning below for why).
+                                </div>
+                                {% endif %}
+                                {% if hist and listing.sourcing_tag != "UK A2A" and hist.uk_a2a %}
+                                <div class="alert py-2 px-3 small mb-2" style="background:#fff8e6;border-color:#f0dca0;color:#8a6d1f;">
+                                    <i class="bi bi-clock-history"></i>
+                                    <strong>Historical UK A2A evidence</strong> found {{ hist.uk_a2a.first_found_at[:10] }} (no longer the current classification -- see Sourcing reasoning below for why).
+                                </div>
+                                {% endif %}
                                 <h6 class="small fw-bold">Sourcing reasoning ({{ listing.sourcing_tag }})</h6>
                                 <ul class="list-unstyled small mb-0">
                                 {% for key, value in entry.reasoning.items() %}
-                                    {% if key not in ("guessed_buy_date", "guessed_buy_price_gbp") %}
+                                    {% if key not in ("guessed_buy_date", "guessed_buy_price_gbp", "historical_a2a_evidence") %}
                                     <li><span class="text-muted">{{ key }}:</span> {{ value }}</li>
                                     {% endif %}
                                 {% endfor %}

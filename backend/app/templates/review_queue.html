@@ -399,7 +399,9 @@
                                 <h6 class="small fw-bold">Sourcing reasoning ({{ lead.sourcing_tag }})</h6>
                                 <ul class="list-unstyled small mb-0">
                                 {% for key, value in lead.reasoning.items() %}
+                                    {% if key != "historical_a2a_evidence" %}
                                     <li><span class="text-muted">{{ key }}:</span> {{ value }}</li>
+                                    {% endif %}
                                 {% endfor %}
                                 </ul>
                             </div>

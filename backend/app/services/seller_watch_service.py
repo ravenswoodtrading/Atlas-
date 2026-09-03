@@ -134,6 +134,38 @@ class SellerWatchService:
         )
 
     @staticmethod
+    def _persist_classification(listing: SellerNewListing, classification) -> None:
+        """
+        Writes a fresh SourcingClassifier result onto an EXISTING
+        listing -- shared by rescan_unscored/reclassify_all so both
+        call sites go through SourcingClassifier.merge_evidence rather
+        than each doing its own json.dumps(classification.reasoning)
+        (which is what silently discarded historical A2A evidence
+        before atlas-competitor-watch-classification-v1.md's fix: a
+        later reclassify blindly overwrote sourcing_reasoning_json
+        with only THIS round's findings, losing whatever real EU/UK
+        A2A evidence a previous round had recorded).
+
+        sourcing_tag/currently_buyable are still overwritten outright
+        every call -- see merge_evidence's own docstring for why that's
+        correct: the CURRENT classification is meant to change freely
+        as evidence ages out of the window. Only the evidence archive
+        inside sourcing_reasoning_json is preserve-on-miss.
+        """
+        previous_reasoning = None
+        if listing.sourcing_reasoning_json:
+            try:
+                previous_reasoning = json.loads(listing.sourcing_reasoning_json)
+            except Exception:
+                previous_reasoning = None
+
+        listing.sourcing_tag = classification.sourcing_tag
+        listing.currently_buyable = classification.currently_buyable
+        listing.sourcing_reasoning_json = json.dumps(
+            SourcingClassifier.merge_evidence(previous_reasoning, classification)
+        )
+
+    @staticmethod
     def run_check() -> dict:
         """
         One full pass over every active tracked seller. Returns a
@@ -234,7 +266,13 @@ class SellerWatchService:
                             )
                             sourcing_tag = classification.sourcing_tag
                             currently_buyable = classification.currently_buyable
-                            reasoning_json = json.dumps(classification.reasoning)
+                            # No previous stored reasoning to preserve --
+                            # a brand-new detection (see merge_evidence's
+                            # own docstring for what this call does for
+                            # an existing listing being reclassified).
+                            reasoning_json = json.dumps(
+                                SourcingClassifier.merge_evidence(None, classification)
+                            )
 
                         db.add(SellerNewListing(
                             tracked_seller_id=seller.id,
@@ -333,9 +371,7 @@ class SellerWatchService:
                 )
 
                 listing.product_record_id = record_ids.get(listing.asin)
-                listing.sourcing_tag = classification.sourcing_tag
-                listing.currently_buyable = classification.currently_buyable
-                listing.sourcing_reasoning_json = json.dumps(classification.reasoning)
+                SellerWatchService._persist_classification(listing, classification)
                 updated += 1
 
             db.commit()
@@ -440,9 +476,7 @@ class SellerWatchService:
                         )
 
                         listing.product_record_id = record_ids.get(asin) or listing.product_record_id
-                        listing.sourcing_tag = classification.sourcing_tag
-                        listing.currently_buyable = classification.currently_buyable
-                        listing.sourcing_reasoning_json = json.dumps(classification.reasoning)
+                        SellerWatchService._persist_classification(listing, classification)
                         updated += 1
 
                         if previous_tag != listing.sourcing_tag:

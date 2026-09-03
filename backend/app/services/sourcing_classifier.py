@@ -12,11 +12,28 @@ from app.services.product_mapper import MARKETPLACE_CURRENCY
 # evidence against. Competitor Watch detects a listing at roughly the
 # time it was ADDED to the seller's inventory, so evidence needs to be
 # recent to actually explain THIS listing -- a margin or dip from
-# weeks/months ago says nothing about why it showed up now. 10 days
-# chosen (over the wider 90-day windows used elsewhere in Atlas) to
-# match that detection cadence specifically -- named constant so it's
-# easy to recalibrate against real detection outcomes later.
-RECENT_WINDOW_DAYS = 10
+# months ago says nothing about why it showed up now.
+#
+# 30 days (atlas-competitor-watch-classification-v1.md section 7,
+# 2026-09-03 -- was 10 days until this change). A real, credible A2A
+# opportunity 15-20 days ago was being missed entirely under the old
+# 10-day window (confirmed: the spec's own worked examples all fall
+# in the 11-20-day range) and misread as OA/unclear. Widening this
+# costs no extra Keepa tokens -- ProductService.get_products already
+# fetches full price-change history (history=True), so
+# KeepaParser.daily_buy_box_prices is just reading further back into
+# data that was already being pulled.
+#
+# IMPORTANT: this widens the window used to compute the CURRENT
+# classification each time SourcingClassifier.classify() runs -- it
+# does NOT by itself stop a real EU/UK A2A finding from eventually
+# aging out of a later reclassify's 30-day window and reading as
+# OA/unclear again. That's expected/correct (see classify()'s own
+# docstring) -- what must never happen is losing the ORIGINAL
+# evidence when that happens. See merge_evidence() below for how
+# that's actually preserved, in SellerNewListing.sourcing_reasoning_json,
+# independently of whatever the current sourcing_tag says.
+RECENT_WINDOW_DAYS = 30
 
 # "Would have been worth buying" bar for a single recent-window day's
 # EU-sourced margin. Mirrors OpportunityEngine.MIN_VIABLE_ROI (the
@@ -63,6 +80,18 @@ class SourcingClassification:
     # JSON-serializable -- the numbers behind the tag, so the "why" is
     # inspectable rather than just the label. See SellerNewListing.sourcing_reasoning_json.
     reasoning: dict = field(default_factory=dict)
+
+    # This round's raw EU A2A / UK A2A evidence (the same shape
+    # _check_eu_a2a/_check_uk_a2a's own `reasoning` would have
+    # produced), independent of which one actually won as the primary
+    # sourcing_tag -- None when that check found nothing this round.
+    # Exists purely so a caller (see merge_evidence below) can archive
+    # BOTH kinds of evidence found this round, not just whichever one
+    # is reflected in `reasoning`/`sourcing_tag` above (e.g. when both
+    # EU and UK evidence exist, `reasoning` above only carries EU's,
+    # per classify()'s own precedence).
+    eu_evidence: dict | None = None
+    uk_evidence: dict | None = None
 
 
 class SourcingClassifier:
@@ -271,6 +300,15 @@ class SourcingClassifier:
         eu = SourcingClassifier._check_eu_a2a(product)
         uk = SourcingClassifier._check_uk_a2a(product)
 
+        # Captured BEFORE any cross-referencing mutation below, but as
+        # the SAME dict objects (not copies) -- see merge_evidence's
+        # docstring for why eu_evidence deliberately ends up including
+        # the uk_dip_also_present note when both matched: that note IS
+        # part of what justified EU A2A this round, worth archiving
+        # alongside it.
+        eu_evidence = eu.reasoning if eu is not None else None
+        uk_evidence = uk.reasoning if uk is not None else None
+
         if eu is not None and uk is not None:
             # Both have real recent evidence -- EU A2A wins as primary
             # (a priced cross-border margin is more specific evidence
@@ -285,19 +323,83 @@ class SourcingClassifier:
             eu.reasoning["uk_dip_days_recent"] = uk.reasoning["uk_dip_days_recent"]
             eu.reasoning["uk_price_min_recent"] = uk.reasoning["uk_price_min_recent"]
             eu.reasoning["uk_price_min_recent_date"] = uk.reasoning["uk_price_min_recent_date"]
-            return eu
+            result = eu
+        elif eu is not None:
+            result = eu
+        elif uk is not None:
+            result = uk
+        else:
+            wholesale = SourcingClassifier._check_wholesale(product, brand_repeat_count)
+            result = wholesale if wholesale is not None else (
+                SourcingClassifier._fallback_unclear(product, brand_repeat_count)
+            )
 
-        if eu is not None:
-            return eu
+        result.eu_evidence = eu_evidence
+        result.uk_evidence = uk_evidence
+        return result
 
-        if uk is not None:
-            return uk
+    @staticmethod
+    def merge_evidence(previous_reasoning: dict | None, classification: SourcingClassification) -> dict:
+        """
+        atlas-competitor-watch-classification-v1.md section 14 --
+        "current classification should not destroy historical
+        evidence". Builds the dict to actually persist as
+        SellerNewListing.sourcing_reasoning_json: everything in
+        classification.reasoning (today's CURRENT classification,
+        exactly the same flat shape as before this change -- every
+        existing template/key lookup against it keeps working
+        unchanged) PLUS one new additive key, "historical_a2a_evidence",
+        that is refresh-only and never cleared.
 
-        wholesale = SourcingClassifier._check_wholesale(product, brand_repeat_count)
-        if wholesale is not None:
-            return wholesale
+        previous_reasoning: the listing's PREVIOUSLY stored reasoning
+        dict (already json.loads'd by the caller), or None/{} for a
+        brand-new detection with nothing to preserve yet.
 
-        return SourcingClassifier._fallback_unclear(product, brand_repeat_count)
+        Write rule, per marketplace kind (eu_a2a / uk_a2a),
+        independently:
+          - classification found real evidence of that kind THIS ROUND
+            (eu_evidence/uk_evidence is not None) -> set/refresh it,
+            stamping last_confirmed_at now (first_found_at carried
+            forward from whatever was already stored, or now if this
+            is the first time).
+          - classification found NOTHING of that kind this round (the
+            30-day window has moved past the original opportunity, or
+            it genuinely never existed) -> leave whatever was
+            previously stored EXACTLY as it was. This is what lets
+            sourcing_tag flip freely back to "OA / unclear"/"Wholesale
+            (likely)" as evidence ages out of the window (see
+            classify()'s own docstring -- that reversal is correct,
+            expected behaviour, NOT something this guards against)
+            while the fact that a real EU/UK A2A opportunity was ever
+            found stays visible indefinitely.
+
+        Pure function, no DB access -- SellerWatchService (the only
+        caller) owns reading the listing's existing
+        sourcing_reasoning_json and writing the result back, same
+        "SourcingClassifier stays a pure classifier, the caller owns
+        persistence" split as the rest of this module.
+        """
+        previous = previous_reasoning or {}
+        previous_evidence = previous.get("historical_a2a_evidence") or {}
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def merged_entry(key: str, fresh_evidence: dict | None) -> dict | None:
+            existing = previous_evidence.get(key)
+
+            if fresh_evidence is None:
+                return existing
+
+            entry = dict(fresh_evidence)
+            entry["first_found_at"] = existing["first_found_at"] if existing else now_iso
+            entry["last_confirmed_at"] = now_iso
+            return entry
+
+        merged = dict(classification.reasoning)
+        merged["historical_a2a_evidence"] = {
+            "eu_a2a": merged_entry("eu_a2a", classification.eu_evidence),
+            "uk_a2a": merged_entry("uk_a2a", classification.uk_evidence),
+        }
+        return merged
 
     @staticmethod
     def _check_eu_a2a(product: Product) -> SourcingClassification | None:
