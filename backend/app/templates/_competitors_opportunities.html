@@ -8,16 +8,31 @@
      deliberately NOT the raw "OA / unclear" tag count); recent is a
      plain 7-day tally across every tag. -->
 <div class="row g-3 mb-3">
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
         <a href="/competitors?tab=opportunities&view=buy_now&source={{ source }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #198754;">
                 <div class="small fw-bold text-uppercase text-success"><i class="bi bi-cart-check-fill"></i> Buy Now</div>
                 <h2 class="mb-0">{{ counts.buy_now }}</h2>
-                <div class="small text-muted">Currently buyable, clears the usual bar</div>
+                <div class="small text-muted">Currently buyable, confirmed BUY</div>
             </div>
         </a>
     </div>
-    <div class="col-6 col-md-3">
+    <!-- Strong Consider (split from Buy Now 2026-09-04) -- same
+         list_notable_buyable "star" bar (25%+ ROI + confirmed sales
+         evidence), but the record's own recommendation is CONSIDER,
+         not a literal BUY. Kept as its own honest bucket instead of
+         calling it "Buy Now" -- see build_opportunities_context's own
+         comment. -->
+    <div class="col-6 col-md">
+        <a href="/competitors?tab=opportunities&view=strong_consider&source={{ source }}" class="text-decoration-none text-reset">
+            <div class="card metric p-3 h-100" style="border-left:5px solid #20c997;">
+                <div class="small fw-bold text-uppercase" style="color:#20c997;"><i class="bi bi-star-fill"></i> Strong Consider</div>
+                <h2 class="mb-0">{{ counts.strong_consider }}</h2>
+                <div class="small text-muted">Buyable, strong ROI + sales evidence, not yet a confirmed BUY</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-6 col-md">
         <a href="/competitors?tab=opportunities&view=needs_attention&source={{ source }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
                 <div class="small fw-bold text-uppercase text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</div>
@@ -26,7 +41,7 @@
             </div>
         </a>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
         <a href="/competitors?tab=opportunities&view=oa_investigate&source={{ source }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
                 <div class="small fw-bold text-uppercase" style="color:#fd7e14;"><i class="bi bi-question-diamond-fill"></i> OA &mdash; Worth Investigating</div>
@@ -35,7 +50,7 @@
             </div>
         </a>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
         <a href="/competitors?tab=opportunities&view=all&source=all" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
                 <div class="small fw-bold text-uppercase text-primary"><i class="bi bi-clock-history"></i> Recent Discoveries</div>
@@ -63,14 +78,14 @@
             <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search ASIN or product name...">
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
         <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
             {% for value, label in source_labels.items() %}
             <option value="{{ value }}" {{ "selected" if source == value }}>Source: {{ label }}</option>
             {% endfor %}
         </select>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md">
         <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
             {% for value, label in sort_labels.items() %}
             <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
@@ -119,6 +134,8 @@
             <div>
                 {% if entry.opp_view == "buy_now" %}
                     <span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
+                {% elif entry.opp_view == "strong_consider" %}
+                    <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> STRONG CONSIDER</span>
                 {% elif entry.opp_view == "needs_attention" %}
                     <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;">A2A &mdash; HISTORICAL ONLY</span>
                     <span class="badge bg-danger">NEEDS ATTENTION</span>
@@ -175,7 +192,7 @@
         {% endif %}
 
         <div class="d-flex justify-content-between align-items-center mt-3 pt-2" style="border-top:1px dashed #e4e8f0;">
-            {% if record and record.buy_box_now and (has_historical or entry.opp_view == "buy_now") %}
+            {% if record and record.buy_box_now and (has_historical or entry.opp_view in ("buy_now", "strong_consider")) %}
             <div>
                 <span class="{{ 'text-success' if (record.profit or 0) > 0 else 'text-danger' }} fw-semibold">&pound;{{ "%.2f"|format(record.profit or 0) }} profit</span>
                 <span class="text-muted">&middot; {{ "%.0f"|format(record.roi or 0) }}% ROI</span>
@@ -187,7 +204,7 @@
             {% endif %}
 
             <div class="d-flex" style="gap:.35rem;">
-                {% if entry.opp_view == "buy_now" %}
+                {% if entry.opp_view in ("buy_now", "strong_consider") %}
                     <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ listing.asin }}"><i class="bi bi-check-lg"></i> Buy</button>
                     <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ listing.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
                 {% elif entry.opp_view == "needs_attention" %}

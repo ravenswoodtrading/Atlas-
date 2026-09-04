@@ -253,7 +253,14 @@ OPPORTUNITY_SOURCE_LABELS = {
     "wholesale": "Wholesale", "oa": "OA / unclear",
 }
 OPPORTUNITY_VIEW_LABELS = {
-    "all": "All", "buy_now": "Buy Now", "needs_attention": "Needs Attention",
+    "all": "All", "buy_now": "Buy Now",
+    # Split from buy_now 2026-09-04 (Tamara's own explicit choice --
+    # "split into two tabs" -- after a real mismatch surfaced: a
+    # CONSIDER-tier listing with 25%+ ROI and confirmed sales evidence
+    # showed here as "Buy Now" but wasn't a literal BUY recommendation.
+    # See build_opportunities_context's own comment for the split.
+    "strong_consider": "Strong Consider",
+    "needs_attention": "Needs Attention",
     "oa_investigate": "OA — Worth Investigating", "recent": "Recent Discoveries",
 }
 OPPORTUNITY_SORT_LABELS = {"newest": "Newest first", "profit_desc": "Highest profit"}
@@ -271,22 +278,38 @@ def build_opportunities_context(view: str = "all", source: str = "all", q: str =
     its own: a listing can only ever match ONE of the three (mutually
     exclusive by currently_buyable/sourcing_tag), so there is nothing
     to merge.
+
+    buy_now vs strong_consider (split 2026-09-04, Tamara's own choice):
+    list_notable_buyable() itself uses is_notable()'s broader "star"
+    bar (a literal BUY, OR CONSIDER-tier with 25%+ ROI and confirmed
+    sales evidence -- same bar the unified Review Queue's own BUY_NOW
+    view was widened to trust the same day). Splitting the label here
+    purely by the record's literal recommendation keeps "Buy Now"
+    honest about what's a confirmed BUY vs what's a strong-but-Consider
+    lead, without changing what list_notable_buyable() itself returns
+    or touching the Review Queue's own (now-matching) definition.
     """
-    buy_now = SellerWatchService.list_notable_buyable(limit=300)
+    buy_now_pool = SellerWatchService.list_notable_buyable(limit=300)
     needs_attention = SellerWatchService.list_historical_a2a_not_buyable(limit=300)
     oa_worth = SellerWatchService.list_oa_worth_investigating(limit=300)
 
+    buy_now = [e for e in buy_now_pool if e["record"] and e["record"].recommendation == "BUY"]
+    strong_consider = [e for e in buy_now_pool if not (e["record"] and e["record"].recommendation == "BUY")]
+
     for entry in buy_now:
         entry["opp_view"] = "buy_now"
+    for entry in strong_consider:
+        entry["opp_view"] = "strong_consider"
     for entry in needs_attention:
         entry["opp_view"] = "needs_attention"
     for entry in oa_worth:
         entry["opp_view"] = "oa_investigate"
 
-    pool = buy_now + needs_attention + oa_worth
+    pool = buy_now + strong_consider + needs_attention + oa_worth
 
     counts = {
         "buy_now": len(buy_now),
+        "strong_consider": len(strong_consider),
         "needs_attention": len(needs_attention),
         "oa_investigate": len(oa_worth),
         "recent": SellerWatchService.count_recent_detections(days=7),
