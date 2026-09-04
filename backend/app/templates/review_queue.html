@@ -32,7 +32,7 @@
     {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention"] %}
     <li class="nav-item">
         <a class="nav-link {{ 'active' if view == v }}"
-           href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}">
+           href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}&marketplace={{ marketplace }}&competitor={{ competitor }}">
             {{ view_labels[v] }}
             <span class="badge {{ 'bg-light text-dark' if view != v else 'bg-white text-dark' }} ms-1">
                 {{ unique_total if v == "all" else summary.get(v, 0) }}
@@ -45,13 +45,13 @@
 <!-- Secondary controls: search / source / sort (UI redesign pass, 2026-09-03) -->
 <form method="get" action="/review-queue" class="row g-2 align-items-center mb-3">
     <input type="hidden" name="view" value="{{ view }}">
-    <div class="col-12 col-md-4">
+    <div class="col-12 col-md-2">
         <div class="input-group input-group-sm">
             <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
             <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search ASIN or product name...">
         </div>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
         <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
             <option value="all" {{ "selected" if source == "all" }}>Source: All</option>
             {% for s in ["scan", "competitor", "lead"] %}
@@ -59,7 +59,23 @@
             {% endfor %}
         </select>
     </div>
-    <div class="col-6 col-md-3">
+    <div class="col-6 col-md-2">
+        <select name="marketplace" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="all" {{ "selected" if marketplace == "all" }}>Store: All</option>
+            {% for value, label in marketplace_labels.items() %}
+            <option value="{{ value }}" {{ "selected" if marketplace == value }}>{{ flags.get(value, "") }} {{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-2">
+        <select name="competitor" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="all" {{ "selected" if competitor == "all" }}>Competitor: All</option>
+            {% for name in competitor_names %}
+            <option value="{{ name }}" {{ "selected" if competitor == name }}>{{ name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-2">
         <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
             {% for value, label in sort_labels.items() %}
             <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
@@ -89,7 +105,7 @@
                 </div>
                 <div class="text-muted small">
                     {{ item.asin }}
-                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN" onclick="event.stopPropagation();"><i class="bi bi-clipboard"></i></button>
+                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
                 </div>
                 <div class="mt-1">
                     {% for view_name in item.views %}
@@ -109,18 +125,28 @@
                 <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ item.asin }}">
                     <i class="bi bi-check-lg"></i> Buy
                 </button>
-                <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ item.asin }}">
-                    <i class="bi bi-x-lg"></i> Reject
-                </button>
+                <div class="dropdown">
+                    <!-- Reject (2026-09-04): the old bare "Reject" button
+                         resolved with NO reason at all -- removed. Every
+                         reject path now goes through either a Quick
+                         reject reason here (Other prompts for free text,
+                         see the script below) or the detail panel's own
+                         required category + reason (_review_queue_item_
+                         detail.html), so rejection reasons are always
+                         captured for future pattern analysis. -->
+                    <button type="button" class="btn btn-sm btn-outline-danger dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                        <i class="bi bi-x-lg"></i> Reject
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        {% for value, label in quick_reject_reasons %}
+                        <li><a class="dropdown-item qi-quickreject-btn" href="#" data-asin="{{ item.asin }}" data-reason="{{ value }}">{{ label }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
                 <div class="dropdown">
                     <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"></button>
                     <ul class="dropdown-menu dropdown-menu-end">
                         <li><a class="dropdown-item qi-open-btn" href="#" data-asin="{{ item.asin }}"><i class="bi bi-eye"></i> More info</a></li>
-                        <li><hr class="dropdown-divider"></li>
-                        <li><h6 class="dropdown-header">Quick reject</h6></li>
-                        {% for value, label in quick_reject_reasons %}
-                        <li><a class="dropdown-item qi-quickreject-btn" href="#" data-asin="{{ item.asin }}" data-reason="{{ value }}">{{ label }}</a></li>
-                        {% endfor %}
                     </ul>
                 </div>
             </div>
@@ -159,6 +185,25 @@
                 <div class="text-muted">Score</div>
                 <div class="{{ 'text-success' if (item.score or 0) >= 70 else ('text-warning' if (item.score or 0) >= 40 else 'text-muted') }}">
                     {{ item.score if item.score is not none else "--" }}
+                </div>
+            </div>
+            <!-- Sales evidence (2026-09-04) -- was completely absent from
+                 this row, a real gap for a decision the sales figure
+                 directly bears on. Same fallback as the detail panel's
+                 own "Trend & Sales Signals" section: a confirmed monthly
+                 figure when Keepa has one, otherwise sales rank drops
+                 (Keepa's own "a sale probably happened" proxy) rather
+                 than nothing at all. -->
+            <div style="min-width:110px;">
+                <div class="text-muted">Sales</div>
+                <div>
+                    {% if item.monthly_sales %}
+                        {{ item.monthly_sales }}/mo
+                    {% elif item.sales_drops_30d %}
+                        <span class="text-muted">{{ item.sales_drops_30d }} rank drops (30d)</span>
+                    {% else %}
+                        <span class="text-muted">No sales evidence</span>
+                    {% endif %}
                 </div>
             </div>
             <div style="min-width:70px;">
@@ -260,17 +305,37 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     document.addEventListener('click', function (e) {
+        // Copy ASIN is nested inside .qi-open-btn's clickable area (2026-
+        // 09-04 fix) -- must be checked FIRST and just return (not
+        // e.stopPropagation(), which would also block base.html's own
+        // delegated .copy-asin-btn listener from ever seeing the click,
+        // the actual bug: the button had onclick="event.stopPropagation()"
+        // before, which silently broke copying entirely on this page).
+        if (e.target.closest('.copy-asin-btn')) { return; }
+
         var openBtn = e.target.closest('.qi-open-btn');
         if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
 
         var buyBtn = e.target.closest('.qi-buy-btn');
         if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null); return; }
 
-        var rejectBtn = e.target.closest('.qi-reject-btn');
-        if (rejectBtn) { resolve(rejectBtn.dataset.asin, 'rejected', null); return; }
-
         var qrBtn = e.target.closest('.qi-quickreject-btn');
-        if (qrBtn) { e.preventDefault(); resolve(qrBtn.dataset.asin, 'rejected', qrBtn.dataset.reason); return; }
+        if (qrBtn) {
+            e.preventDefault();
+            var reason = qrBtn.dataset.reason;
+            // "Other" must still capture free text (2026-09-04 -- a
+            // reject reason is useful information, not just a category
+            // tick) -- the other quick-reject reasons are already
+            // specific enough on their own.
+            if (reason === 'OTHER') {
+                var note = window.prompt('Why are you rejecting this? (required)');
+                if (!note || !note.trim()) { return; }
+                resolve(qrBtn.dataset.asin, 'rejected', reason, note.trim());
+                return;
+            }
+            resolve(qrBtn.dataset.asin, 'rejected', reason);
+            return;
+        }
     });
 
     // Detail panel's own Review Actions form (see
@@ -283,7 +348,28 @@ document.addEventListener('DOMContentLoaded', function () {
         var asin = form.querySelector('[name="asin"]').value;
         var decision = e.submitter ? e.submitter.value : form.querySelector('[name="decision"]').value;
         var note = form.querySelector('[name="reason"]');
-        resolve(asin, decision, null, note ? note.value : '');
+        var categorySelect = form.querySelector('[name="reason_category"]');
+        var category = categorySelect ? categorySelect.value : '';
+
+        // Avoid must always carry a reason (2026-09-04) -- a bare
+        // rejection with no category was useful information lost for
+        // good; "past rejections of this ASIN" elsewhere in this same
+        // panel reads exactly this reason back later. Only enforced for
+        // 'rejected' -- Buy/Watch/Unsure don't need a reason the same way.
+        if (decision === 'rejected') {
+            if (!category) {
+                alert('Please choose a reason before rejecting this item.');
+                if (categorySelect) categorySelect.focus();
+                return;
+            }
+            if (category === 'OTHER' && (!note || !note.value.trim())) {
+                alert('Please add a note explaining "Other".');
+                if (note) note.focus();
+                return;
+            }
+        }
+
+        resolve(asin, decision, category || null, note ? note.value : '');
     });
 });
 </script>

@@ -425,6 +425,10 @@ class ReviewQueueService:
             "confidence": record.confidence,
             "recommendation": record.recommendation,
             "monthly_sales": record.monthly_sales,
+            # ProductRecord's own confirmed-sales-drops column (2026-09-04
+            # -- was already stored, just never threaded into this dict,
+            # so it never reached the Review Queue detail panel).
+            "sales_drops_30d": record.sales_drops_30d,
             "when": record.scanned_at,
             "parsed_report": parsed_report,
             "reasoning": {},
@@ -515,6 +519,17 @@ class ReviewQueueService:
             # panel simply omits the Confidence line for a VA-only item.
             "confidence": None,
             "parsed_report": {},
+            # Full raw VerdictService.compute_metrics blob (2026-09-04) --
+            # already stored on lead.keepa_metrics at analysis time (no
+            # new computation/API call), just never threaded past the
+            # few subfields (sourcing_classification/source_check/
+            # similar_rejections) already pulled out above. The unified
+            # detail panel's "Price & Demand History" section reads this
+            # for price-drop counts / viable-days-90d / etc. -- the same
+            # data review_lead_detail.html's _verdict_metrics.html panel
+            # already shows, just also surfaced here so you don't have
+            # to jump to the old per-lead page to see it.
+            "keepa_metrics": metrics,
             "reasoning": sourcing_classification.get("reasoning") or {},
             "rationale": lead.rationale,
             "sourcing_tag": atlas_sourcing_tag or lead.sourcing_type,
@@ -689,6 +704,7 @@ class ReviewQueueService:
             "confidence": record.confidence,
             "recommendation": record.recommendation,
             "monthly_sales": record.monthly_sales,
+            "sales_drops_30d": record.sales_drops_30d,
             "when": listing.detected_at,
             "parsed_report": parsed_report,
             "reasoning": reasoning,
@@ -1021,6 +1037,17 @@ class ReviewQueueService:
             "roi": display.get("roi"),
             "freshness": display.get("freshness"),
             "review_reason_category": display.get("review_reason_category"),
+            "monthly_sales": display.get("monthly_sales"),
+            "sales_drops_30d": display.get("sales_drops_30d"),
+            # Scan/competitor-side "why this score" breakdown (2026-09-04)
+            # -- OpportunityEngine's trend/score_breakdown/confidence_
+            # breakdown, already computed and stored on ProductRecord.
+            # report_json at scan time (see products.html, which already
+            # shows the identical data) and already parsed into every
+            # source_item above -- just never surfaced on the merged item
+            # itself before, so the unified detail panel had no way to
+            # show it. Empty {} for a lead-only item (no ProductRecord).
+            "parsed_report": display.get("parsed_report") or {},
             "historical_sourcing_evidence": historical_sourcing_evidence,
             "va_info": (
                 {
@@ -1032,6 +1059,7 @@ class ReviewQueueService:
                     "inventory_detail": va_item.get("inventory_detail"),
                     "similar_rejections": va_item.get("similar_rejections"),
                     "buyability_blocker": va_item.get("buyability_blocker"),
+                    "keepa_metrics": va_item.get("keepa_metrics"),
                 }
                 if va_item else None
             ),

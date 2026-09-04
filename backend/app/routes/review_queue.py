@@ -121,6 +121,16 @@ VIEW_LABELS = {
 # the brief's own source-type names for display.
 SOURCE_TYPE_LABELS = {"scan": "Atlas", "competitor": "Competitor", "lead": "VA"}
 
+# Source-store (marketplace) filter, added 2026-09-04 -- every merged
+# item already carries best_source_marketplace (review_queue.html's
+# flag emoji row uses the same 5 values), just exposed as a filter too.
+MARKETPLACE_LABELS = {"UK": "UK", "DE": "Germany", "FR": "France", "ES": "Spain", "IT": "Italy"}
+
+# Competitor filter, added 2026-09-04 -- filters to items whose
+# competitor_info.seller matches one of the sellers actually present
+# in the CURRENT unfiltered queue (not every TrackedSeller ever added,
+# which would list sellers with nothing outstanding right now).
+
 # Sort control (UI redesign pass, 2026-09-03) -- exposes
 # ReviewQueueService.SORT_OPTIONS in the UI itself; the values are
 # passed straight through to list_queue_items(sort=...), nothing new
@@ -140,7 +150,13 @@ DECISION_BUTTONS = [
     ("approved", "Buy", "success", "bi-check-circle-fill"),
     ("watch", "Watch", "warning", "bi-eye-fill"),
     ("rejected", "Avoid", "danger", "bi-x-circle-fill"),
-    ("need_more_info", "Need More Info", "secondary", "bi-question-circle-fill"),
+    # Renamed from "Need More Info" 2026-09-04 -- that label read as an
+    # action that would SHOW you more info (open something), when it's
+    # actually a fourth resolution decision (same "leaves the queue"
+    # behaviour as Buy/Watch/Avoid) for "I don't have enough to decide
+    # either way yet". Stored value unchanged (still "need_more_info",
+    # same DECISION_VALUES/dashboard breakdown), only the button text.
+    ("need_more_info", "Unsure", "secondary", "bi-question-circle-fill"),
 ]
 
 # Quick Reject menu (UI redesign pass, 2026-09-03) -- one-click reasons
@@ -167,6 +183,7 @@ QUICK_REJECT_REASONS = [
 @router.get("/review-queue")
 def review_queue_page(
     request: Request, sort: str = "when_desc", view: str = "all", source: str = "all", q: str = "",
+    marketplace: str = "all", competitor: str = "all",
 ):
     """
     Unified Review Queue (Command Centre UI build, 2026-09-03; refined
@@ -190,6 +207,14 @@ def review_queue_page(
     secondary filter (section 20), same values already on every merged
     item's `sources` list.
 
+    marketplace: "all" (default) | "UK" | "DE" | "FR" | "ES" | "IT" --
+    filters on best_source_marketplace, added 2026-09-04.
+
+    competitor: "all" (default) | a seller nickname -- filters to items
+    whose competitor_info.seller matches, added 2026-09-04. Only sellers
+    with something outstanding right now appear in the dropdown (built
+    off all_items below, before any filter is applied).
+
     q: free-text search (UI redesign pass, 2026-09-03) -- matched
     case-insensitively against title/ASIN on the already-fetched items
     list, no new query/index. Purely a display filter, same as view/
@@ -198,9 +223,17 @@ def review_queue_page(
     view = view if view in VIEW_FILTERS else "all"
     source = source if source in SOURCE_TYPE_LABELS else "all"
     sort = sort if sort in SORT_LABELS else "when_desc"
+    marketplace = marketplace if marketplace in MARKETPLACE_LABELS else "all"
 
     all_items = ReviewQueueService.list_queue_items(sort=sort)
     summary = ReviewQueueService.queue_priority_summary()
+
+    competitor_names = sorted({
+        (i.get("competitor_info") or {}).get("seller").nickname
+        for i in all_items
+        if (i.get("competitor_info") or {}).get("seller")
+    })
+    competitor = competitor if competitor in competitor_names else "all"
 
     items = all_items
     if view != "all":
@@ -208,6 +241,14 @@ def review_queue_page(
         items = [i for i in items if wanted in i["views"]]
     if source != "all":
         items = [i for i in items if source in i["sources"]]
+    if marketplace != "all":
+        items = [i for i in items if i.get("best_source_marketplace") == marketplace]
+    if competitor != "all":
+        items = [
+            i for i in items
+            if (i.get("competitor_info") or {}).get("seller")
+            and i["competitor_info"]["seller"].nickname == competitor
+        ]
     if q.strip():
         needle = q.strip().lower()
         items = [
@@ -227,6 +268,10 @@ def review_queue_page(
             "view_labels": VIEW_LABELS,
             "source": source,
             "source_type_labels": SOURCE_TYPE_LABELS,
+            "marketplace": marketplace,
+            "marketplace_labels": MARKETPLACE_LABELS,
+            "competitor": competitor,
+            "competitor_names": competitor_names,
             "watched_asins": ProductRepository.get_watched_asins(),
             "sort": sort,
             "sort_labels": SORT_LABELS,

@@ -92,9 +92,35 @@
             </div>
         </div>
         {% if item.va_info and item.va_info.rationale %}
-        <div class="small mt-2">
-            <div class="text-muted">Reasoning</div>
-            {{ item.va_info.rationale }}
+        <div class="mt-2">
+            <div class="text-muted small mb-1">Reasoning</div>
+            {# Was a single unbroken paragraph before (2026-09-04 fix) --
+               the raw rationale's own "+"/"!" line prefixes were never
+               parsed, so multi-sentence reasoning rendered as one dense
+               block with no line breaks. Same split-and-style treatment
+               review_lead_detail.html's _verdict_metrics.html "Why
+               {verdict}" panel already uses: "+" = support (green
+               check), "!" = risk (amber warning), anything else =
+               neutral (grey dot). highlight_figures is the same filter
+               that panel uses to bold £/%% figures inline. #}
+            <ul class="list-unstyled small mb-0">
+                {% for line in item.va_info.rationale.split("\n") %}
+                    {% set raw = line.strip() %}
+                    {% if raw.startswith("+") %}
+                        {% set icon, color, point = "bi-check-circle-fill", "#1e7a41", raw[1:].strip() %}
+                    {% elif raw.startswith("!") %}
+                        {% set icon, color, point = "bi-exclamation-triangle-fill", "#96660a", raw[1:].strip() %}
+                    {% else %}
+                        {% set icon, color, point = "bi-dot", "#a7aeb8", raw.lstrip("-*").strip() %}
+                    {% endif %}
+                    {% if point %}
+                    <li class="d-flex align-items-start {{ '' if loop.first else 'border-top' }} py-1" style="gap:.5rem;border-color:rgba(0,0,0,.06)!important;">
+                        <i class="bi {{ icon }} mt-1" style="color:{{ color }};flex-shrink:0;"></i>
+                        <span>{{ point | highlight_figures }}</span>
+                    </li>
+                    {% endif %}
+                {% endfor %}
+            </ul>
         </div>
         {% endif %}
     </div>
@@ -106,6 +132,69 @@
     <div class="small text-danger mt-1"><i class="bi bi-x-circle"></i> Buyability issue: {{ item.va_info.buyability_blocker }}</div>
     {% endif %}
 </div>
+
+<!-- WHY THIS SCORE (scan/competitor items -- same trend/score/confidence
+     breakdown products.html shows, surfaced here too, 2026-09-04) -->
+{% if item.parsed_report and item.parsed_report.trend %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-graph-up"></i> Trend &amp; Sales Signals</div>
+    <div class="p-2 rounded border">
+        <div class="row small g-2 mb-2">
+            <div class="col-6">
+                <div class="text-muted">Sales evidence</div>
+                <div>
+                    {% if item.monthly_sales %}
+                        {{ item.monthly_sales }}/mo confirmed
+                        {%- if item.sales_drops_30d %} <span class="text-muted">({{ item.sales_drops_30d }} rank drops, 30d)</span>{% endif %}
+                    {% elif item.sales_drops_30d %}
+                        {# No Keepa-confirmed monthly figure -- fall back to sales
+                           rank drops (Keepa's own "a sale probably happened" proxy,
+                           the same evidence the score factors line below already
+                           cites) rather than a bare "no data" message, 2026-09-04. #}
+                        <span class="text-muted">{{ item.sales_drops_30d }} rank drops (30d), no confirmed count</span>
+                    {% else %}
+                        <span class="text-muted">No sales evidence</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Price vs 90d avg</div>
+                <div>{{ "%+.1f"|format(item.parsed_report.trend.price_change) }}%</div>
+            </div>
+        </div>
+        <div class="small text-muted">
+            Offers {{ "%+.1f"|format(item.parsed_report.trend.offer_change) }}% &middot;
+            Sales rank {{ "%+.1f"|format(item.parsed_report.trend.rank_change) }}% (at scan time)
+        </div>
+        {% if item.parsed_report.score_breakdown %}
+        <div class="mt-2">
+            <div class="text-muted small">Score factors ({{ item.parsed_report.score }}/100)</div>
+            <ul class="list-unstyled mb-0 small">
+                {% for f in item.parsed_report.score_breakdown %}
+                <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
+                    <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-x-circle' }}"></i>
+                    {{ f.label }}{% if f.passed %} <strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        {% if item.parsed_report.confidence_breakdown %}
+        <div class="mt-2">
+            <div class="text-muted small">Confidence factors ({{ item.parsed_report.confidence }}/100)</div>
+            <ul class="list-unstyled mb-0 small">
+                {% for f in item.parsed_report.confidence_breakdown %}
+                <li class="{{ 'text-danger' if f.triggered else 'text-success' }}">
+                    <i class="bi {{ 'bi-exclamation-triangle-fill' if f.triggered else 'bi-check-circle-fill' }}"></i>
+                    {{ f.label }}{% if f.triggered %} <strong>({{ f.points }})</strong>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 
 <!-- VA SUBMISSION (section 17) -->
 {% if item.va_info %}
@@ -126,6 +215,56 @@
             <span class="badge bg-{{ 'success' if item.va_info.verdict == 'BUY' else ('warning text-dark' if item.va_info.verdict == 'WATCH' else 'secondary') }}">
                 {{ item.va_info.verdict or "Pending" }}
             </span>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- PRICE & DEMAND HISTORY (VA lead items -- restores the price-drop/
+     viable-days-90d/demand detail review_lead_detail.html's
+     _verdict_metrics.html panel already computes and stores on
+     lead.keepa_metrics, just not previously surfaced in this unified
+     panel, 2026-09-04) -->
+{% set km = item.va_info.keepa_metrics if item.va_info else None %}
+{% if km and (km.price_drop_count_90d is not none or km.viable_days_90d) %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-calendar-range"></i> Price &amp; Demand History</div>
+    <div class="p-2 rounded border">
+        <div class="row small g-2 mb-2">
+            <div class="col-6">
+                <div class="text-muted">Price drops (30 / 90 / 180d)</div>
+                <div>{{ km.price_drop_count_30d if km.price_drop_count_30d is not none else "--" }} / {{ km.price_drop_count_90d if km.price_drop_count_90d is not none else "--" }} / {{ km.price_drop_count_180d if km.price_drop_count_180d is not none else "--" }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Sales rank drops (30d)</div>
+                <div>{{ km.sales_drops_30d if km.sales_drops_30d is not none else "--" }}</div>
+            </div>
+        </div>
+        {% if km.viable_days_90d and km.viable_days_90d.priced_days %}
+        <div class="row small g-2 mb-2">
+            <div class="col-6">
+                <div class="text-muted">Days at 25%+ ROI (last 90d)</div>
+                <div>{{ km.viable_days_90d.days_at_target_roi }} / {{ km.viable_days_90d.priced_days }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Days at 10%+ ROI (last 90d)</div>
+                <div>{{ km.viable_days_90d.days_at_min_roi }} / {{ km.viable_days_90d.priced_days }}</div>
+            </div>
+        </div>
+        {% endif %}
+        <div class="row small g-2">
+            <div class="col-4">
+                <div class="text-muted">30d avg price</div>
+                <div>{% if km.price_avg_30d %}&pound;{{ "%.2f"|format(km.price_avg_30d) }}{% else %}--{% endif %}</div>
+            </div>
+            <div class="col-4">
+                <div class="text-muted">90d avg price</div>
+                <div>{% if km.price_avg_90d %}&pound;{{ "%.2f"|format(km.price_avg_90d) }}{% else %}--{% endif %}</div>
+            </div>
+            <div class="col-4">
+                <div class="text-muted">Offers now (90d avg)</div>
+                <div>{{ km.offers_now if km.offers_now is not none else "--" }} ({{ km.offers_90d_avg if km.offers_90d_avg is not none else "--" }})</div>
+            </div>
         </div>
     </div>
 </div>
@@ -216,7 +355,19 @@
     <div class="text-uppercase text-muted small fw-bold mb-2">Review Actions</div>
     <form class="qi-detail-actions-form" method="post" action="/review-queue/resolve">
         <input type="hidden" name="asin" value="{{ item.asin }}">
-        <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" placeholder="Add a note (optional)"></textarea>
+        <!-- Reason category (2026-09-04) -- only ENFORCED for Avoid (see
+             review_queue.html's submit handler): a rejection with no
+             reason at all was useful information lost for good, since
+             this is exactly what feeds "past rejections of this ASIN"
+             elsewhere in this same panel. Left optional for Buy/Watch/
+             Unsure -- a reason doesn't mean the same thing for those. -->
+        <select name="reason_category" class="form-select form-select-sm mb-2">
+            <option value="">Reason (required to Avoid)...</option>
+            {% for value in review_reason_categories %}
+            <option value="{{ value }}">{{ review_reason_category_labels.get(value, value) }}</option>
+            {% endfor %}
+        </select>
+        <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" placeholder="Add a note (required if reason is Other)"></textarea>
         <div class="d-grid gap-2">
             {% for value, label, color, icon in decision_buttons %}
             <button type="submit" name="decision" value="{{ value }}" class="btn btn-{{ color }}">
