@@ -104,6 +104,23 @@ migrate_table("oa_source_runs", {
     "serper_search_count": "INTEGER DEFAULT 0",
 })
 
+def create_index_if_missing(index_name: str, table_name: str, column: str):
+    cur.execute("SELECT name FROM sqlite_master WHERE type='index' AND name=?", (index_name,))
+    if cur.fetchone():
+        print(f"Index already present, skipping: {index_name}")
+        return
+    print(f"Creating index: {index_name} ON {table_name}({column})")
+    cur.execute(f"CREATE INDEX {index_name} ON {table_name} ({column})")
+
+
+# 2026-09-04 perf fix -- ProductRepository.list_latest() ORDER BYs the
+# whole table on scanned_at on every call; without this index SQLite
+# has to load and sort every row (17,000+ and growing) in memory each
+# time. See that method's own docstring for the caching fix alongside
+# this -- both were needed, the cache alone still pays this cost once
+# per TTL window.
+create_index_if_missing("ix_product_records_scanned_at", "product_records", "scanned_at")
+
 conn.commit()
 conn.close()
 

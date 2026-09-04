@@ -92,8 +92,13 @@ class ProductRecord(Base):
     # ProductRepository.is_notable.
     sales_drops_30d: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Indexed 2026-09-04 (perf fix) -- list_latest() ORDER BYs the whole
+    # table on this column on every call; without an index SQLite has to
+    # load and sort all 17,000+ rows in memory every time. New index
+    # only takes effect for a fresh DB via create_all() -- the live DB
+    # needs the one-off `CREATE INDEX` migration run separately.
     scanned_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
     )
 
     # "up", "down", or NULL/None (not reviewed yet). Set via the

@@ -10,6 +10,7 @@ from app.database.models import (
 )
 
 
+
 class ProductRepository:
     """
     Handles saving opportunity scan results to the database and
@@ -140,9 +141,57 @@ class ProductRepository:
     }
 
     @staticmethod
+    def get_latest_per_asin() -> list:
+        """
+        The most recent ProductRecord per ASIN, newest-first -- the
+        same "load everything, dedupe in Python" work list_latest()
+        below does internally, pulled out so a caller that needs to
+        run several DIFFERENT review_filter passes in a row (see
+        ReviewQueueService.list_leads/list_consider_leads) can compute
+        it ONCE and pass the result into list_latest()'s own
+        `latest_records` parameter, instead of each pass independently
+        re-querying and re-deduping the whole table (2026-09-04 perf
+        fix -- profiled at 5-6 full-table reloads, ~90,000 ORM row
+        hydrations, 9+ seconds for one Review Queue page load before
+        this).
+
+        Deliberately NOT cached/memoized here -- an earlier version of
+        this fix used a short-TTL cross-request cache, but that broke
+        "resolve an item, then immediately re-check" (a real test
+        failure: test_unified_review_queue.py) because ProductRecord.
+        review gets mutated from more than one place (ProductRepository.
+        set_review/set_review_bulk, but ALSO eu_a2a_freshness_service.py
+        marking a record "stale_auto" directly) -- chasing every write
+        site to invalidate a global cache is fragile. Scoping reuse to
+        a single caller's own call stack (an explicit parameter, not
+        global state) gets the same win with no staleness risk at all.
+        """
+        db = SessionLocal()
+        try:
+            all_records = (
+                db.query(ProductRecord)
+                .order_by(ProductRecord.scanned_at.desc())
+                .all()
+            )
+
+            seen = set()
+            latest = []
+
+            for record in all_records:
+                if record.asin in seen:
+                    continue
+
+                seen.add(record.asin)
+                latest.append(record)
+
+            return latest
+        finally:
+            db.close()
+
+    @staticmethod
     def list_latest(page: int = 1, page_size: int = 25, profitable_only: bool = None,
                      brand: str = None, sort: str = "scanned_desc", today_only: bool = None,
-                     review_filter: str = None):
+                     review_filter: str = None, latest_records: list = None):
         """
         Returns (records_for_this_page, total_count) using the most
         recent scan record per ASIN (not every historical row).
@@ -192,111 +241,102 @@ class ProductRepository:
         OpportunityEngine.analyse's LOW_SCORE branch) -- genuinely
         viable leads with real sales evidence that a weak composite
         score alone knocked out of CONSIDER/BUY.
+
+        latest_records: optional pre-computed result of
+        get_latest_per_asin() -- pass this when calling list_latest()
+        several times in a row with different review_filter values
+        (see that method's own docstring) to avoid re-querying/re-
+        deduping the whole table on every call. None (the default)
+        queries fresh, exactly as before -- every existing caller is
+        unaffected.
         """
-        db = SessionLocal()
+        if latest_records is not None:
+            latest = list(latest_records)
+        else:
+            latest = ProductRepository.get_latest_per_asin()
 
-        try:
-            all_records = (
-                db.query(ProductRecord)
-                .order_by(ProductRecord.scanned_at.desc())
-                .all()
-            )
+        if profitable_only is True:
+            latest = [r for r in latest if r.profit > 0 or r.profit_90d > 0]
+        elif profitable_only is False:
+            latest = [r for r in latest if r.profit <= 0 and r.profit_90d <= 0]
 
-            seen = set()
-            latest = []
-
-            for record in all_records:
-                if record.asin in seen:
-                    continue
-
-                seen.add(record.asin)
-                latest.append(record)
-
-            if profitable_only is True:
-                latest = [r for r in latest if r.profit > 0 or r.profit_90d > 0]
-            elif profitable_only is False:
-                latest = [r for r in latest if r.profit <= 0 and r.profit_90d <= 0]
-
-            if review_filter == "notable":
-                latest = [
-                    r for r in latest if not r.review
-                    and ProductRepository.is_notable(
-                        r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
-                    )
-                ]
-            elif review_filter == "consider":
-                latest = [r for r in latest if not r.review and r.recommendation == "CONSIDER"]
-            elif review_filter == "peak":
-                # Riskier "peak price window" leads -- see
-                # OpportunityEngine.PEAK_WINDOW. Deliberately its own
-                # filter, not folded into "notable" or "consider",
-                # since is_notable's roi/roi_90d checks never see these
-                # (they only clear the bar at the 90-day PEAK price).
-                latest = [r for r in latest if not r.review and r.recommendation == "PEAK_WINDOW"]
-            elif review_filter == "low_confidence":
-                # Genuinely viable, CONSIDER-tier-scoring leads a
-                # confidence penalty knocked out of CONSIDER/BUY -- see
-                # OpportunityEngine.analyse's LOW_CONFIDENCE branch
-                # (2026-09-03). Its own filter for the same reason
-                # "peak" is: is_notable() explicitly excludes it (see
-                # that method's own comment), so it would never surface
-                # via "notable" no matter how good its ROI looks.
-                latest = [r for r in latest if not r.review and r.recommendation == "LOW_CONFIDENCE"]
-            elif review_filter == "low_score":
-                # Genuinely viable leads with real sales evidence a weak
-                # composite score knocked out of CONSIDER/BUY -- see
-                # OpportunityEngine.analyse's LOW_SCORE branch
-                # (2026-09-03). Same reasoning as "low_confidence" above.
-                latest = [r for r in latest if not r.review and r.recommendation == "LOW_SCORE"]
-            elif review_filter == "any":
-                latest = [r for r in latest if not r.review]
-            elif review_filter == "consider_worthwhile":
-                latest = [
-                    r for r in latest
-                    if not r.review
-                    and r.recommendation == "CONSIDER"
-                    and (r.profit > 0 or r.profit_90d > 0)
-                    and (
-                        r.monthly_sales > 0
-                        or r.sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
-                    )
-                    and not ProductRepository.is_notable(
-                        r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
-                    )
-                ]
-
-            if brand:
-                latest = [r for r in latest if r.brand.lower() == brand.lower()]
-
-            if today_only is not None:
-                # scanned_at is stored as UTC but comes back timezone-NAIVE
-                # from SQLite (confirmed: tzinfo is None even though it was
-                # written via datetime.now(timezone.utc)) -- this cutoff
-                # must be naive too, or the comparison below raises
-                # "can't compare offset-naive and offset-aware datetimes".
-                start_of_today = datetime.now(timezone.utc).replace(
-                    hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+        if review_filter == "notable":
+            latest = [
+                r for r in latest if not r.review
+                and ProductRepository.is_notable(
+                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
                 )
+            ]
+        elif review_filter == "consider":
+            latest = [r for r in latest if not r.review and r.recommendation == "CONSIDER"]
+        elif review_filter == "peak":
+            # Riskier "peak price window" leads -- see
+            # OpportunityEngine.PEAK_WINDOW. Deliberately its own
+            # filter, not folded into "notable" or "consider",
+            # since is_notable's roi/roi_90d checks never see these
+            # (they only clear the bar at the 90-day PEAK price).
+            latest = [r for r in latest if not r.review and r.recommendation == "PEAK_WINDOW"]
+        elif review_filter == "low_confidence":
+            # Genuinely viable, CONSIDER-tier-scoring leads a
+            # confidence penalty knocked out of CONSIDER/BUY -- see
+            # OpportunityEngine.analyse's LOW_CONFIDENCE branch
+            # (2026-09-03). Its own filter for the same reason
+            # "peak" is: is_notable() explicitly excludes it (see
+            # that method's own comment), so it would never surface
+            # via "notable" no matter how good its ROI looks.
+            latest = [r for r in latest if not r.review and r.recommendation == "LOW_CONFIDENCE"]
+        elif review_filter == "low_score":
+            # Genuinely viable leads with real sales evidence a weak
+            # composite score knocked out of CONSIDER/BUY -- see
+            # OpportunityEngine.analyse's LOW_SCORE branch
+            # (2026-09-03). Same reasoning as "low_confidence" above.
+            latest = [r for r in latest if not r.review and r.recommendation == "LOW_SCORE"]
+        elif review_filter == "any":
+            latest = [r for r in latest if not r.review]
+        elif review_filter == "consider_worthwhile":
+            latest = [
+                r for r in latest
+                if not r.review
+                and r.recommendation == "CONSIDER"
+                and (r.profit > 0 or r.profit_90d > 0)
+                and (
+                    r.monthly_sales > 0
+                    or r.sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
+                )
+                and not ProductRepository.is_notable(
+                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
+                )
+            ]
 
-                if today_only:
-                    latest = [r for r in latest if r.scanned_at and r.scanned_at >= start_of_today]
-                else:
-                    latest = [r for r in latest if not r.scanned_at or r.scanned_at < start_of_today]
+        if brand:
+            latest = [r for r in latest if r.brand.lower() == brand.lower()]
 
-            key, reverse = ProductRepository.SORT_OPTIONS.get(
-                sort, ProductRepository.SORT_OPTIONS["scanned_desc"]
+        if today_only is not None:
+            # scanned_at is stored as UTC but comes back timezone-NAIVE
+            # from SQLite (confirmed: tzinfo is None even though it was
+            # written via datetime.now(timezone.utc)) -- this cutoff
+            # must be naive too, or the comparison below raises
+            # "can't compare offset-naive and offset-aware datetimes".
+            start_of_today = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0, tzinfo=None
             )
-            latest.sort(key=key, reverse=reverse)
 
-            total_count = len(latest)
+            if today_only:
+                latest = [r for r in latest if r.scanned_at and r.scanned_at >= start_of_today]
+            else:
+                latest = [r for r in latest if not r.scanned_at or r.scanned_at < start_of_today]
 
-            start = max(page - 1, 0) * page_size
-            end = start + page_size
+        key, reverse = ProductRepository.SORT_OPTIONS.get(
+            sort, ProductRepository.SORT_OPTIONS["scanned_desc"]
+        )
+        latest.sort(key=key, reverse=reverse)
 
-            return latest[start:end], total_count
+        total_count = len(latest)
 
-        finally:
-            db.close()
+        start = max(page - 1, 0) * page_size
+        end = start + page_size
+
+        return latest[start:end], total_count
 
     @staticmethod
     def get_distinct_brands() -> list:

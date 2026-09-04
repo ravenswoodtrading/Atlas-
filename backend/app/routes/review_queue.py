@@ -175,6 +175,15 @@ QUICK_REJECT_REASONS = [
     ("ALREADY_BOUGHT", "Already bought"),
     ("PRICE_CHANGED", "Price changed"),
     ("INSUFFICIENT_PROFIT", "Margin too low"),
+    # Added 2026-09-04, user-requested -- all four map onto EXISTING
+    # REVIEW_REASON_CATEGORIES values (OUT_OF_STOCK is the one genuinely
+    # new category, added there; the other three already existed but
+    # weren't reachable from this quick menu, only the detail panel's
+    # full dropdown).
+    ("OUT_OF_STOCK", "Out of stock"),
+    ("PRODUCT_RISK", "Risky listing"),
+    ("INSUFFICIENT_SALES", "Doesn't sell enough"),
+    ("TOO_MUCH_STOCK", "Too much FBA stock"),
     ("NOT_INTERESTED", "Don't want"),
     ("OTHER", "Other..."),
 ]
@@ -225,8 +234,15 @@ def review_queue_page(
     sort = sort if sort in SORT_LABELS else "when_desc"
     marketplace = marketplace if marketplace in MARKETPLACE_LABELS else "all"
 
-    all_items = ReviewQueueService.list_queue_items(sort=sort)
-    summary = ReviewQueueService.queue_priority_summary()
+    # Shared once (2026-09-04 perf fix) -- list_queue_items() and
+    # queue_priority_summary() each need the same "latest ProductRecord
+    # per ASIN" snapshot; computing it once here instead of letting each
+    # reload the whole table independently roughly halves this route's
+    # remaining query cost. See ProductRepository.get_latest_per_asin's
+    # own docstring for the full history.
+    latest_records = ProductRepository.get_latest_per_asin()
+    all_items = ReviewQueueService.list_queue_items(sort=sort, latest_records=latest_records)
+    summary = ReviewQueueService.queue_priority_summary(latest_records=latest_records)
 
     competitor_names = sorted({
         (i.get("competitor_info") or {}).get("seller").nickname

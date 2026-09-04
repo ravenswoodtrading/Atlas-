@@ -189,6 +189,12 @@ SOURCE_FILTER_LABELS = {
 # source offer disappeared" without parsing free text (section 11).
 REVIEW_REASON_CATEGORIES = (
     "NO_BUYABLE_OFFER",
+    # Added 2026-09-04, user-requested -- distinct from NO_BUYABLE_OFFER
+    # (which means "nothing to buy from the EU source side"): this is
+    # "there's nothing to sell it INTO right now" (Amazon UK itself is
+    # out of stock on the listing) -- a different, temporary condition,
+    # not necessarily worth a permanent reject the way the others are.
+    "OUT_OF_STOCK",
     "PRICE_CHANGED",
     "NO_LONGER_PROFITABLE",
     "ALREADY_BOUGHT",
@@ -215,10 +221,11 @@ REVIEW_REASON_CATEGORIES = (
 
 REVIEW_REASON_CATEGORY_LABELS = {
     "NO_BUYABLE_OFFER": "No buyable offer",
+    "OUT_OF_STOCK": "Out of stock",
     "PRICE_CHANGED": "Price changed",
     "NO_LONGER_PROFITABLE": "No longer profitable",
     "ALREADY_BOUGHT": "Already bought",
-    "TOO_MUCH_STOCK": "Too much stock",
+    "TOO_MUCH_STOCK": "Too much FBA stock",
     "TOO_EXPENSIVE": "Too expensive",
     "IMPORT_DUTY": "Over import duty",
     "WRONG_MATCH": "Wrong match",
@@ -733,9 +740,25 @@ class ReviewQueueService:
         }
 
     @staticmethod
-    def list_leads(sort: str = "when_desc") -> list:
+    def list_leads(sort: str = "when_desc", latest_records: list = None) -> list:
+        # Computed ONCE and passed into every list_latest() call below
+        # (2026-09-04 perf fix) -- these 4 calls used to each
+        # independently reload and re-dedupe the ENTIRE product_records
+        # table (17,000+ rows) from scratch; profiled at ~90,000 ORM row
+        # hydrations and 9+ seconds for one Review Queue page load.
+        # Behavior is identical -- see ProductRepository.get_latest_per_
+        # asin's own docstring for why this is request-scoped (a plain
+        # local variable), not a cross-request cache.
+        #
+        # latest_records: optional, pass this when a caller is ALSO
+        # about to call list_consider_leads() (see list_queue_items()
+        # below) so the two don't each independently reload the table.
+        if latest_records is None:
+            latest_records = ProductRepository.get_latest_per_asin()
+
         scan_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="notable", sort="scanned_desc",
+            latest_records=latest_records,
         )
 
         # Riskier "peak price window" leads (see
@@ -746,6 +769,7 @@ class ReviewQueueService:
         # they never affect is_notable/Discord's own trust bar.
         peak_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="peak", sort="scanned_desc",
+            latest_records=latest_records,
         )
 
         # Genuinely viable (real ROI at today's/90d-avg price, not a
@@ -758,6 +782,7 @@ class ReviewQueueService:
         # anywhere despite often carrying real, strong ROI.
         low_confidence_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="low_confidence", sort="scanned_desc",
+            latest_records=latest_records,
         )
 
         # Genuinely viable, real-sales-evidence leads a weak composite
@@ -766,6 +791,7 @@ class ReviewQueueService:
         # Same reasoning/merge pattern as low_confidence_records above.
         low_score_records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_LEADS, review_filter="low_score", sort="scanned_desc",
+            latest_records=latest_records,
         )
 
         leads = []
@@ -840,7 +866,7 @@ class ReviewQueueService:
         return leads
 
     @staticmethod
-    def list_consider_leads(sort: str = "when_desc") -> list:
+    def list_consider_leads(sort: str = "when_desc", latest_records: list = None) -> list:
         """
         "Consider" tab (2026-08-19) -- CONSIDER-tier leads that are
         profitable (today OR the 90-day typical price -- "anything
@@ -864,6 +890,7 @@ class ReviewQueueService:
         records, _ = ProductRepository.list_latest(
             page=1, page_size=MAX_CONSIDER_LEADS,
             review_filter="consider_worthwhile", sort="scanned_desc",
+            latest_records=latest_records,
         )
 
         leads = [ReviewQueueService._scan_lead_dict(record) for record in records]
@@ -1164,7 +1191,7 @@ class ReviewQueueService:
         return ReviewQueueService._build_merged_item(asin, source_dicts)
 
     @staticmethod
-    def list_queue_items(sort: str = "when_desc") -> list:
+    def list_queue_items(sort: str = "when_desc", latest_records: list = None) -> list:
         """
         The unified, deduplicated Review Queue -- BUY_NOW/VA_TO_REVIEW/
         BORDERLINE tier leads (list_leads() + list_consider_leads(),
@@ -1175,7 +1202,16 @@ class ReviewQueueService:
         capability the next (UI) task will build the actual queue page
         against; /review-queue and review_queue.html are untouched.
         """
-        leads = ReviewQueueService.list_leads(sort=sort) + ReviewQueueService.list_consider_leads(sort=sort)
+        # Shared once across both calls (2026-09-04 perf fix) -- see
+        # list_leads' own docstring. latest_records may already be
+        # supplied by a caller (e.g. review_queue_page(), which also
+        # needs queue_priority_summary() -- see that route).
+        if latest_records is None:
+            latest_records = ProductRepository.get_latest_per_asin()
+        leads = (
+            ReviewQueueService.list_leads(sort=sort, latest_records=latest_records)
+            + ReviewQueueService.list_consider_leads(sort=sort, latest_records=latest_records)
+        )
         items = ReviewQueueService.merge_by_asin(leads)
 
         rank = {p: i for i, p in enumerate(QUEUE_PRIORITIES)}
@@ -1184,7 +1220,7 @@ class ReviewQueueService:
         return items
 
     @staticmethod
-    def queue_priority_summary() -> dict:
+    def queue_priority_summary(latest_records: list = None) -> dict:
         """
         Counts of the deduplicated queue by unified VIEW membership,
         plus how many raw source rows got merged away -- additive
@@ -1202,7 +1238,15 @@ class ReviewQueueService:
         legitimately exceed unique_items whenever any item has more than
         one view, which is expected, not a bug.
         """
-        raw_leads = ReviewQueueService.list_leads() + ReviewQueueService.list_consider_leads()
+        # See list_leads' own docstring (2026-09-04 perf fix) -- shared
+        # with list_queue_items() by review_queue_page() when both are
+        # needed for the same page render.
+        if latest_records is None:
+            latest_records = ProductRepository.get_latest_per_asin()
+        raw_leads = (
+            ReviewQueueService.list_leads(latest_records=latest_records)
+            + ReviewQueueService.list_consider_leads(latest_records=latest_records)
+        )
         items = ReviewQueueService.merge_by_asin(raw_leads)
 
         counts = {p: 0 for p in QUEUE_PRIORITIES}
