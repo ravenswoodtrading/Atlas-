@@ -120,8 +120,18 @@
                     </div>
                     <div class="mt-1">
                         {% for view_name in item.views %}
-                            {% set cls, icon = view_style[view_name] %}
-                            <span class="badge bg-{{ cls }}"><i class="bi {{ icon }}"></i> {{ view_short_label[view_name] }}</span>
+                            {% if view_name == "BUY_NOW" and item.strong_consider %}
+                                {# Strong Consider (2026-09-04) -- BUY_NOW earned via
+                                   is_notable()'s star-Consider path (25%+ ROI + confirmed
+                                   sales evidence), not a literal BUY. Same teal/star
+                                   treatment as the Opportunities page's own split, so a
+                                   real BUY and a strong-but-unconfirmed Consider never
+                                   look identical -- see _build_merged_item's own comment. #}
+                                <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
+                            {% else %}
+                                {% set cls, icon = view_style[view_name] %}
+                                <span class="badge bg-{{ cls }}"><i class="bi {{ icon }}"></i> {{ view_short_label[view_name] }}</span>
+                            {% endif %}
                         {% endfor %}
                         {% if item.conflict %}
                             <span class="badge bg-dark" title="{{ item.conflict_note or 'Sources disagree -- worth a second look.' }}"><i class="bi bi-exclamation-diamond"></i> Conflict</span>

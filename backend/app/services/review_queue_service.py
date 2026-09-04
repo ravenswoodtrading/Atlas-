@@ -1097,6 +1097,20 @@ class ReviewQueueService:
             ),
             "recommendations": recommendations,
             "strongest_recommendation": primary.get("recommendation"),
+            # True when BUY_NOW was earned via the star-Consider path
+            # (25%+ ROI + confirmed sales evidence, is_notable()'s own
+            # bar -- see _item_views' own comment) rather than a
+            # literal recommendation=="BUY". Added 2026-09-04 alongside
+            # the BUY_NOW widening itself -- mirrors Opportunities'
+            # Buy Now/Strong Consider split so the two pages agree, and
+            # so this doesn't show as an unmarked, indistinguishable-
+            # from-a-real-BUY item (Tamara's own explicit ask: "does
+            # the review queue mirror this... a strong consider is
+            # always useful" -- surfaced, not hidden, just not
+            # conflated with a confirmed BUY).
+            "strong_consider": bool(
+                QUEUE_PRIORITY_BUY_NOW in views and primary.get("recommendation") != "BUY"
+            ),
             "title": display.get("title") or primary.get("title"),
             "brand": display.get("brand") or primary.get("brand"),
             # "" for a VA-only item (VA leads never captured a Keepa

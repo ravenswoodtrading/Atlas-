@@ -58,6 +58,14 @@
                 </div>
                 <div class="text-muted" style="font-size:.75rem;">
                     {{ item.asin }}
+                    {% if item.strong_consider %}
+                    {# Card header already says "BUY NOW", so per-row badges
+                       normally skip re-stating it -- but a Strong Consider item
+                       still needs to say so here, or it's indistinguishable
+                       from a confirmed BUY in this list (2026-09-04, see
+                       review_queue.html's own comment on the same fix). #}
+                    <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
+                    {% endif %}
                     {% for view_name in item.views %}
                         {% if view_name != "BUY_NOW" %}
                         {% set cls, icon = view_style[view_name] %}
