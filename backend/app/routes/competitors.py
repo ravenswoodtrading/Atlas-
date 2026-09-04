@@ -48,45 +48,6 @@ def _days_ago(iso_date: str | None) -> str:
 
 templates.env.filters["days_ago"] = _days_ago
 
-# Human-readable labels for BrandScanService's Step 5b filtered_reason
-# values -- see brand_scan_service.py for where these get set.
-FILTERED_REASON_LABELS = {
-    "excluded_category": "Excluded category",
-    "dead_listing": "Dead listing (no sales/offers)",
-    "unprofitable_ceiling": "Unprofitable even in the UK alone",
-    "no_current_price": "No current price",
-}
-
-# Ordered so the template can render tabs left-to-right without
-# re-deciding the order itself -- most-actionable (live A2A) first,
-# least (OA/unclear, needs the most manual digging) last.
-TAB_ORDER = ["eu_a2a", "uk_a2a", "wholesale", "oa"]
-TAB_LABELS = {
-    "eu_a2a": "EU A2A",
-    "uk_a2a": "UK A2A",
-    "wholesale": "Wholesale",
-    "oa": "OA / unclear",
-}
-DEFAULT_TAB = "eu_a2a"
-
-
-def _google_search_urls(title: str, ean: str) -> dict:
-    """
-    Plain search-engine links for a competitor's OA/unclear find --
-    title + EAN when Keepa has one (more precise than title alone,
-    same reasoning OaLookupService's docstring already gives for why
-    title-only search can match the wrong pack size/variant). No
-    SerpApi call, no Atlas OA Lookup page involved -- just opens
-    Google in a new tab, same as typing the search by hand.
-    """
-    query = f"{title} {ean}".strip() if ean else title
-    encoded = quote_plus(query)
-
-    return {
-        "shopping": f"https://www.google.com/search?q={encoded}&tbm=shop",
-        "web": f"https://www.google.com/search?q={encoded}",
-    }
-
 
 def _google_search_url_variants(title: str, ean: str, asin: str) -> dict:
     """
@@ -112,126 +73,6 @@ def _google_search_url_variants(title: str, ean: str, asin: str) -> dict:
         ),
         "asin_title": f"https://www.google.com/search?q={quote_plus(f'{asin} {title}'.strip())}",
     }
-
-
-def build_competitors_context(tab: str = "", buyable_only: bool = False,
-                               review_filter: str = "", category: str = "", since_days: int = 0,
-                               check_result: str = "") -> dict:
-    """
-    Kept as its own function (not inlined into competitors_legacy_page)
-    even though /competitors-legacy is its only caller now -- Leads Hub
-    used to be a second caller (removed 2026-09-04, Navigation redesign:
-    it duplicated this page's own, better-maintained detections feed).
-    """
-    tab = tab if tab in SOURCING_TAG_BY_TAB else DEFAULT_TAB
-    sourcing_tag = SOURCING_TAG_BY_TAB[tab]
-
-    # Just for the summary line's counts -- full management (add/pause/
-    # remove/check-now) lives on /competitors/sellers now.
-    sellers = SellerWatchService.list_tracked_sellers()
-
-    detections = SellerWatchService.list_detections(
-        sourcing_tag=sourcing_tag, buyable_only=buyable_only,
-        review_filter=review_filter or None, category=category or None,
-        since_days=since_days or None,
-    )
-
-    counts_by_sourcing_tag = SellerWatchService.get_detection_counts(
-        buyable_only=buyable_only, review_filter=review_filter or None,
-        category=category or None, since_days=since_days or None,
-    )
-    # Re-keyed by tab slug (not the raw sourcing_tag string) so the
-    # template can do a plain tab_counts.get(t, 0) per tab.
-    tab_counts = {slug: counts_by_sourcing_tag.get(tag, 0) for slug, tag in SOURCING_TAG_BY_TAB.items()}
-    unscored_count = counts_by_sourcing_tag.get("unscored", 0)
-
-    # Parse each detection's stored JSON up front so the template can
-    # show the "Why?" score breakdown and the sourcing reasoning
-    # without re-running any logic -- same idea as products.html's
-    # parsed_report.
-    for entry in detections:
-        record = entry["record"]
-        entry["parsed_report"] = {}
-
-        if record and record.report_json:
-            try:
-                entry["parsed_report"] = json.loads(record.report_json)
-            except Exception:
-                entry["parsed_report"] = {}
-
-        entry["reasoning"] = {}
-        listing = entry["listing"]
-
-        if listing.sourcing_reasoning_json:
-            try:
-                entry["reasoning"] = json.loads(listing.sourcing_reasoning_json)
-            except Exception:
-                entry["reasoning"] = {}
-
-        # Only the OA tab shows these (see competitors.html), but
-        # cheap enough to compute for every row rather than branch here.
-        entry["google_urls"] = _google_search_urls(
-            record.title if record else "", record.ean if record else ""
-        )
-
-        # "What can I pay for this via OA and still make it worth it?"
-        # -- also only shown on the OA tab, same reasoning as
-        # google_urls above. None when there's no priced record yet
-        # (unscored detection) or when Amazon's own fees already
-        # exceed the sale price (max_source_cost returns 0.0 for that
-        # case -- see FeeEngine.max_source_cost's docstring).
-        entry["oa_price_guide"] = None
-
-        if record and record.buy_box_now:
-            breakeven = FeeEngine.max_source_cost(
-                record.buy_box_now, record.category_name, record.fba_fee, target_roi_pct=0.0,
-            )
-            if breakeven > 0:
-                target = FeeEngine.max_source_cost(
-                    record.buy_box_now, record.category_name, record.fba_fee,
-                    target_roi_pct=FeeEngine.OA_TARGET_ROI_PCT,
-                )
-                entry["oa_price_guide"] = {"target": target, "breakeven": breakeven}
-
-    return {
-        "sellers": sellers,
-        "detections": detections,
-        "tab": tab,
-        "tab_order": TAB_ORDER,
-        "tab_labels": TAB_LABELS,
-        "tab_counts": tab_counts,
-        "unscored_count": unscored_count,
-        "categories": SellerWatchService.list_detection_categories(),
-        "category": category,
-        "buyable_only": buyable_only,
-        "review_filter": review_filter,
-        "since_days": since_days,
-        "check_result": check_result,
-        "watched_asins": ProductRepository.get_watched_asins(),
-        "FILTERED_REASON_LABELS": FILTERED_REASON_LABELS,
-    }
-
-
-@router.get("/competitors-legacy")
-def competitors_legacy_page(request: Request, tab: str = "", buyable_only: bool = False,
-                             review_filter: str = "", category: str = "", since_days: int = 0,
-                             check_result: str = ""):
-    """
-    The PRE-redesign detections-table page (Competitor Watch redesign,
-    2026-09-03) -- kept reachable at its own URL, unchanged, purely as
-    a fallback/reference while the new /competitors Opportunities feed
-    beds in. Not linked from the sidebar (Navigation redesign,
-    2026-09-04) -- direct URL only. Candidate for removal alongside
-    build_competitors_context/_competitors_content.html once the new
-    Opportunities feed is fully trusted.
-    """
-    return templates.TemplateResponse(
-        request=request,
-        name="competitors_legacy.html",
-        context={"request": request, **build_competitors_context(
-            tab, buyable_only, review_filter, category, since_days, check_result
-        )}
-    )
 
 
 # ---- Competitor Watch redesign (2026-09-03) -- three internal views
@@ -508,12 +349,13 @@ def competitors_page(request: Request, tab: str = "opportunities", view: str = "
     whole got its first real sidebar entry ("Opportunities", under
     Find) in the Navigation redesign, 2026-09-04.
 
-    IMPORTANT: this is a DIFFERENT `tab` than build_competitors_context's
-    own `tab` param (EU A2A/UK A2A/Wholesale/OA) -- that one still
-    exists, unchanged, on /competitors-legacy (no longer linked from the
-    sidebar, direct URL only). To avoid exactly this ambiguity within
-    THIS route, the equivalent sourcing-tag filter here is named
-    `source` instead (see OPPORTUNITY_SOURCE_FILTERS).
+    NOTE: this route used to share its `tab` param name with a second,
+    differently-scoped `tab` on the now-removed /competitors-legacy
+    page (EU A2A/UK A2A/Wholesale/OA -- see build_competitors_context,
+    deleted 2026-09-04 navigation cleanup alongside that route). To
+    avoid exactly that ambiguity within THIS route, the equivalent
+    sourcing-tag filter here is named `source` instead (see
+    OPPORTUNITY_SOURCE_FILTERS).
     """
     tab = tab if tab in COMPETITOR_WATCH_TABS else "opportunities"
 
@@ -664,19 +506,6 @@ def competitors_remove(tracked_seller_id: int = Form(...)):
     return RedirectResponse(url="/competitors/sellers", status_code=303)
 
 
-@router.post("/competitors/dismiss")
-def competitors_dismiss(listing_id: int = Form(...), return_to: str = Form("/competitors-legacy")):
-    SellerWatchService.dismiss_detection(listing_id)
-    return RedirectResponse(url=return_to, status_code=303)
-
-
-@router.post("/competitors/review")
-def competitors_review(listing_id: int = Form(...), verdict: str = Form(""),
-                        return_to: str = Form("/competitors-legacy")):
-    SellerWatchService.set_review(listing_id, verdict or None)
-    return RedirectResponse(url=return_to, status_code=303)
-
-
 @router.post("/competitors/check-now")
 def competitors_check_now():
     """
@@ -721,7 +550,13 @@ def competitors_rescan_unscored():
         ScanCoordinator.release_after_manual_scan()
 
     message = f"Rescanned {result['rescanned']} ASIN(s), {result['updated']} now have data."
-    return RedirectResponse(url=f"/competitors-legacy?check_result={quote(message)}", status_code=303)
+    # Redirect target changed 2026-09-04 (navigation cleanup) from the
+    # now-removed /competitors-legacy to /competitors/sellers -- same
+    # target check-now above already uses. Kept the route/service call
+    # itself untouched (real maintenance capability, not legacy-page
+    # cruft) even though no current page links to this button; only
+    # /competitors-legacy's own template did.
+    return RedirectResponse(url=f"/competitors/sellers?check_result={quote(message)}", status_code=303)
 
 
 @router.post("/competitors/reclassify-all")
@@ -746,4 +581,5 @@ def competitors_reclassify_all():
         f"{result['remaining']} remaining"
         + (" (stopped early -- low on tokens, click again once they refill)." if result['stopped_early'] else ".")
     )
-    return RedirectResponse(url=f"/competitors-legacy?check_result={quote(message)}", status_code=303)
+    # See rescan-unscored's own comment on this same change.
+    return RedirectResponse(url=f"/competitors/sellers?check_result={quote(message)}", status_code=303)

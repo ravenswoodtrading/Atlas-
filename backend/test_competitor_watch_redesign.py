@@ -323,10 +323,15 @@ try:
     # =====================================================================
     for url in [
         "/competitors", "/competitors?tab=opportunities", "/competitors?tab=opportunities&view=buy_now",
+        # strong_consider added 2026-09-04 (Buy Now/Strong Consider split, same
+        # day as the navigation cleanup this test list was touched for) --
+        "/competitors?tab=opportunities&view=strong_consider",
         "/competitors?tab=opportunities&view=needs_attention", "/competitors?tab=opportunities&view=oa_investigate",
         "/competitors?tab=opportunities&source=oa", "/competitors?tab=source_finder",
         f"/competitors?tab=source_finder&asin={asin3}", f"/competitors?tab=competitors&seller_id={seller1}",
-        "/competitors-legacy", "/competitors-legacy?tab=oa",
+        # /competitors-legacy removed 2026-09-04 (navigation cleanup) --
+        # confirmed zero remaining dependencies before deletion, see that
+        # commit's own message.
     ]:
         r = client.get(url)
         assert r.status_code == 200, f"{url} -> {r.status_code}"

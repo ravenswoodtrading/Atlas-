@@ -1043,10 +1043,10 @@ class SellerWatchService:
     def list_oa_worth_investigating(limit: int = 200):
         """
         OA/unclear detections where the SAME OA price-guide economics
-        the old Competitors page already computed per-row (FeeEngine.
-        max_source_cost against today's Amazon price/fees -- see
-        competitors.py's build_competitors_context) show a genuine
-        breakeven: Amazon's own price and fees leave ANY room to source
+        the old (pre-redesign, now removed) Competitors page already
+        computed per-row (FeeEngine.max_source_cost against today's
+        Amazon price/fees) show a genuine breakeven: Amazon's own
+        price and fees leave ANY room to source
         this profitably via OA at all. This is what "OA -- worth
         investigating" means for the Opportunities feed's summary card
         -- deliberately NOT the raw OA/unclear count (585 detections
@@ -1120,7 +1120,7 @@ class SellerWatchService:
         alongside get_seller_stats (total/last_24h, used elsewhere and
         left completely unchanged). buy_opportunities counts
         currently_buyable rows -- the exact same flag the existing
-        per-row "BUY" badge already uses (see _competitors_content.html),
+        per-row "BUY" badge already uses (see _competitors_opportunities.html),
         not a new/stronger bar. One pass over non-dismissed
         SellerNewListing rows, same cost profile as get_seller_stats.
         """

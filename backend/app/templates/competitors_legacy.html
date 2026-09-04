@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% from "_competitors_content.html" import competitors_content %}
-
-{% block title %}Competitors (legacy) - Atlas{% endblock %}
-
-{% block content %}
-{{ competitors_content(sellers, detections, tab, tab_order, tab_labels, tab_counts, unscored_count, categories, category, buyable_only, review_filter, since_days, check_result, watched_asins, FILTERED_REASON_LABELS) }}
-{% endblock %}

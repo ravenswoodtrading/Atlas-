@@ -23,12 +23,22 @@
         all look for this spread by comparing a UK sale price against the cheapest of the 4 EU buy prices.
     </p>
 
+    {# Rewritten 2026-09-04 (navigation cleanup) to cover all three OA
+       tools together -- previously only named OA Lookup/OA Source
+       Discovery, leaving Source Finder unexplained here. #}
     <h5 id="oa">OA <span class="text-muted small fw-normal">(Online Arbitrage)</span></h5>
     <p class="text-muted">
         Buy from a non-Amazon UK retailer, sell on Amazon UK. Unlike A2A, Atlas can't automatically discover an OA
-        source from Keepa data alone -- see <a href="/oa-lookup">OA Lookup</a> (manual, one ASIN at a time) and
-        <a href="/oa-discovery">OA Source Discovery</a> (automated batch search) for the two tools built for this.
+        source from Keepa data alone -- three tools exist for this, at three different scopes:
     </p>
+    <ul class="text-muted">
+        <li><strong>Source Finder</strong> (launched from a specific find on <a href="/competitors">Opportunities</a>) --
+            investigate the source of one particular competitor opportunity.</li>
+        <li><strong><a href="/oa-discovery">OA Source Discovery</a></strong> -- the full batch workspace: run and
+            manage OA source discovery across many ASINs at once, plus run history and exclusions.</li>
+        <li><strong><a href="/oa-lookup">OA Lookup</a></strong> -- manually investigate a single ASIN, picking and
+            editing the search yourself rather than letting Atlas run unattended.</li>
+    </ul>
 
     <h5 id="gated">Gated</h5>
     <p class="text-muted">

@@ -298,7 +298,7 @@ ATLAS
 
 <div class="sidebar-section-label">Find</div>
 
-<a href="/competitors" title="Opportunities" class="{{ 'active' if nav_path == '/competitors' or nav_path == '/competitors-legacy' or nav_path.startswith('/competitors/opportunity/') }}"><i class="bi bi-cart-check-fill"></i> <span class="link-text">Opportunities</span></a>
+<a href="/competitors" title="Opportunities" class="{{ 'active' if nav_path == '/competitors' or nav_path.startswith('/competitors/opportunity/') }}"><i class="bi bi-cart-check-fill"></i> <span class="link-text">Opportunities</span></a>
 
 <a href="/discovery" title="Discovery" class="{{ 'active' if nav_path == '/discovery' }}"><i class="bi bi-search"></i> <span class="link-text">Discovery</span></a>
 
@@ -306,12 +306,21 @@ ATLAS
 
 <a href="/products/today" title="Products" class="{{ 'active' if nav_path.startswith('/products') }}"><i class="bi bi-boxes"></i> <span class="link-text">Products</span></a>
 
-{% set tools_open = nav_path.startswith('/verdict') or nav_path == '/categories' or nav_path == '/oa-lookup' or nav_path == '/shortlist' %}
+{% set tools_open = nav_path.startswith('/verdict') or nav_path == '/categories' or nav_path == '/oa-lookup' or nav_path == '/oa-discovery' or nav_path == '/shortlist' %}
 <div class="subgroup-toggle {{ 'open' if tools_open }}" data-subnav-toggle title="Tools"><i class="bi bi-tools"></i> <span class="link-text">Tools</span> <i class="bi bi-chevron-right chev"></i></div>
 <div class="subnav {{ 'open' if tools_open }}">
     <a href="/verdict" title="Verdict Checker" class="{{ 'active' if nav_path.startswith('/verdict') }}"><i class="bi bi-clipboard-check"></i> <span class="link-text">Verdict Checker</span></a>
     <a href="/categories" title="Category Survey" class="{{ 'active' if nav_path == '/categories' }}"><i class="bi bi-diagram-3"></i> <span class="link-text">Category Survey</span></a>
     <a href="/oa-lookup" title="OA Lookup" class="{{ 'active' if nav_path == '/oa-lookup' }}"><i class="bi bi-google"></i> <span class="link-text">OA Lookup</span></a>
+    <!-- Added 2026-09-04 (navigation cleanup) -- /oa-discovery had NO
+         nav entry at all since Leads Hub (its only previous entry
+         point) was retired in the navigation redesign; see that
+         route's own docstring. Explicit name "OA Source Discovery",
+         not "Source Finder" -- deliberately different scope (batch
+         runs/run history/exclusions here, vs Source Finder's
+         single-ASIN investigation launched from Opportunities, which
+         stays exactly where it is). -->
+    <a href="/oa-discovery" title="OA Source Discovery" class="{{ 'active' if nav_path == '/oa-discovery' }}"><i class="bi bi-collection-fill"></i> <span class="link-text">OA Source Discovery</span></a>
     <a href="/shortlist" title="Shortlist" class="{{ 'active' if nav_path == '/shortlist' }}"><i class="bi bi-lightning-charge"></i> <span class="link-text">Shortlist</span></a>
 </div>
 
