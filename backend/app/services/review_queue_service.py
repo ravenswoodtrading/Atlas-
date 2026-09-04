@@ -1,8 +1,10 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.database.database import SessionLocal
 from app.database.models import Lead, ProductRecord, SellerNewListing, TrackedSeller
+from app.services.activity_log import ActivityLog
+from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
 from app.services.seller_watch_service import SellerWatchService
 
@@ -36,6 +38,17 @@ MAX_LEADS = 500
 # may need tightening once real volume is seen after a restart -- this
 # constant is the other lever if the filter alone isn't enough.
 MAX_CONSIDER_LEADS = 150
+
+# Cap on how many stale items recheck_stale_items() rescans in ONE
+# daily run (2026-09-04). Real number checked against live data before
+# picking this: 350 of the 395 total Review Queue items (89%) already
+# qualified as stale the day this shipped -- a real, one-time backlog,
+# not an ongoing rate. Rescanning all 350 in a single sweep would be a
+# genuine token spike competing with the SAME budget Competitor Watch
+# was just fixed to rely on. Oldest-first (see recheck_stale_items),
+# so the whole backlog clears over roughly stale_count/this constant
+# days rather than repeatedly re-picking an arbitrary subset.
+MAX_STALE_RECHECK_PER_RUN = 50
 
 # A PEAK_WINDOW lead already cleared OpportunityEngine.MIN_VIABLE_ROI
 # (17%, raised from 10% 2026-08-23) at the peak price just to be
@@ -217,6 +230,12 @@ REVIEW_REASON_CATEGORIES = (
     # list (grepped: no caller does membership-checking on it), so this
     # is display/reporting vocabulary only, not a new decision pathway.
     "NOT_INTERESTED",
+    # Added 2026-09-04 -- Tamara's own instruction: an item sitting
+    # unreviewed past STALE_REVIEW_THRESHOLD_HOURS gets rescanned, not
+    # silently dropped ("recheck them to see if they're still valid
+    # leads"). This is the reason recorded when that recheck comes back
+    # no-longer-viable -- see recheck_stale_items.
+    "EXPIRED_RECHECK",
 )
 
 REVIEW_REASON_CATEGORY_LABELS = {
@@ -237,6 +256,7 @@ REVIEW_REASON_CATEGORY_LABELS = {
     "EBAY": "eBay",
     "OTHER": "Other",
     "NOT_INTERESTED": "Don't want",
+    "EXPIRED_RECHECK": "Expired (auto-rechecked, no longer valid)",
 }
 
 # Categories that mean "the opportunity expired between Atlas's check
@@ -957,7 +977,31 @@ class ReviewQueueService:
         if lead.get("conflict_note"):
             views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
-        if recommendation == "BUY":
+        # Widened 2026-09-04, Tamara's own explicit decision -- BUY_NOW
+        # used to require a literal recommendation=="BUY". Real example
+        # that surfaced this: a CONSIDER-tier competitor listing with
+        # 25%+ ROI and confirmed sales evidence showed as "Buy Now" on
+        # the Opportunities page (SellerWatchService.list_notable_
+        # buyable, which already uses is_notable's broader "star" bar)
+        # but only reached Borderline here. Explicitly asked: "should
+        # that item appear in Buy Now" -- yes, trust the SAME star bar
+        # everywhere, via the SAME ProductRepository.is_notable() every
+        # other "worth a look now" surface (Opportunities, Discord
+        # alerts, Scan Queue's own notable filter) already trusts,
+        # rather than a second, stricter, literal-BUY-only definition
+        # living only here. NOT the same situation as the Discovery
+        # Intelligence "Western Digital" fix from earlier the same day
+        # (a DIFFERENT bug: there, a single CONSIDER-tier profit figure
+        # was substituting for a MISSING confirmed BUY across many
+        # scans with zero evidence either way; here, is_notable's own
+        # bar -- 25%+ ROI AND confirmed real sales evidence -- is being
+        # explicitly trusted as its own sufficient standard, not used
+        # to paper over an absence of evidence).
+        if ProductRepository.is_notable(
+            recommendation, lead.get("monthly_sales") or 0,
+            lead.get("roi") or 0, lead.get("roi_90d") or 0,
+            lead.get("sales_drops_30d") or 0,
+        ):
             if lead.get("freshness") in STALE_FRESHNESS_STATES:
                 views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
             else:
@@ -1696,4 +1740,96 @@ class ReviewQueueService:
             "watch_count": counts["watch"],
             "need_more_info_count": counts["need_more_info"],
             "total_count": sum(counts.values()),
+        }
+
+    @staticmethod
+    def recheck_stale_items(stale_hours: int = 24 * 7) -> dict:
+        """
+        Daily safety net (2026-09-04, Tamara's own instruction: "if
+        they are not cleared within a certain time we should clear
+        them, or recheck them to see if they're still valid leads" --
+        recheck-then-decide was her explicit choice, not auto-clear
+        with no check). An unreviewed item sitting for stale_hours+
+        (default 7 days, same window as WEEKLY_RECHECK_STALE_HOURS --
+        this is meant to run inside that same daily scheduler, see
+        main.py) gets rescanned:
+
+        - Still a genuinely good lead (BUY/CONSIDER/etc on the fresh
+          numbers) -- left alone. The rescan itself already produced a
+          NEW ProductRecord row (Atlas never updates one in place), so
+          the item naturally re-surfaces with today's price/profit/
+          recommendation and a reset "how long has this sat" clock --
+          nothing more to do here.
+        - No longer viable (fresh recommendation is IGNORE/GATED) --
+          EXPLICITLY marked reviewed via ProductRepository.set_review
+          with reason_category="EXPIRED_RECHECK", so it's a real,
+          visible decision with a reason attached (shows up in Reviewed
+          History same as a manual Avoid), never a silent disappearance
+          off the "unreviewed" list.
+
+        VA-only items (every source_items entry is "lead") are
+        EXCLUDED -- Tamara's own instruction the same day: "we know
+        there is an issue with the VA queue feed so don't worry about
+        this". There's also no rescan mechanism for a VA-submitted
+        lead to begin with (no brand/ASIN search origin stored the way
+        a scan/competitor item has -- see _lead_dict's own comment).
+
+        Caller is responsible for ScanCoordinator (see main.py's
+        scheduler), same convention as WatchlistService.check_stale.
+        """
+        items = ReviewQueueService.list_queue_items()
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=stale_hours)
+
+        stale_items = [
+            item for item in items
+            if item.get("when") and item["when"] < cutoff
+            and set(item["sources"]) != {"lead"}
+        ]
+        # Oldest-first, capped (see MAX_STALE_RECHECK_PER_RUN's own
+        # comment) -- a real backlog clears gradually over several
+        # days instead of spiking token spend in one sweep, and always
+        # prioritizes whichever items have waited longest.
+        stale_items.sort(key=lambda item: item["when"])
+        stale_asins = [item["asin"] for item in stale_items[:MAX_STALE_RECHECK_PER_RUN]]
+        stale_total_found = len(stale_items)
+
+        if not stale_asins:
+            return {"stale_found": 0, "rechecked": 0, "expired": 0}
+
+        scanner = BrandScanService(usage_category="review_queue_recheck")
+        result = scanner.scan(
+            "review-queue-stale-recheck", asins=stale_asins,
+            limit=len(stale_asins), force_rescan=True,
+        )
+
+        expired = 0
+        db = SessionLocal()
+        try:
+            for asin in stale_asins:
+                record = (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.asin == asin)
+                    .order_by(ProductRecord.scanned_at.desc())
+                    .first()
+                )
+                if record and not record.review and record.recommendation in ("IGNORE", "GATED"):
+                    ProductRepository.set_review(
+                        asin, "down",
+                        reason=f"Auto-rechecked after {stale_hours // 24}+ days unreviewed -- fresh numbers no longer clear the bar ({record.recommendation})",
+                        reason_category="EXPIRED_RECHECK",
+                    )
+                    expired += 1
+        finally:
+            db.close()
+
+        ActivityLog.record(
+            "review_queue_recheck",
+            f"{len(stale_asins)}/{stale_total_found} stale item(s) rechecked (oldest-first, capped at {MAX_STALE_RECHECK_PER_RUN}/day), {expired} no longer valid -> auto-rejected with reason",
+        )
+
+        return {
+            "stale_found": stale_total_found,
+            "rechecked": result.get("asins_scanned") or 0,
+            "expired": expired,
+            "error": result.get("error"),
         }

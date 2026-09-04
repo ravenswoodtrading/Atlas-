@@ -81,6 +81,21 @@ class SellerWatchService:
         (non-storefront) seller lookup. Same total token cost either
         way (1 token per seller) -- this just costs one HTTP
         round-trip per seller instead of a single batched one.
+
+        wait=True (2026-09-04, real bug found live: 5 of 19 tracked
+        sellers went 20-27+ HOURS without a single successful check).
+        Was wait=False -- any seller whose turn came up when tokens
+        happened to be momentarily low failed outright with no retry,
+        and since this loop always walks sellers in the SAME fixed
+        order, the SAME sellers at the end of the list lost out every
+        time, not a fair/rotating subset. Competitor Watch is Tamara's
+        own highest-priority lead source and this list is cheap (at
+        most ~1 token per seller, ~19 total for a full pass) -- letting
+        each call wait for its own token to refill (22/min on this
+        plan, so worst case here is under a minute) reliably completes
+        every seller instead of silently dropping some. This still
+        runs inside asyncio.to_thread (see main.py's scheduler), so
+        blocking here never blocks the actual web server.
         """
         api = get_keepa_client()
         results = {}
@@ -89,7 +104,7 @@ class SellerWatchService:
         for seller_id in seller_ids:
             try:
                 try:
-                    response = api.seller_query(seller_id, domain="GB", storefront=True, wait=False)
+                    response = api.seller_query(seller_id, domain="GB", storefront=True, wait=True)
                 except TypeError:
                     # Installed keepa version doesn't accept wait= here --
                     # same fallback ProductFinder.find_brand already uses
@@ -191,11 +206,25 @@ class SellerWatchService:
         One full pass over every active tracked seller. Returns a
         small summary dict for logging/status, same convention as
         ScanQueueService.run_next_tick.
+
+        Ordered oldest-checked-first (2026-09-04, alongside the
+        _fetch_storefronts wait=True fix -- see its own docstring for
+        the real starvation bug this closes). Belt-and-suspenders: with
+        wait=True this loop should now complete every seller most
+        ticks anyway, but if tokens ever DO run out mid-pass (a very
+        long drought), whoever's waited longest gets checked first, so
+        a shortfall is self-correcting next tick rather than always
+        landing on the same sellers at the end of a fixed list.
         """
         db = SessionLocal()
 
         try:
-            tracked = db.query(TrackedSeller).filter(TrackedSeller.active == True).all()
+            tracked = (
+                db.query(TrackedSeller)
+                .filter(TrackedSeller.active == True)
+                .order_by(TrackedSeller.last_checked_at.asc().nulls_first())
+                .all()
+            )
 
             if not tracked:
                 return {"checked": 0, "new_listings": 0}

@@ -13,6 +13,7 @@ from app.services.scan_queue_service import ScanQueueService, TICK_INTERVAL_SECO
 from app.services.seller_watch_service import SellerWatchService
 from app.services.watchlist_service import WatchlistService
 from app.services.replen_service import ReplenService
+from app.services.review_queue_service import ReviewQueueService
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.lead_analysis_service import LeadAnalysisService
 from app.services.discord_notifier import DiscordNotifier
@@ -79,12 +80,21 @@ async def _scan_queue_scheduler():
 
 
 # How often the background competitor-watch scheduler checks tracked
-# sellers' storefronts for new listings -- storefronts don't change
-# minute-to-minute, so this stays token-cheap. Per-seller pausing is
-# handled by TrackedSeller.active (see /competitors), not a separate
-# global switch here. A check also always runs once immediately at
-# startup, not just after the first interval.
-SELLER_WATCH_INTERVAL_SECONDS = 2 * 60 * 60
+# sellers' storefronts for new listings. Per-seller pausing is handled
+# by TrackedSeller.active (see /competitors), not a separate global
+# switch here. A check also always runs once immediately at startup,
+# not just after the first interval.
+#
+# Changed from 2 HOURS 2026-09-04, Tamara's own explicit instruction --
+# first "prioritise these, check regularly" (briefly set to 10 min),
+# then corrected: "I don't need sellers checked so often... three times
+# a day". 8h gives exactly 3 passes/day. Separately fixed the same day:
+# SellerWatchService._fetch_storefronts now uses wait=True so each of
+# those 3 passes reliably reaches every tracked seller (was silently
+# starving whichever sellers came last in a fixed iteration order
+# whenever tokens ran momentarily low) -- see that method's own
+# docstring for the real bug this closed.
+SELLER_WATCH_INTERVAL_SECONDS = 8 * 60 * 60
 
 
 async def _seller_watch_scheduler():
@@ -137,9 +147,19 @@ async def _weekly_recheck_scheduler():
                 try:
                     watch_result = await asyncio.to_thread(WatchlistService.check_stale, WEEKLY_RECHECK_STALE_HOURS)
                     replen_result = await asyncio.to_thread(ReplenService.check_stale, WEEKLY_RECHECK_STALE_HOURS)
+                    # Added 2026-09-04, same scheduler/window -- see
+                    # ReviewQueueService.recheck_stale_items' own
+                    # docstring for the full reasoning (Tamara's own
+                    # instruction: recheck stale unreviewed items rather
+                    # than silently clearing or leaving them forever).
+                    review_recheck_result = await asyncio.to_thread(
+                        ReviewQueueService.recheck_stale_items, WEEKLY_RECHECK_STALE_HOURS,
+                    )
                     summary = (
                         f"watchlist: {watch_result.get('checked', 0)}/{watch_result.get('stale', 0)} stale, "
-                        f"replen: {replen_result.get('checked', 0)}/{replen_result.get('stale', 0)} stale"
+                        f"replen: {replen_result.get('checked', 0)}/{replen_result.get('stale', 0)} stale, "
+                        f"review queue: {review_recheck_result.get('rechecked', 0)}/{review_recheck_result.get('stale_found', 0)} stale, "
+                        f"{review_recheck_result.get('expired', 0)} expired"
                     )
                     await asyncio.to_thread(
                         ActivityLog.mark_tick, "weekly_recheck", WEEKLY_RECHECK_TICK_SECONDS, summary,

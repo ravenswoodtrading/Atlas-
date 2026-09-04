@@ -45,13 +45,16 @@ AUTOMATION_LABELS = {
 # types happened to log first.
 ACTIVITY_ORDER = [
     "brand_search", "competitor_check", "replen_check",
-    "watchlist_check", "signal_check", "oa_discovery_run", "lead_analysis",
+    "watchlist_check", "review_queue_recheck", "signal_check", "oa_discovery_run", "lead_analysis",
 ]
 ACTIVITY_LABELS = {
     "brand_search": "Brand searches",
     "competitor_check": "Competitor checks",
     "replen_check": "Replen checks",
     "watchlist_check": "Watchlist rechecks",
+    # Added 2026-09-04 -- ReviewQueueService.recheck_stale_items, wired
+    # into main.py's existing daily _weekly_recheck_scheduler.
+    "review_queue_recheck": "Review Queue rechecks",
     "signal_check": "Signal checks",
     "oa_discovery_run": "OA Discovery runs",
     "lead_analysis": "Leads analyzed",
