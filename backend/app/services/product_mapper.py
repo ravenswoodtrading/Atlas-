@@ -61,6 +61,7 @@ class ProductMapper:
             brand=k.get("brand") or "",
             category=str(k.get("rootCategory", "")),
             ean=parser.ean(),
+            image=parser.image(),
 
             buy_box_now=parser.buy_box_now(),
             buy_box_90d=parser.buy_box_90d(),

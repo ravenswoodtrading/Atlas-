@@ -34,6 +34,12 @@ class ProductRecord(Base):
     # column existed, same backfill-via-rescan pattern as other columns.
     ean: Mapped[str] = mapped_column(String, default="")
 
+    # Full URL to the primary product image, or "" -- see
+    # Product.image/KeepaParser.image (2026-09-04). "" for any record
+    # scanned before this column existed, same backfill-via-rescan
+    # pattern as ean above -- not retroactively populated.
+    image: Mapped[str] = mapped_column(String, default="")
+
     # What brand search produced this record, e.g. "philips"
     brand_query: Mapped[str] = mapped_column(String, default="")
 

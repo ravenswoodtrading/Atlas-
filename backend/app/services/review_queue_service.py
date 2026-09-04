@@ -415,6 +415,7 @@ class ReviewQueueService:
             "asin": record.asin,
             "title": record.title,
             "brand": record.brand,
+            "image": record.image,
             "best_source_marketplace": record.best_source_marketplace,
             "best_source_cost_gbp": record.best_source_cost_gbp,
             "buy_box_now": record.buy_box_now,
@@ -700,6 +701,7 @@ class ReviewQueueService:
             "asin": listing.asin,
             "title": record.title,
             "brand": record.brand,
+            "image": record.image,
             "best_source_marketplace": record.best_source_marketplace,
             "best_source_cost_gbp": record.best_source_cost_gbp,
             "buy_box_now": record.buy_box_now,
@@ -1053,6 +1055,11 @@ class ReviewQueueService:
             "strongest_recommendation": primary.get("recommendation"),
             "title": display.get("title") or primary.get("title"),
             "brand": display.get("brand") or primary.get("brand"),
+            # "" for a VA-only item (VA leads never captured a Keepa
+            # image -- a separate, smaller gap than the scan/competitor
+            # one this fix closes; see _lead_dict, unchanged) -- the
+            # template falls back to a placeholder icon in that case.
+            "image": display.get("image") or primary.get("image") or "",
             "score": display.get("score"),
             "confidence": display.get("confidence"),
             "sourcing_tag": display.get("sourcing_tag") or primary.get("sourcing_tag"),

@@ -13,6 +13,10 @@ class Product:
     # see KeepaParser.ean for why this isn't used to drive OA search.
     ean: str = ""
 
+    # Full URL to the primary product image, or "" -- see
+    # KeepaParser.image (2026-09-04). Display only.
+    image: str = ""
+
     # UK selling data
     buy_box_now: float = 0.0
     buy_box_90d: float = 0.0

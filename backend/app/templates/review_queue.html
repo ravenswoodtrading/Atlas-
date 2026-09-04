@@ -99,25 +99,37 @@
 <div class="card mb-2 qi-row" style="border-radius:12px;" data-row-asin="{{ item.asin }}">
     <div class="card-body py-2 px-3">
         <div class="d-flex justify-content-between align-items-start flex-wrap" style="gap:.5rem;">
-            <div class="qi-open-btn" data-asin="{{ item.asin }}" style="cursor:pointer;">
-                <div class="fw-semibold">
-                    {{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}
-                </div>
-                <div class="text-muted small">
-                    {{ item.asin }}
-                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
-                </div>
-                <div class="mt-1">
-                    {% for view_name in item.views %}
-                        {% set cls, icon = view_style[view_name] %}
-                        <span class="badge bg-{{ cls }}"><i class="bi {{ icon }}"></i> {{ view_short_label[view_name] }}</span>
-                    {% endfor %}
-                    {% if item.conflict %}
-                        <span class="badge bg-dark" title="{{ item.conflict_note or 'Sources disagree -- worth a second look.' }}"><i class="bi bi-exclamation-diamond"></i> Conflict</span>
+            <div class="qi-open-btn d-flex" data-asin="{{ item.asin }}" style="cursor:pointer;gap:.65rem;">
+                <!-- Real product photo (2026-09-04) -- see
+                     _review_queue_item_detail.html's own comment on
+                     why this can be blank (VA-only item, or a record
+                     scanned before this column existed). -->
+                <div class="d-flex align-items-center justify-content-center bg-light rounded position-relative flex-shrink-0" style="width:48px;height:48px;">
+                    <i class="bi bi-box-seam text-muted"></i>
+                    {% if item.image %}
+                    <img src="{{ item.image }}" alt="" class="position-absolute top-0 start-0 rounded" style="width:48px;height:48px;object-fit:contain;background:#f8f9fa;" onerror="this.remove();">
                     {% endif %}
-                    {% for src in item.sources %}
-                    <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
-                    {% endfor %}
+                </div>
+                <div>
+                    <div class="fw-semibold">
+                        {{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}
+                    </div>
+                    <div class="text-muted small">
+                        {{ item.asin }}
+                        <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                    </div>
+                    <div class="mt-1">
+                        {% for view_name in item.views %}
+                            {% set cls, icon = view_style[view_name] %}
+                            <span class="badge bg-{{ cls }}"><i class="bi {{ icon }}"></i> {{ view_short_label[view_name] }}</span>
+                        {% endfor %}
+                        {% if item.conflict %}
+                            <span class="badge bg-dark" title="{{ item.conflict_note or 'Sources disagree -- worth a second look.' }}"><i class="bi bi-exclamation-diamond"></i> Conflict</span>
+                        {% endif %}
+                        {% for src in item.sources %}
+                        <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
+                        {% endfor %}
+                    </div>
                 </div>
             </div>
 
@@ -152,8 +164,15 @@
             </div>
         </div>
 
-        <div class="d-flex flex-wrap small mt-2" style="gap:1.25rem;">
-            <div style="min-width:70px;">
+        <!-- Stat strip (2026-09-04 rewrite) -- was a flex-wrap row of
+             fixed min-width cells, which only ever took the space each
+             cell actually needed and left the rest of a wide card blank
+             (confirmed live: ~40% of the card unused at desktop widths).
+             A grid with auto-fit + 1fr columns makes every cell share
+             the row's REAL width evenly, still wrapping naturally on a
+             narrow/mobile screen the same as before. -->
+        <div class="small mt-2" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(90px, 1fr));gap:1rem;">
+            <div>
                 <div class="text-muted">Source</div>
                 <div>
                     {% if item.best_source_marketplace %}
@@ -163,25 +182,25 @@
                     {% endif %}
                 </div>
             </div>
-            <div style="min-width:70px;">
+            <div>
                 <div class="text-muted">Buy price</div>
                 <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
             </div>
-            <div style="min-width:80px;">
+            <div>
                 <div class="text-muted">Amazon price</div>
                 <div>{{ "£%.2f"|format(item.buy_box_now) if item.buy_box_now else "--" }}</div>
             </div>
-            <div style="min-width:70px;">
+            <div>
                 <div class="text-muted">Profit</div>
                 <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">
                     &pound;{{ "%.2f"|format(item.profit or 0) }}
                 </div>
             </div>
-            <div style="min-width:50px;">
+            <div>
                 <div class="text-muted">ROI</div>
                 <div>{{ "%.0f"|format(item.roi or 0) }}%</div>
             </div>
-            <div style="min-width:50px;">
+            <div>
                 <div class="text-muted">Score</div>
                 <div class="{{ 'text-success' if (item.score or 0) >= 70 else ('text-warning' if (item.score or 0) >= 40 else 'text-muted') }}">
                     {{ item.score if item.score is not none else "--" }}
@@ -194,7 +213,7 @@
                  figure when Keepa has one, otherwise sales rank drops
                  (Keepa's own "a sale probably happened" proxy) rather
                  than nothing at all. -->
-            <div style="min-width:110px;">
+            <div>
                 <div class="text-muted">Sales</div>
                 <div>
                     {% if item.monthly_sales %}
@@ -206,7 +225,7 @@
                     {% endif %}
                 </div>
             </div>
-            <div style="min-width:70px;">
+            <div>
                 <div class="text-muted">Added</div>
                 <div>{{ item.when | ago }}</div>
             </div>

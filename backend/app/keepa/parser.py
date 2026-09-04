@@ -710,6 +710,22 @@ class KeepaParser:
         eans = self.product.get("eanList") or []
         return eans[0] if eans else ""
 
+    def image(self) -> str:
+        """
+        Full URL to the product's primary (first-listed) image, or ""
+        if Keepa has none on file. Zero extra API cost -- imagesCSV is
+        already part of the same product object every scan already
+        fetches, just never read before now (2026-09-04). Keepa's raw
+        field is a comma-separated list of image FILENAMES, not full
+        URLs -- confirmed against a real Keepa Product Finder CSV
+        export already in this repo (KeepaExport-2026-07-27-
+        ProductFinder.csv's own "Image" column), which resolves them
+        against the same media-amazon.com CDN path used here.
+        """
+        images_csv = self.product.get("imagesCSV") or ""
+        first = images_csv.split(",")[0].strip() if images_csv else ""
+        return f"https://m.media-amazon.com/images/I/{first}" if first else ""
+
     # ---- Reviews ----
 
     def rating(self) -> float:

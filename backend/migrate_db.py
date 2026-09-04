@@ -53,6 +53,7 @@ migrate_table("product_records", {
     "last_offer_checked_at": "DATETIME",
     "last_offer_price_gbp": "REAL",
     "last_offer_buyable": "BOOLEAN",
+    "image": "TEXT DEFAULT ''",
 })
 
 migrate_table("leads", {

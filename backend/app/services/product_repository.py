@@ -95,6 +95,7 @@ class ProductRepository:
                 brand=product_dict.get("brand") or "",
                 category=product_dict.get("category") or "",
                 ean=product_dict.get("ean") or "",
+                image=product_dict.get("image") or "",
                 brand_query=brand_query,
                 buy_box_now=product_dict.get("buy_box_now") or 0.0,
                 buy_box_90d=product_dict.get("buy_box_90d") or 0.0,

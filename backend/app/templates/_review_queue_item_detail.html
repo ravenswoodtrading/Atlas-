@@ -13,8 +13,17 @@
 
 <!-- PRODUCT (section 14) -->
 <div class="d-flex align-items-start mb-3" style="gap:.75rem;">
-    <div class="d-flex align-items-center justify-content-center bg-light rounded" style="width:56px;height:56px;flex:none;">
+    <!-- Real product photo (2026-09-04) -- Keepa's imagesCSV was
+         already part of every scan response, just never read before;
+         zero extra API cost. Placeholder icon underneath always
+         renders; the image sits on top and hides it on load, or hides
+         ITSELF on a broken/expired CDN link (VA-only items with no
+         Keepa image ever captured fall straight through to the icon). -->
+    <div class="d-flex align-items-center justify-content-center bg-light rounded position-relative" style="width:56px;height:56px;flex:none;">
         <i class="bi bi-box-seam text-muted" style="font-size:1.5rem;"></i>
+        {% if item.image %}
+        <img src="{{ item.image }}" alt="" class="position-absolute top-0 start-0 rounded" style="width:56px;height:56px;object-fit:contain;background:#f8f9fa;" onerror="this.remove();">
+        {% endif %}
     </div>
     <div>
         <div class="fw-semibold">{{ item.title or item.asin }}</div>
