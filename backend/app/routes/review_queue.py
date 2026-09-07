@@ -1,7 +1,7 @@
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Request, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.review_queue_service import (
@@ -207,6 +207,27 @@ QUICK_REJECT_REASONS = [
     ("NOT_INTERESTED", "Don't want"),
     ("OTHER", "Other..."),
 ]
+
+
+@router.get("/review-queue/oa-investigate/export.xlsx")
+def review_queue_oa_investigate_export():
+    """
+    "Download Excel" button on the OA to Investigate view (2026-09-07,
+    Tamara: "lets give me a button on the App to download the full
+    list"). Reuses oa_export_service's own row-building logic verbatim
+    -- the exact same query/certainty computation the OA to Investigate
+    view itself uses, so the download always matches what's on screen.
+    Read-only, no Keepa cost.
+    """
+    from app.services.oa_export_service import build_oa_investigate_workbook
+
+    buf, _ = build_oa_investigate_workbook()
+    filename = f"oa_to_investigate_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/review-queue")

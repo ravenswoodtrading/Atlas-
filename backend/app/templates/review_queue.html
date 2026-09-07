@@ -48,6 +48,16 @@
             {% endif %}
         </div>
     </div>
+    {# Download Excel (2026-09-07, Tamara: "lets give me a button on the
+       App to download the full list") -- only shown on the OA to
+       Investigate view, since that's the one list this exports; a
+       plain link (not fetch/JS) so the browser's own download handling
+       just works. #}
+    {% if view == "oa_investigate" %}
+    <a href="/review-queue/oa-investigate/export.xlsx" class="btn btn-sm btn-outline-success">
+        <i class="bi bi-file-earmark-excel"></i> Download Excel
+    </a>
+    {% endif %}
 </div>
 
 <!-- Primary filter: workflow views (section 20) -->
