@@ -38,6 +38,26 @@ class OpportunityReport:
     # seen, not just trusted.
     peak_viable_days_90d: int = 0
 
+    # How many of the last 90 days would have cleared FeeEngine.
+    # OA_TARGET_ROI_PCT (25%, the SAME bar ProductRepository.is_notable
+    # already uses) at today's EU source cost, and how many of those 90
+    # days had a real price at all -- see Product.days_at_25pct_roi_90d/
+    # priced_days_90d's own comment (2026-09-04, Opportunity Engine
+    # 2.0). Carried through to report_json so OpportunityLensService can
+    # show real recurrence evidence next to a price-drop risk flag,
+    # instead of asking the user to just trust that a drop is temporary.
+    days_at_25pct_roi_90d: int = 0
+    priced_days_90d: int = 0
+
+    # SourcingClassifier.compute_competition_spike_evidence /
+    # compute_price_drop_offer_context (2026-09-04, Opportunity Engine
+    # 2.0) -- see Product's own comments on these four fields. None
+    # when the 90-day window never saw the relevant event at all.
+    days_since_last_competition_spike: int | None = None
+    price_change_since_competition_spike_pct: float | None = None
+    days_since_last_price_dip: int | None = None
+    offers_change_at_last_price_dip_pct: float | None = None
+
     # Profit as a % of sale price (as opposed to ROI, profit as a % of
     # cost) -- see Product.margin's docstring. Whichever of
     # today's/90d-average price ROI was calculated from.
@@ -266,6 +286,12 @@ class OpportunityEngine:
             peak_roi=product.roi_peak,
             peak_price=product.buy_box_max_90d,
             peak_viable_days_90d=product.peak_viable_days_90d,
+            days_at_25pct_roi_90d=product.days_at_25pct_roi_90d,
+            priced_days_90d=product.priced_days_90d,
+            days_since_last_competition_spike=product.days_since_last_competition_spike,
+            price_change_since_competition_spike_pct=product.price_change_since_competition_spike_pct,
+            days_since_last_price_dip=product.days_since_last_price_dip,
+            offers_change_at_last_price_dip_pct=product.offers_change_at_last_price_dip_pct,
             margin=product.margin,
             margin_90d=product.margin_90d,
             margin_peak=product.margin_peak,

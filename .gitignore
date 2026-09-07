@@ -10,3 +10,5 @@ backend/atlas.db-shm
 backend/atlas.db-wal
 backend/atlas_server.log
 backend/cloudflare_tunnel.log
+backend/google_oauth_client_secret.json
+backend/google_oauth_token.json

@@ -12,22 +12,24 @@ class ConfidenceFactor:
 
 
 class ConfidenceEngine:
+    """
+    Opportunity Engine 2.0 (2026-09-04): price-swing and competition-
+    surge used to live here as -30/-20 "confidence" penalties. They
+    were never actually evidence-quality signals -- they measure
+    whether the economics might DETERIORATE, not whether the data
+    itself is trustworthy, and conflating the two meant a real,
+    well-evidenced opportunity (e.g. DDR RAM whose UK price genuinely
+    crashed) read as "low confidence" identically to a product with
+    zero sales data at all. Both moved to OpportunityLensService as
+    RISK signals instead (see that module -- same 15%/50% thresholds,
+    unchanged, just relocated and correctly labelled). Confidence here
+    is now purely about evidence quality: how much real sales/velocity
+    data backs this number, which is the one thing left in this file.
+    """
 
     @staticmethod
     def explain(product: Product, trend: TrendAnalysis):
-        price_swing_triggered = abs(trend.price_change) > 15
-        competition_triggered = trend.offer_change > 50
         low_velocity_triggered = product.sales_drops_30d < 10
-
-        if price_swing_triggered:
-            price_label = f"Large price swing ({trend.price_change:+.1f}%, exceeds ±15%)"
-        else:
-            price_label = f"Price stable ({trend.price_change:+.1f}%, within ±15%)"
-
-        if competition_triggered:
-            competition_label = f"Competition surging (offers {trend.offer_change:+.1f}%, exceeds +50%)"
-        else:
-            competition_label = f"Competition stable (offers {trend.offer_change:+.1f}%, within +50%)"
 
         if low_velocity_triggered:
             velocity_label = f"Low sales velocity ({product.sales_drops_30d} rank drops in 30d, under 10)"
@@ -35,8 +37,6 @@ class ConfidenceEngine:
             velocity_label = f"Sufficient sales velocity ({product.sales_drops_30d} rank drops in 30d, 10+)"
 
         return [
-            ConfidenceFactor(price_label, price_swing_triggered, -30),
-            ConfidenceFactor(competition_label, competition_triggered, -20),
             ConfidenceFactor(velocity_label, low_velocity_triggered, -20),
         ]
 

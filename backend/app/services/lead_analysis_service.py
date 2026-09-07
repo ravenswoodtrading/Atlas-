@@ -165,15 +165,34 @@ class LeadAnalysisService:
             )
             metrics["inventory_detail"] = inventory_match
 
-            verdict, rationale = generate_verdict(
-                metrics, va_financials, similar_rejections=similar_rejections, brand_gating=brand_gating,
-            )
-
+            # Real bug found live, 2026-09-07 (Tamara: "when would Atlas
+            # check the price here as it says unchecked"): keepa_metrics
+            # used to only get saved AFTER generate_verdict succeeded, so
+            # a Claude+Gemini double failure (both were down/quota-
+            # exhausted at once) threw away a perfectly good, already-
+            # paid-for Keepa fetch -- the lead showed "not yet analyzed"
+            # with no photo/profit forever, even though Atlas HAD
+            # genuinely checked the price, three times, and just
+            # couldn't get an AI verdict on top of it. Committing the
+            # Keepa data here, before the AI call, means a verdict
+            # failure below only costs the verdict -- not the real
+            # price/photo/ROI data this lead already earned.
             lead.keepa_metrics = json.dumps(metrics)
+            lead.analyzed_at = datetime.now(timezone.utc)
+            db.commit()
+
+            try:
+                verdict, rationale = generate_verdict(
+                    metrics, va_financials, similar_rejections=similar_rejections, brand_gating=brand_gating,
+                )
+            except Exception as exc:
+                print(f"Lead verdict generation failed for lead {lead.id} ({lead.asin}): {exc}")
+                LeadAnalysisService._record_failure(db, lead, f"Analysis error: {exc}")
+                return
+
             lead.verdict = verdict
             lead.rationale = rationale
             lead.status = "analyzed"
-            lead.analyzed_at = datetime.now(timezone.utc)
             db.commit()
 
         except KeepaTokensExhaustedError as exc:

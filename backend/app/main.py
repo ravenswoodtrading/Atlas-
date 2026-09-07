@@ -1,19 +1,22 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
+from fastapi.staticfiles import StaticFiles
 
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 from app.services.category_survey_service import CategorySurveyService
 from app.services.scan_queue_service import ScanQueueService, TICK_INTERVAL_SECONDS
-from app.services.seller_watch_service import SellerWatchService
+from app.services.seller_watch_service import SellerWatchService, RECLASSIFY_DAILY_CAP
 from app.services.watchlist_service import WatchlistService
 from app.services.replen_service import ReplenService
 from app.services.review_queue_service import ReviewQueueService
+from app.services.revisit_pool_service import RevisitPoolService
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.lead_analysis_service import LeadAnalysisService
 from app.services.discord_notifier import DiscordNotifier
@@ -35,6 +38,7 @@ from app.routes import (
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
     token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
+    scan_intelligence,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -134,6 +138,10 @@ async def _seller_watch_scheduler():
 WEEKLY_RECHECK_TICK_SECONDS = 24 * 60 * 60
 WEEKLY_RECHECK_STALE_HOURS = 24 * 7
 
+# OA to Investigate archive threshold (2026-09-07, Tamara) -- see
+# SellerWatchService.archive_stale_oa_investigate's own docstring.
+OA_ARCHIVE_STALE_DAYS = 14
+
 
 async def _weekly_recheck_scheduler():
     while True:
@@ -155,11 +163,67 @@ async def _weekly_recheck_scheduler():
                     review_recheck_result = await asyncio.to_thread(
                         ReviewQueueService.recheck_stale_items, WEEKLY_RECHECK_STALE_HOURS,
                     )
+                    # Added 2026-09-05, same scheduler/window -- second,
+                    # narrower safety net for the BORDERLINE/NEEDS_
+                    # ATTENTION backlog specifically (Tamara: "the less
+                    # good leads should go altogether after say 15
+                    # days"). Replaces the one-off bulk-recheck script
+                    # from the same day, which burned hours of real
+                    # Keepa tokens in an unsupervised while-loop with
+                    # barely any net progress -- see
+                    # ReviewQueueService.recheck_weak_leads' own
+                    # docstring for the full incident and why this is a
+                    # single bounded batch per day instead.
+                    weak_lead_result = await asyncio.to_thread(
+                        ReviewQueueService.recheck_weak_leads,
+                    )
+                    # Opportunity Engine 2.0, Phase 3A (2026-09-04) --
+                    # targeted Revisit Pool: historically-profitable
+                    # ASINs untouched by ANYTHING for 30+ days (the
+                    # ASIN Re-Entry Audit's own 736-ASIN population),
+                    # profit-primary ranked, top 25/day. Same
+                    # ScanCoordinator-gated, same-scheduler-tick
+                    # convention as the three calls above -- see
+                    # RevisitPoolService's own module docstring for why
+                    # this is deliberately NOT a new scanning
+                    # subsystem. Every outcome is logged to RevisitLog
+                    # regardless of whether it recovered, which is the
+                    # actual point (see that model's own docstring).
+                    revisit_result = await asyncio.to_thread(RevisitPoolService.run_batch)
+                    # Added 2026-09-05, same scheduler/window -- real,
+                    # confirmed bug fix (Tamara's own report on
+                    # B09446293Y): a competitor detection classified
+                    # within days of a genuine EU price dip can record
+                    # "0 priced days" even though the dip is real and
+                    # inside SourcingClassifier.RECENT_WINDOW_DAYS --
+                    # Keepa's own historical price series for the last
+                    # few days isn't always fully settled yet at
+                    # classification time. Without this, a listing
+                    # caught at that unlucky moment stays wrongly
+                    # tagged "OA / unclear" forever -- the manual
+                    # /competitors reclassify-all button already
+                    # existed for this, but nothing ever triggered it
+                    # automatically. Capped at RECLASSIFY_DAILY_CAP
+                    # (same convention/value as MAX_STALE_RECHECK_PER_
+                    # RUN) -- see SellerWatchService.reclassify_all's
+                    # own docstring for why this is a bounded daily
+                    # batch, not one uncapped run against the whole
+                    # backlog.
+                    reclassify_result = await asyncio.to_thread(
+                        SellerWatchService.reclassify_all, RECLASSIFY_DAILY_CAP,
+                    )
                     summary = (
                         f"watchlist: {watch_result.get('checked', 0)}/{watch_result.get('stale', 0)} stale, "
                         f"replen: {replen_result.get('checked', 0)}/{replen_result.get('stale', 0)} stale, "
                         f"review queue: {review_recheck_result.get('rechecked', 0)}/{review_recheck_result.get('stale_found', 0)} stale, "
-                        f"{review_recheck_result.get('expired', 0)} expired"
+                        f"{review_recheck_result.get('expired', 0)} expired, "
+                        f"weak leads: {weak_lead_result.get('rechecked', 0)}/{weak_lead_result.get('weak_found', 0)} rechecked, "
+                        f"{weak_lead_result.get('rejected', 0)} rejected, "
+                        f"revisit pool: {revisit_result.get('scanned', 0)} revisited, "
+                        f"{revisit_result.get('recovered', 0)} recovered, "
+                        f"reclassify: {reclassify_result.get('processed', 0)} processed, "
+                        f"{reclassify_result.get('flipped', 0)} flipped, "
+                        f"{reclassify_result.get('remaining', 0)} remaining"
                     )
                     await asyncio.to_thread(
                         ActivityLog.mark_tick, "weekly_recheck", WEEKLY_RECHECK_TICK_SECONDS, summary,
@@ -176,6 +240,14 @@ async def _weekly_recheck_scheduler():
             # ActivityLog entry when it actually removes anything --
             # nothing further to log here.)
             await asyncio.to_thread(WatchlistService.prune_stale_auto_adds)
+            # OA to Investigate housekeeping (2026-09-07, Tamara: recurring
+            # daily archive of anything >14 days old and never actioned)
+            # -- see SellerWatchService.archive_stale_oa_investigate's own
+            # docstring. Same zero-Keepa-cost, no-lock-needed reasoning as
+            # prune_stale_auto_adds just above.
+            archived = await asyncio.to_thread(SellerWatchService.archive_stale_oa_investigate, OA_ARCHIVE_STALE_DAYS)
+            if archived:
+                await asyncio.to_thread(ActivityLog.record, "oa_archive", f"{archived} stale OA/unclear listing(s) archived")
         except Exception as exc:
             print(f"Weekly recheck tick failed: {exc}")
 
@@ -203,6 +275,66 @@ async def _lead_analysis_scheduler():
             print(f"Lead analysis tick failed: {exc}")
 
         await asyncio.sleep(LEAD_ANALYSIS_INTERVAL_SECONDS)
+
+
+# VA Lead Sheet pull sync (2026-09-05) -- replaces the ngrok-dependent
+# webhook design (see google_sheets_lead_sync.py's own module docstring).
+# Configurable via .env rather than hardcoded (Tamara's explicit
+# instruction) -- changing the schedule later is an .env edit, not a
+# code change. Days: comma-separated 3-letter weekday codes (mon/tue/
+# wed/thu/fri/sat/sun); hours: local 24h clock, start inclusive/end
+# exclusive. Start hour moved 8->7 (Tamara, 2026-09-06) -- leads that
+# came in overnight should be waiting first thing, not an hour later.
+VA_LEAD_SYNC_INTERVAL_SECONDS = int(os.getenv("VA_LEAD_SYNC_INTERVAL_SECONDS", "3600"))
+VA_LEAD_SYNC_DAYS = {d.strip().lower() for d in os.getenv("VA_LEAD_SYNC_DAYS", "mon,tue,wed,thu,fri").split(",") if d.strip()}
+VA_LEAD_SYNC_START_HOUR = int(os.getenv("VA_LEAD_SYNC_START_HOUR", "7"))
+VA_LEAD_SYNC_END_HOUR = int(os.getenv("VA_LEAD_SYNC_END_HOUR", "20"))
+_WEEKDAY_CODES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _va_lead_sync_should_run_now() -> bool:
+    now = datetime.now()
+    return (
+        _WEEKDAY_CODES[now.weekday()] in VA_LEAD_SYNC_DAYS
+        and VA_LEAD_SYNC_START_HOUR <= now.hour < VA_LEAD_SYNC_END_HOUR
+    )
+
+
+async def _va_lead_sheet_scheduler():
+    """
+    Real gap found and fixed (Tamara, 2026-09-06): the original version
+    slept a fixed VA_LEAD_SYNC_INTERVAL_SECONDS from whenever it last
+    ran, not aligned to the clock. Two consequences she didn't want:
+    (1) the very first check after the window opens (7am) could land up
+    to a full interval late, depending purely on what time Atlas
+    happened to have been started the day before; (2) restarting Atlas
+    loses no ground -- a fresh process always checks immediately on its
+    first loop iteration, so "the first scan is at 7am, or whenever
+    Atlas is (re)started if that's later" was already true for restarts,
+    but NOT for a continuously-running server crossing into a new day.
+
+    Fixed by aligning every sleep to the next wall-clock boundary that's
+    a multiple of the interval since midnight (e.g. the next :00 for a
+    3600s interval) instead of a fixed offset from last-run. Combined
+    with the unconditional immediate check on every loop iteration
+    (including the very first, right after Atlas starts), this means:
+    a tick lands close to 7:00:00 on the dot once the window opens, and
+    starting/restarting Atlas after 7am still checks immediately rather
+    than waiting for the next aligned boundary.
+    """
+    while True:
+        try:
+            if _va_lead_sync_should_run_now():
+                from app.services.google_sheets_lead_sync import pull_and_ingest_va_leads
+                result = await asyncio.to_thread(pull_and_ingest_va_leads)
+                await asyncio.to_thread(ActivityLog.mark_tick, "va_lead_sheet_sync", VA_LEAD_SYNC_INTERVAL_SECONDS, str(result))
+        except Exception as exc:
+            print(f"VA lead sheet sync tick failed: {exc}")
+
+        now = datetime.now()
+        seconds_since_midnight = now.hour * 3600 + now.minute * 60 + now.second
+        seconds_to_next_boundary = VA_LEAD_SYNC_INTERVAL_SECONDS - (seconds_since_midnight % VA_LEAD_SYNC_INTERVAL_SECONDS)
+        await asyncio.sleep(seconds_to_next_boundary)
 
 
 # How often the background Signals scheduler automatically checks
@@ -383,6 +515,7 @@ async def lifespan(app: FastAPI):
     seller_watch_task = asyncio.create_task(_seller_watch_scheduler())
     weekly_recheck_task = asyncio.create_task(_weekly_recheck_scheduler())
     lead_analysis_task = asyncio.create_task(_lead_analysis_scheduler())
+    va_lead_sheet_task = asyncio.create_task(_va_lead_sheet_scheduler())
     signal_task = asyncio.create_task(_signal_scheduler())
     eu_a2a_freshness_task = asyncio.create_task(_eu_a2a_freshness_scheduler())
     inventory_cleanup_task = asyncio.create_task(_inventory_cleanup_scheduler())
@@ -392,6 +525,7 @@ async def lifespan(app: FastAPI):
     seller_watch_task.cancel()
     weekly_recheck_task.cancel()
     lead_analysis_task.cancel()
+    va_lead_sheet_task.cancel()
     signal_task.cancel()
     eu_a2a_freshness_task.cancel()
     inventory_cleanup_task.cancel()
@@ -399,6 +533,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Atlas", lifespan=lifespan)
+
+# Real gap found live, 2026-09-07 (Tamara: "a logo on the tab so we can
+# see atlas") -- app/static/css and app/static/images already existed as
+# empty scaffolding directories, but nothing ever actually mounted them;
+# base.html's new favicon <link> would have 404'd without this.
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 # Creates any tables that don't exist yet (e.g. product_records) without
 # touching existing ones. The old 'products' table (incompatible legacy
@@ -450,6 +590,7 @@ app.include_router(verdict.router)
 app.include_router(leads.router)
 app.include_router(signals.router)
 app.include_router(oa_source_discovery.router)
+app.include_router(scan_intelligence.router)
 app.include_router(help_route.router)
 app.include_router(token_usage.router)
 app.include_router(criteria.router)

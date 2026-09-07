@@ -45,7 +45,7 @@ AUTOMATION_LABELS = {
 # types happened to log first.
 ACTIVITY_ORDER = [
     "brand_search", "competitor_check", "replen_check",
-    "watchlist_check", "review_queue_recheck", "signal_check", "oa_discovery_run", "lead_analysis",
+    "watchlist_check", "review_queue_recheck", "revisit_pool", "signal_check", "oa_discovery_run", "lead_analysis",
 ]
 ACTIVITY_LABELS = {
     "brand_search": "Brand searches",
@@ -55,6 +55,10 @@ ACTIVITY_LABELS = {
     # Added 2026-09-04 -- ReviewQueueService.recheck_stale_items, wired
     # into main.py's existing daily _weekly_recheck_scheduler.
     "review_queue_recheck": "Review Queue rechecks",
+    # Added 2026-09-04 -- Opportunity Engine 2.0 Phase 3A's targeted
+    # Revisit Pool (RevisitPoolService), wired into the SAME daily
+    # scheduler tick as review_queue_recheck just above.
+    "revisit_pool": "Revisit Pool",
     "signal_check": "Signal checks",
     "oa_discovery_run": "OA Discovery runs",
     "lead_analysis": "Leads analyzed",
@@ -99,7 +103,14 @@ def _command_centre():
     }
     for item in items:
         for view in item["views"]:
-            counts[view] += 1
+            # OA_INVESTIGATE (2026-09-05) deliberately NOT counted here --
+            # Command Centre stays exactly as it is (Tamara's own
+            # instruction: no new card, no redesign); the fifth view only
+            # lives in Review Queue itself. Guarded rather than adding a
+            # 5th key so a future view can be added to QUEUE_PRIORITIES
+            # without this crashing again on an unrecognised one.
+            if view in counts:
+                counts[view] += 1
 
     def preview(view_name):
         return [i for i in items if view_name in i["views"]][:COMMAND_CENTRE_PREVIEW_SIZE]
@@ -145,10 +156,12 @@ def _command_centre():
     return {
         "unique_total": len(items),
         "counts": counts,
+        # Only Buy Now still gets an item-level preview -- the other
+        # three used to (see dashboard.html's own comment, 2026-09-05)
+        # but that duplicated the count+breakdown cards below with a
+        # second full listing, which is what led Tamara to work leads
+        # from Command Centre instead of Review Queue.
         "buy_now_preview": preview(QUEUE_PRIORITY_BUY_NOW),
-        "va_to_review_preview": preview(QUEUE_PRIORITY_VA_TO_REVIEW),
-        "borderline_preview": preview(QUEUE_PRIORITY_BORDERLINE),
-        "needs_attention_preview": preview(QUEUE_PRIORITY_NEEDS_ATTENTION),
         "va_breakdown": va_breakdown,
         "borderline_breakdown": borderline_breakdown,
         "attention_breakdown": attention_breakdown,

@@ -75,6 +75,37 @@ def _google_search_url_variants(title: str, ean: str, asin: str) -> dict:
     }
 
 
+def _oa_search_url_variants(title: str, brand: str, ean: str, mpn: str) -> dict:
+    """
+    Review Queue OA workbench (2026-09-05) -- the "I'll find it"
+    manual-search buttons: EAN/MPN/Product on Google Shopping, plus a
+    plain Google Web search on the product, per Tamara's own spec
+    ("very obvious button... not hidden inside a dropdown"). Same
+    plain-URL, no-API-cost pattern as _google_search_url_variants above
+    (tbm=shop is just Google's own Shopping-tab URL parameter, not a
+    Shopping API call) -- opens in a new tab exactly like typing the
+    search by hand. Each variant is None when its underlying field is
+    unknown (never fabricate an EAN/MPN search query), so the template
+    only renders buttons for searches that can actually run.
+    """
+    brand_title = f"{brand} {title}".strip() if brand and not (title or "").lower().startswith(brand.lower()) else (title or "")
+
+    return {
+        "shopping_ean": (
+            f"https://www.google.com/search?tbm=shop&q={quote_plus(ean)}" if ean else None
+        ),
+        "shopping_mpn": (
+            f"https://www.google.com/search?tbm=shop&q={quote_plus(f'{brand} {mpn}'.strip())}" if mpn else None
+        ),
+        "shopping_product": (
+            f"https://www.google.com/search?tbm=shop&q={quote_plus(brand_title)}" if brand_title else None
+        ),
+        "web_product": (
+            f"https://www.google.com/search?q={quote_plus(brand_title)}" if brand_title else None
+        ),
+    }
+
+
 # ---- Competitor Watch redesign (2026-09-03) -- three internal views
 # under ONE route, matching the "?view=" pattern the Review Queue
 # redesign already established, rather than new top-level sidebar nav
@@ -399,8 +430,17 @@ def competitors_opportunity_detail(request: Request, asin: str):
 
     competitor_source = None
     if item:
+        # "oa_investigate" added 2026-09-05 (Review Queue OA view) --
+        # get_queue_item now tags an OA/unclear listing with its own
+        # distinct source value instead of "competitor" (see
+        # ReviewQueueService._oa_investigate_lead_dict's own docstring
+        # for why), but it's still the SAME dict shape (sourcing_tag,
+        # reasoning, etc. via _competitor_lead_dict underneath) this
+        # drawer and its OA-specific Next Action branch already expect
+        # -- matching both source values here keeps that branch working
+        # exactly as before, just reading it under its new label.
         competitor_source = next(
-            (s for s in item["source_items"] if s["source"] == "competitor"), None,
+            (s for s in item["source_items"] if s["source"] in ("competitor", "oa_investigate")), None,
         )
 
     # EAN isn't a field on the merged Review Queue item (never needed
@@ -582,4 +622,32 @@ def competitors_reclassify_all():
         + (" (stopped early -- low on tokens, click again once they refill)." if result['stopped_early'] else ".")
     )
     # See rescan-unscored's own comment on this same change.
+    return RedirectResponse(url=f"/competitors/sellers?check_result={quote(message)}", status_code=303)
+
+
+@router.post("/competitors/reclassify-oa-queue")
+def competitors_reclassify_oa_queue():
+    """
+    Same idea as reclassify-all just above, but scoped to exactly the
+    current OA to Investigate population (2026-09-07, Tamara: "I want
+    everything in the OA investigation queues reclassified and details
+    of how many were reclassified") -- see SellerWatchService.
+    reclassify_oa_investigate_queue's own docstring for why this is a
+    separate, narrower method rather than reclassify_all with a bigger
+    cap. Bounded per click by the Keepa token budget, same as
+    reclassify-all -- click again once tokens refill to keep going.
+    """
+    ScanCoordinator.acquire_for_manual_scan()
+
+    try:
+        result = SellerWatchService.reclassify_oa_investigate_queue()
+    finally:
+        ScanCoordinator.release_after_manual_scan()
+
+    flips = ", ".join(f"{count} -> {tag}" for tag, count in result["flipped_to"].items()) or "none"
+    message = (
+        f"OA queue reclassify: {result['processed']}/{result['queue_size']} ASIN(s) checked, "
+        f"{result['flipped']} reclassified ({flips}), {result['stayed_oa']} confirmed still OA/unclear."
+        + (" Stopped early -- low on tokens, click again once they refill." if result["stopped_early"] else "")
+    )
     return RedirectResponse(url=f"/competitors/sellers?check_result={quote(message)}", status_code=303)

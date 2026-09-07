@@ -1,0 +1,744 @@
+{% extends "base.html" %}
+{% from "_help.html" import help_button, help_modal %}
+
+{% block title %}Scan Intelligence - Atlas{% endblock %}
+
+{% block content %}
+{# Discovery Intelligence Phase 3 (2026-09-04) -- Scan Intelligence.
+   Read-only presentation of the existing DiscoveryIntelligenceService
+   (Phase 1 aggregation + Phase 2 Action-aware scoring). No new scoring
+   logic here, no Keepa/API calls on page render -- "Add to Scan Queue"
+   and "Scan Now" are the only actions, both explicit and human-
+   triggered (Phase 4 option A: manual, never automatic).
+
+   Visual pass (2026-09-04, follow-up) -- filter tabs/search/pagination
+   over the same already-computed, already-sorted ranked list (no new
+   query, no rescoring); icon-badge stat cards and section headers for
+   readability. Deliberately does NOT show "vs last month" deltas on
+   the stat cards -- Atlas has no historical snapshot of these counts
+   to compare against, and a fabricated delta would be worse than none. #}
+{% set tier_style = {"HIGH": ("success", "🔥"), "MEDIUM": ("warning", "🟡"), "LOW": ("secondary", "⚪")} %}
+{# action_label is passed in from the route -- reuses OpportunityLensService.ACTION_LABELS,
+   the same canonical Action display strings Review Queue itself uses, rather than a second
+   copy that could drift. #}
+{% set reason_style = {"pos": "text-success", "neg": "text-danger", "weak": "text-muted"} %}
+{% set reason_icon = {"pos": "bi-check-circle-fill", "neg": "bi-x-circle-fill", "weak": "bi-dash-circle"} %}
+{% set qs_string = "&tier=" ~ tier ~ "&q=" ~ q ~ "&page=" ~ page %}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap mb-1" style="gap:.75rem;">
+    <div>
+        <h4 class="mb-0">Scan Intelligence -- EU A2A {{ help_button("scan-intelligence") }}</h4>
+        <div class="text-muted small">What should Atlas scan next?</div>
+    </div>
+    <div class="text-end">
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-brand-modal">
+            <i class="bi bi-plus-lg"></i> Add Brand
+        </button>
+        <div class="text-muted" style="font-size:.75rem;">Default: Let Atlas Decide</div>
+    </div>
+</div>
+<div class="text-muted small mb-3">
+    Atlas's own recommendation layer, built from competitor EU/UK A2A evidence and our own scan history --
+    separate from <a href="/discovery">Discovery</a>, which is for scanning a brand or ASIN list right now.
+</div>
+
+{% if tick_result %}
+<div class="alert alert-info alert-dismissible fade show py-2">
+    <i class="bi bi-info-circle"></i> {{ tick_result }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+{% endif %}
+
+{# Stat cards -- icon + number + label, no fabricated trend data. #}
+{% set stat_cards = [
+    ("bi-bullseye", "#eef2ff", "#4f46e5", summary.total, "Brands ranked"),
+    ("bi-fire", "#ecfdf5", "#059669", summary.high, "High priority"),
+    ("bi-bar-chart-fill", "#fffbeb", "#d97706", summary.medium, "Medium priority"),
+    ("bi-circle", "#f3f4f6", "#6b7280", summary.low, "Low priority"),
+    ("bi-arrow-repeat", "#eff6ff", "#2563eb", summary.queued, "Already in Scan Queue"),
+    ("bi-lightbulb-fill", "#faf5ff", "#7c3aed", summary.recent_confirmed, "Recent confirmed BUY"),
+    ("bi-piggy-bank-fill", "#ecfdf5", "#059669", summary.proven_total, "Historically proven (real purchases)"),
+] %}
+<div class="row g-2 mb-3">
+    {% for icon, bg, fg, value, label in stat_cards %}
+    <div class="col-6 col-md-2">
+        <div class="card metric p-3 h-100">
+            <div class="rounded-circle d-flex align-items-center justify-content-center mb-2" style="width:36px;height:36px;background:{{ bg }};color:{{ fg }};">
+                <i class="bi {{ icon }}"></i>
+            </div>
+            <div class="fs-4 fw-semibold">{{ value }}</div>
+            <div class="text-muted small">{{ label }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+{# Attention Engine v1 (Phase 5B, 2026-09-04) -- "Where should Atlas
+   spend attention?" Explicit rule-based recommendations over evidence
+   already computed above (Discovery tier, Scan Economics, Historical
+   Buying, competitor evidence) -- deliberately NOT a combined score;
+   every row's `reason` cites the real numbers behind it. KEEP_SCANNING/
+   REDUCE_QUIET lanes are already visible in Scan Economics below, not
+   repeated here -- this section is only the two ACTIONABLE lanes. #}
+<div class="card metric p-3 mb-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+        <i class="bi bi-compass-fill" style="color:#7c3aed;"></i>
+        <h5 class="mb-0">Where should Atlas spend attention?</h5>
+    </div>
+    <div class="text-muted small mb-3">
+        Explicit, explainable recommendations -- not a combined score. Discovery tier answers "where might there be
+        opportunity"; this answers "where should we look next", using measured scan yield, historical buying
+        evidence, and competitor activity as separate, visible signals.
+    </div>
+
+    {% if attention_increase %}
+    <div class="fw-semibold small text-uppercase text-muted mb-2" style="letter-spacing:.03em;">Recommended Now</div>
+    <div class="table-responsive mb-3">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Priority</th>
+                    <th>Why</th>
+                    <th>Efficiency</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in attention_increase[:20] %}
+                {% set tstyle = tier_style.get(c.tier) %}
+                <tr>
+                    <td class="fw-semibold text-capitalize">
+                        <a href="/scan-intelligence?brand={{ c.brand }}{{ qs_string }}" class="text-decoration-none text-dark">{{ c.brand }}</a>
+                        {% if c.queued %}<span class="badge bg-light text-dark border ms-1">Queued</span>{% endif %}
+                    </td>
+                    <td>{% if tstyle %}<span class="badge bg-{{ tstyle[0] }}">{{ tstyle[1] }} {{ c.tier }}</span>{% else %}<span class="text-muted small">{{ c.tier }}</span>{% endif %}</td>
+                    <td class="small" style="max-width:340px;">{{ c.reason }}</td>
+                    <td class="small">
+                        {% if c.useful_per_10k is not none %}<strong>{{ c.useful_per_10k }}</strong>/10k
+                        {% elif not c.meets_sample_floor and c.total_scans > 0 %}<span class="text-muted">INSUFFICIENT SCAN SAMPLE</span>
+                        {% else %}<span class="text-muted">--</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="d-flex gap-1">
+                            {% if not c.queued %}
+                            <form method="post" action="/scan-intelligence/add-to-queue">
+                                <input type="hidden" name="brand" value="{{ c.brand }}">
+                                <button type="submit" class="btn btn-sm btn-dark" title="Add to Scan Queue"><i class="bi bi-plus-lg"></i></button>
+                            </form>
+                            {% endif %}
+                            <form method="post" action="/scan-intelligence/attention/extra-scan">
+                                <input type="hidden" name="brand" value="{{ c.brand }}">
+                                <button type="submit" class="btn btn-sm btn-outline-dark" title="Give Extra Attention (scan now)"><i class="bi bi-lightning-charge"></i></button>
+                            </form>
+                            <form method="post" action="/scan-intelligence/attention/ignore">
+                                <input type="hidden" name="brand" value="{{ c.brand }}">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary" title="Ignore for now"><i class="bi bi-eye-slash"></i></button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if attention_explore %}
+    <div class="fw-semibold small text-uppercase text-muted mb-2 mt-2" style="letter-spacing:.03em;">Explore (evidence exists, not a BUY signal)</div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr><th>Brand</th><th>Why</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for c in attention_explore %}
+                <tr class="table-light">
+                    <td class="fw-semibold text-capitalize"><a href="/scan-intelligence?brand={{ c.brand }}{{ qs_string }}" class="text-decoration-none text-dark">{{ c.brand }}</a></td>
+                    <td class="small text-muted">{{ c.reason }}</td>
+                    <td>
+                        <form method="post" action="/scan-intelligence/attention/ignore">
+                            <input type="hidden" name="brand" value="{{ c.brand }}">
+                            <button type="submit" class="btn btn-sm btn-outline-secondary" title="Ignore for now"><i class="bi bi-eye-slash"></i></button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if not attention_increase and not attention_explore %}
+    <div class="text-muted small">No attention recommendations right now.</div>
+    {% endif %}
+</div>
+
+<div class="row g-3">
+    <!-- Ranked brand table -->
+    <div class="col-lg-8">
+        <div class="card metric p-3 mb-3">
+            <!-- Filter tabs + search -->
+            <div class="d-flex justify-content-between align-items-center flex-wrap mb-2" style="gap:.5rem;">
+                <ul class="nav nav-pills flex-wrap" style="gap:.35rem;">
+                    {% set tier_tabs = [
+                        ("all", "All Brands", summary.total),
+                        ("HIGH", "High", summary.high),
+                        ("MEDIUM", "Medium", summary.medium),
+                        ("LOW", "Low", summary.low),
+                        ("queued", "Already Queued", summary.queued),
+                        ("proven", "Historically Proven", summary.proven_active + summary.proven_quiet),
+                    ] %}
+                    {% for tv, label, count in tier_tabs %}
+                    <li class="nav-item">
+                        <a class="nav-link py-1 px-2 small {{ 'active' if tier == tv }}"
+                           href="/scan-intelligence?tier={{ tv }}&q={{ q }}">
+                            {{ label }} <span class="badge {{ 'bg-light text-dark' if tier != tv else 'bg-white text-dark' }} ms-1">{{ count }}</span>
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <form method="get" action="/scan-intelligence" class="d-flex" style="gap:.35rem;">
+                    <input type="hidden" name="tier" value="{{ tier }}">
+                    <div class="input-group input-group-sm" style="width:220px;">
+                        <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                        <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Search brands...">
+                    </div>
+                    <button class="btn btn-sm btn-outline-dark" type="submit">Search</button>
+                </form>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Priority</th>
+                            <th>Brand</th>
+                            <th>Category</th>
+                            <th>Atlas Evidence</th>
+                            <th>Our EU Scans</th>
+                            <th>Recent Results</th>
+                            <th>Competitors</th>
+                            <th>Why</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for t in targets %}
+                        {% set style = tier_style[t.tier] %}
+                        {% set own = t.evidence.own %}
+                        {% set comp = t.evidence.competitor %}
+                        <tr class="{{ 'table-active' if selected and t.brand == selected.brand }}">
+                            <td>
+                                <span class="badge bg-{{ style[0] }}">{{ style[1] }} {{ t.tier }}</span>
+                                {% if t.gated %}<i class="bi bi-slash-circle-fill text-danger ms-1" title="Gated brand -- cannot currently sell"></i>{% endif %}
+                                {% if t.capped %}<i class="bi bi-arrow-down-circle text-warning ms-1" title="Capped below HIGH -- see Why"></i>{% endif %}
+                                {% if t.plug_risk %}<i class="bi bi-plug ms-1" title="EU plug risk -- check before buying"></i>{% endif %}
+                            </td>
+                            <td class="fw-semibold text-capitalize">
+                                <a href="/scan-intelligence?brand={{ t.brand }}{{ qs_string }}" class="text-decoration-none text-dark">{{ t.brand }}</a>
+                                {% set qstate = queue_states.get(t.brand, {}).state %}
+                                {% if qstate == "active" %}
+                                <span class="badge bg-success ms-1"><i class="bi bi-arrow-repeat"></i> Already scanning</span>
+                                {% elif qstate == "paused" %}
+                                <span class="badge bg-warning text-dark ms-1" title="Queued, but automated scanning is paused"><i class="bi bi-pause-circle"></i> Queued -- paused</span>
+                                {% elif qstate == "gated" %}
+                                <span class="badge bg-danger ms-1" title="Queued, but gated -- no tokens spent"><i class="bi bi-slash-circle"></i> Queued -- gated</span>
+                                {% endif %}
+                                {% set dstate = discovery_states.get(t.brand) %}
+                                {% if dstate == "proven_active" %}
+                                <i class="bi bi-piggy-bank-fill text-success ms-1" title="Proven buyer -- real EU A2A purchase history, and current evidence agrees it's active"></i>
+                                {% elif dstate == "proven_quiet" %}
+                                <i class="bi bi-piggy-bank text-success ms-1" title="Proven buyer -- real EU A2A purchase history, but current evidence is quiet"></i>
+                                {% endif %}
+                            </td>
+                            <td class="small text-muted">{{ t.category_name or "--" }}</td>
+                            <td class="small">
+                                <span class="badge bg-light text-dark border">{{ t.source }}</span>
+                            </td>
+                            <td class="small">
+                                {% if own %}
+                                    {{ own.eu_scanned }} scanned
+                                {% else %}
+                                    <span class="text-muted">Never</span>
+                                {% endif %}
+                            </td>
+                            <td class="small">
+                                {% if own %}
+                                    {% if own.eu_confirmed_buy_count_recent > 0 %}
+                                        <span class="text-success fw-semibold">{{ own.eu_confirmed_buy_count_recent }} confirmed BUY (recent)</span>
+                                    {% elif own.eu_confirmed_buy_count_all_time > 0 %}
+                                        <span class="text-muted">{{ own.eu_confirmed_buy_count_all_time }} confirmed BUY (historical, not recent)</span>
+                                    {% elif own.eu_high_value_low_confidence_count > 0 %}
+                                        <span style="color:#6f42c1;">{{ own.eu_high_value_low_confidence_count }} High Value -- Low Confidence</span>
+                                    {% else %}
+                                        <span class="text-muted">0 confirmed BUY</span>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">--</span>
+                                {% endif %}
+                            </td>
+                            <td class="small">
+                                {% if comp %}
+                                    {{ comp.distinct_competitors }} seller{{ "s" if comp.distinct_competitors != 1 }}
+                                    {% if comp.recent %}<i class="bi bi-circle-fill text-success" style="font-size:.5rem;" title="Recent evidence"></i>{% endif %}
+                                {% else %}
+                                    <span class="text-muted">None seen</span>
+                                {% endif %}
+                            </td>
+                            <td class="small text-muted" style="max-width:220px;">
+                                {% set top_reason = (t.reasons | selectattr("kind", "equalto", "pos") | list | first) or (t.reasons | first) %}
+                                {% if top_reason %}{{ top_reason.text }}{% endif %}
+                            </td>
+                            <td>
+                                <a href="/scan-intelligence?brand={{ t.brand }}{{ qs_string }}" class="btn btn-sm btn-outline-dark">View</a>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="9" class="text-center text-muted py-4">
+                            {% if q or tier != "all" %}
+                                No brands match this filter. <a href="/scan-intelligence">Clear filters</a>.
+                            {% else %}
+                                No ranked brands yet -- Atlas needs either competitor EU/UK A2A evidence or our own scan history to rank a brand.
+                            {% endif %}
+                        </td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if total_filtered %}
+            <div class="d-flex justify-content-between align-items-center flex-wrap mt-3" style="gap:.5rem;">
+                <div class="text-muted small">
+                    Showing {{ (page - 1) * 20 + 1 }}-{{ [page * 20, total_filtered] | min }} of {{ total_filtered }} brand{{ "s" if total_filtered != 1 }}
+                </div>
+                {% if total_pages > 1 %}
+                <nav>
+                    <ul class="pagination pagination-sm mb-0">
+                        <li class="page-item {{ 'disabled' if page <= 1 }}">
+                            <a class="page-link" href="/scan-intelligence?tier={{ tier }}&q={{ q }}&page={{ page - 1 }}">Prev</a>
+                        </li>
+                        {% for p in pagination_window %}
+                        {% if p is none %}
+                        <li class="page-item disabled"><span class="page-link">&hellip;</span></li>
+                        {% else %}
+                        <li class="page-item {{ 'active' if p == page }}">
+                            <a class="page-link" href="/scan-intelligence?tier={{ tier }}&q={{ q }}&page={{ p }}">{{ p }}</a>
+                        </li>
+                        {% endif %}
+                        {% endfor %}
+                        <li class="page-item {{ 'disabled' if page >= total_pages }}">
+                            <a class="page-link" href="/scan-intelligence?tier={{ tier }}&q={{ q }}&page={{ page + 1 }}">Next</a>
+                        </li>
+                    </ul>
+                </nav>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- "Why this brand?" detail panel -->
+    <div class="col-lg-4">
+        <div class="card metric p-3" style="position:sticky; top:1rem;">
+            {% if selected %}
+            {% set s = selected %}
+            {% set style = tier_style[s.tier] %}
+            {% set own = s.evidence.own %}
+            {% set comp = s.evidence.competitor %}
+            {% set cat = s.evidence.category %}
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <h5 class="mb-0 text-capitalize">Why {{ s.brand }}?</h5>
+                <span class="badge bg-{{ style[0] }}">{{ style[1] }} {{ s.tier }}</span>
+            </div>
+            <div class="text-muted small mb-1">{{ s.category_name or "No category on record" }}</div>
+            {% set sel_dstate = discovery_states.get(s.brand) %}
+            {% if sel_dstate == "proven_active" %}
+            <div class="small text-success mb-2"><i class="bi bi-piggy-bank-fill"></i> Proven buyer -- we've bought this successfully before, and current evidence agrees it's active</div>
+            {% elif sel_dstate == "proven_quiet" %}
+            <div class="small text-success mb-2"><i class="bi bi-piggy-bank"></i> Proven buyer -- we've bought this successfully before, though current evidence is quiet right now</div>
+            {% else %}
+            <div class="mb-2"></div>
+            {% endif %}
+
+            {% if s.gated %}
+            <div class="alert alert-danger py-2 small"><i class="bi bi-slash-circle-fill"></i> Gated on this account -- Atlas cannot currently get Amazon approval to sell this brand.</div>
+            {% endif %}
+            {% if s.plug_risk %}
+            <div class="alert alert-warning py-2 small"><i class="bi bi-plug"></i> This category often includes mains-powered items -- confirm the plug type before buying an EU A2A find.</div>
+            {% endif %}
+
+            {# Overview / Evidence tabs (visual pass, 2026-09-04 follow-up) --
+               same content as before, just split into "what should I do"
+               (Overview: recommendation + action buttons) vs "why" (Evidence:
+               our scan history, competitor sightings, category). Purely
+               client-side Bootstrap tabs -- no new data, "Recent Products"
+               deliberately left out for now (would need a new per-ASIN query). #}
+            <ul class="nav nav-tabs mb-3" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#detail-overview" type="button" role="tab">Overview</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" data-bs-toggle="tab" data-bs-target="#detail-evidence" type="button" role="tab">Evidence</button>
+                </li>
+            </ul>
+            <div class="tab-content">
+            <div class="tab-pane fade show active" id="detail-overview" role="tabpanel">
+
+            <!-- ATLAS RECOMMENDATION -->
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-lightbulb-fill" style="color:#7c3aed;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Atlas Recommendation</span>
+            </div>
+            <ul class="list-unstyled small mb-3">
+                {% for reason in s.reasons %}
+                <li class="{{ reason_style[reason.kind] }} mb-1"><i class="bi {{ reason_icon[reason.kind] }}"></i> {{ reason.text }}</li>
+                {% endfor %}
+            </ul>
+
+            {% set sel_qstate = queue_states.get(s.brand, {}).state %}
+            <div class="d-grid gap-2">
+                {% if sel_qstate == "active" %}
+                <button class="btn btn-outline-success" type="button" disabled>
+                    <i class="bi bi-arrow-repeat"></i> Already scanning
+                </button>
+                {% elif sel_qstate == "paused" %}
+                <a href="/scan-queue" class="btn btn-outline-warning w-100">
+                    <i class="bi bi-pause-circle"></i> Queued -- automation paused (resume on Scan Queue)
+                </a>
+                {% elif sel_qstate == "gated" %}
+                <a href="/exclusions" class="btn btn-outline-danger w-100">
+                    <i class="bi bi-slash-circle"></i> Queued -- gated (manage on Exclusions)
+                </a>
+                {% else %}
+                <form method="post" action="/scan-intelligence/add-to-queue">
+                    <input type="hidden" name="brand" value="{{ s.brand }}">
+                    <button type="submit" class="btn btn-dark w-100">
+                        <i class="bi bi-plus-lg"></i> Add to Scan Queue
+                    </button>
+                </form>
+                {% endif %}
+                <form method="post" action="/scan-intelligence/scan-now">
+                    <input type="hidden" name="brand" value="{{ s.brand }}">
+                    <button type="submit" class="btn btn-outline-dark w-100">
+                        <i class="bi bi-lightning-charge"></i> Scan Now
+                    </button>
+                </form>
+            </div>
+
+            </div>
+            <div class="tab-pane fade" id="detail-evidence" role="tabpanel">
+
+            {# OUR BUYING HISTORY -- Historical Buying Intelligence (Phase
+               4D, 2026-09-04). Shown FIRST, ahead of Keepa-derived
+               evidence, per the approved brief's own example layout.
+               Deliberately a SEPARATE box, never blended into the tier
+               badge or the reasons list above -- this answers "have we
+               made money with this before", a different question from
+               "is there an opportunity right now" (Our Evidence/
+               Competitor Evidence below). #}
+            <div class="d-flex align-items-center gap-2 mb-1 mt-1">
+                <i class="bi bi-piggy-bank-fill" style="color:#059669;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Our Buying History</span>
+            </div>
+            {% set bh = buying_history.get(s.brand) %}
+            {% if bh %}
+            <div class="p-2 mb-2" style="background:#ecfdf5; border-radius:8px;">
+                <div class="small">
+                    <strong>{{ bh.purchase_count }}</strong> EU A2A purchase{{ "s" if bh.purchase_count != 1 }} ·
+                    <strong>£{{ "%.2f"|format(bh.total_profit) }}</strong> recorded profit
+                </div>
+                <div class="small text-muted">{{ bh.distinct_asins }} distinct ASIN{{ "s" if bh.distinct_asins != 1 }} · {{ bh.eu_markets | join(", ") }}</div>
+                {% if bh.avg_potential_roi_pct is not none %}
+                <div class="small text-muted" title="The workbook's own 'Potential ROI' column -- an estimate at time of purchase, not a confirmed/realized outcome.">Avg potential ROI at purchase: {{ bh.avg_potential_roi_pct }}%</div>
+                {% endif %}
+                {% if bh.most_recent %}
+                <div class="small text-muted">Last purchased: {{ bh.most_recent.strftime("%Y-%m-%d") }}</div>
+                {% endif %}
+                {% if bh.sourcing_methods %}
+                <div class="small text-muted mt-1">Sourced via: {{ bh.sourcing_methods.keys() | join(", ") }}</div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted small mb-2">No recorded EU A2A purchase history for this brand.</div>
+            {% endif %}
+
+            {# SCAN ECONOMICS -- Phase 5A (2026-09-04). Deliberately a
+               MEASUREMENT, not a scoring input -- see scan_economics_
+               service's own module docstring for the finding this
+               exists to surface (Discovery tier doesn't reliably
+               predict scan yield). Only shown for currently-queued
+               brands (nothing to measure otherwise); below the
+               MIN_SCANS_FOR_EFFICIENCY floor, only raw counts show, on
+               purpose -- see _economics_rows' own docstring. #}
+            {% set econ = economics.get(s.brand) %}
+            {% if econ %}
+            <div class="d-flex align-items-center gap-2 mb-1 mt-2">
+                <i class="bi bi-speedometer2" style="color:#0d9488;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Scan Economics</span>
+            </div>
+            <div class="p-2 mb-2" style="background:#f0fdfa; border-radius:8px;">
+                <div class="small">
+                    {{ econ.total_records }} scan{{ "s" if econ.total_records != 1 }} · {{ econ.useful_count }} useful Action{{ "s" if econ.useful_count != 1 }}
+                    {% if econ.status == "QUIET" %}<span class="badge bg-warning text-dark ms-1">QUIET</span>
+                    {% elif econ.status == "NEVER_USEFUL" %}<span class="badge bg-secondary ms-1">Never useful yet</span>
+                    {% else %}<span class="badge bg-success ms-1">ACTIVE</span>{% endif %}
+                </div>
+                {% if econ.meets_sample_floor %}
+                <div class="small text-muted">
+                    <strong>{{ econ.useful_per_10k }}</strong> useful opportunities / 10k tokens
+                    {% if econ.tokens_per_confirmed_buy %} · {{ "{:,.0f}".format(econ.tokens_per_confirmed_buy) }} tokens/confirmed BUY{% endif %}
+                </div>
+                {% else %}
+                <div class="small text-muted">Fewer than {{ min_scans_for_efficiency }} scans -- not enough data for a reliable efficiency figure yet.</div>
+                {% endif %}
+                <div class="small text-muted">
+                    {% if econ.days_since_last_useful is not none %}Last useful: {{ econ.days_since_last_useful }} day{{ "s" if econ.days_since_last_useful != 1 }} ago{% else %}No useful Action on record{% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- OUR EVIDENCE -->
+            <div class="d-flex align-items-center gap-2 mb-1 mt-1">
+                <i class="bi bi-graph-up-arrow" style="color:#2563eb;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Our Evidence</span>
+            </div>
+            {% if own %}
+            <div class="p-2 mb-2" style="background:#f0f7ff; border-radius:8px;">
+                <div class="small"><strong>{{ own.eu_scanned }}</strong> EU-sourced ASINs scanned</div>
+                <div class="small">
+                    <span class="text-success fw-semibold">{{ own.eu_confirmed_buy_count_recent }}</span> confirmed BUY recent /
+                    <span class="text-muted">{{ own.eu_confirmed_buy_count_all_time }}</span> all-time
+                </div>
+                {% if own.eu_high_value_low_confidence_count > 0 %}
+                <div class="small" style="color:#6f42c1;">{{ own.eu_high_value_low_confidence_count }} High Value -- Low Confidence</div>
+                {% endif %}
+                {% if own.eu_avg_buy_profit %}
+                <div class="small text-muted">Avg profit on confirmed BUY: £{{ "%.2f"|format(own.eu_avg_buy_profit) }}</div>
+                {% endif %}
+                {% if own.total_scanned and own.total_scanned != own.eu_scanned %}
+                <div class="small text-muted">Also scanned {{ own.total_scanned }} time(s) total (incl. non-EU channels)</div>
+                {% endif %}
+
+                {% if own.eu_actions_recent or own.eu_actions_all_time %}
+                <div class="small text-muted mt-2 mb-1">Action breakdown (recent / all-time):</div>
+                <table class="table table-sm mb-0 small">
+                    {% for act, label in action_label.items() %}
+                    {% set r = own.eu_actions_recent.get(act, 0) if own.eu_actions_recent else 0 %}
+                    {% set a = own.eu_actions_all_time.get(act, 0) if own.eu_actions_all_time else 0 %}
+                    {% if a > 0 %}
+                    <tr><td class="text-muted">{{ label }}</td><td class="text-end">{{ r }} / {{ a }}</td></tr>
+                    {% endif %}
+                    {% endfor %}
+                </table>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted small mb-2">We haven't scanned this brand ourselves yet.</div>
+            {% endif %}
+
+            <!-- COMPETITOR EVIDENCE -->
+            <div class="d-flex align-items-center gap-2 mb-1 mt-2">
+                <i class="bi bi-people-fill" style="color:#d97706;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Competitor Evidence</span>
+            </div>
+            {% if comp %}
+            <div class="p-2 mb-2" style="background:#fff7e6; border-radius:8px;">
+                <div class="small"><strong>{{ comp.distinct_competitors }}</strong> distinct competitor{{ "s" if comp.distinct_competitors != 1 }} found EU/UK A2A here</div>
+                <div class="small text-muted">{{ comp.eu_a2a_count }} EU A2A listing(s), {{ comp.uk_a2a_count }} UK A2A listing(s)</div>
+                {% if comp.recent %}
+                <div class="small text-success"><i class="bi bi-circle-fill" style="font-size:.5rem;"></i> Recent evidence ({{ comp.marketplaces_recent | join(", ") }})</div>
+                {% else %}
+                <div class="small text-muted">No recent evidence</div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="text-muted small mb-2">No competitor EU/UK A2A evidence on record.</div>
+            {% endif %}
+
+            <!-- CATEGORY -->
+            {% if cat %}
+            <div class="d-flex align-items-center gap-2 mb-1 mt-2">
+                <i class="bi bi-tag-fill" style="color:#6b7280;"></i>
+                <span class="fw-semibold small text-uppercase text-muted" style="letter-spacing:.03em;">Category</span>
+            </div>
+            <div class="small mb-2">{{ cat.name }} {% if cat.is_top %}<span class="badge bg-light text-dark border">Top-3 EU A2A category</span>{% endif %}</div>
+            {% endif %}
+
+            </div>
+            </div>
+            {% else %}
+            <div class="text-center text-muted py-4">
+                <i class="bi bi-lightbulb" style="font-size:2rem;"></i>
+                <div class="mt-2">Pick a brand from the table to see why Atlas recommends it.</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if economics_rows %}
+{# Scan Economics -- Phase 5A (2026-09-04). A read-only MEASUREMENT
+   layer, deliberately kept separate from Discovery tier/score
+   everywhere on this page (see scan_economics_service's own module
+   docstring) -- the finding this exists to surface is that tier does
+   NOT reliably predict scan yield. Sorted by useful opportunities per
+   10k tokens for brands with >= min_scans_for_efficiency real scan
+   records; brands below that floor are grouped after, showing raw
+   counts only -- never a computed ratio a small sample can't support. #}
+<div class="card metric p-3 mt-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+        <i class="bi bi-speedometer2" style="color:#0d9488;"></i>
+        <h6 class="mb-0">Scan Economics</h6>
+    </div>
+    <div class="text-muted small mb-3">
+        Measured scan yield for currently-queued brands -- how productive has scanning each one actually been,
+        separate from Discovery priority. Sorted by useful opportunities per 10k tokens (brands with fewer than
+        {{ min_scans_for_efficiency }} real scans show below, with raw counts only -- not enough data yet for a
+        reliable ratio).
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Priority</th>
+                    <th>Scans</th>
+                    <th>Useful Actions</th>
+                    <th>Useful / 10k tokens</th>
+                    <th>Tokens / BUY</th>
+                    <th>Last Useful</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in economics_rows %}
+                {% set tstyle = tier_style.get(r.tier) %}
+                <tr class="{{ 'table-light' if not r.meets_sample_floor }}">
+                    <td class="fw-semibold text-capitalize"><a href="/scan-intelligence?brand={{ r.brand }}{{ qs_string }}" class="text-decoration-none text-dark">{{ r.brand }}</a></td>
+                    <td>
+                        {% if tstyle %}<span class="badge bg-{{ tstyle[0] }}">{{ tstyle[1] }} {{ r.tier }}</span>{% else %}<span class="text-muted small">{{ r.tier }}</span>{% endif %}
+                    </td>
+                    <td class="small">{{ r.total_records }}</td>
+                    <td class="small">{{ r.useful_count }}</td>
+                    <td class="small">
+                        {% if r.meets_sample_floor %}<strong>{{ r.useful_per_10k }}</strong>
+                        {% else %}<span class="text-muted" title="Fewer than {{ min_scans_for_efficiency }} real scans -- not enough data for a reliable figure">n/a</span>{% endif %}
+                    </td>
+                    <td class="small">
+                        {% if r.tokens_per_confirmed_buy %}{{ "{:,.0f}".format(r.tokens_per_confirmed_buy) }}
+                        {% else %}<span class="text-muted">--</span>{% endif %}
+                    </td>
+                    <td class="small text-muted">
+                        {% if r.days_since_last_useful is not none %}{{ r.days_since_last_useful }}d ago
+                        {% else %}never{% endif %}
+                    </td>
+                    <td>
+                        {% if r.status == "QUIET" %}<span class="badge bg-warning text-dark">QUIET</span>
+                        {% elif r.status == "NEVER_USEFUL" %}<span class="badge bg-secondary">Never useful</span>
+                        {% else %}<span class="badge bg-success">ACTIVE</span>{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if invisible_history %}
+{# Historically proven, currently invisible -- Historical Buying
+   Intelligence (Phase 4D). These brands have real recorded EU A2A
+   purchase profit but ZERO competitor/own Discovery evidence, so they
+   can never appear in the ranked table above (nothing ranks them).
+   Per the approved brief: a candidate exploration lane, NOT
+   automatically high priority -- each brand needs a human's explicit
+   "Add Brand" click, exactly like any other manual add. #}
+<div class="card metric p-3 mt-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+        <i class="bi bi-piggy-bank-fill" style="color:#059669;"></i>
+        <h6 class="mb-0">Historically Proven, Currently Invisible ({{ invisible_history|length }})</h6>
+    </div>
+    <div class="text-muted small mb-3">
+        Real recorded EU A2A purchase profit, but zero competitor or own-scan evidence today -- Atlas has never
+        scanned these and no competitor has been spotted selling them EU A2A. A better exploration lane than a
+        brand we know nothing about: we know nothing about them <em>right now</em>, but we've made money from
+        them before. Not automatically prioritized -- add individually if you want Atlas building fresh evidence on one.
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Recorded profit</th>
+                    <th>Purchases</th>
+                    <th>ASINs</th>
+                    <th>EU markets</th>
+                    <th>Last purchased</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for brand, bh in invisible_history %}
+                <tr>
+                    <td class="fw-semibold text-capitalize">{{ brand }}</td>
+                    <td class="small">£{{ "%.2f"|format(bh.total_profit) }}</td>
+                    <td class="small">{{ bh.purchase_count }}</td>
+                    <td class="small">{{ bh.distinct_asins }}</td>
+                    <td class="small text-muted">{{ bh.eu_markets | join(", ") }}</td>
+                    <td class="small text-muted">{{ bh.most_recent.strftime("%Y-%m-%d") if bh.most_recent else "--" }}</td>
+                    <td>
+                        <form method="post" action="/scan-intelligence/add-brand">
+                            <input type="hidden" name="brand" value="{{ brand }}">
+                            <button type="submit" class="btn btn-sm btn-outline-dark">
+                                <i class="bi bi-plus-lg"></i> Add Brand
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Add Brand modal -->
+<div class="modal fade" id="add-brand-modal" tabindex="-1" aria-labelledby="add-brand-modal-label" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="add-brand-modal-label"><i class="bi bi-plus-lg"></i> Add Brand</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="/scan-intelligence/add-brand">
+        <div class="modal-body">
+            <div class="text-muted small mb-3">
+                For a brand Atlas has no evidence on yet, so it can't appear in the table.
+                This adds it straight to the <a href="/scan-queue">Scan Queue</a> with no category restriction
+                ("Let Atlas Decide") so Atlas starts building evidence on it.
+            </div>
+            <label class="form-label">Brand</label>
+            <input type="text" class="form-control" name="brand" placeholder="e.g. philips" required autofocus>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-dark"><i class="bi bi-plus-lg"></i> Add Brand (Let Atlas Decide)</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% call help_modal("scan-intelligence", "Scan Intelligence") %}
+<p>Atlas's own recommendation layer for what to scan next on EU A2A (DE/FR/ES/IT) -- built from
+competitor evidence (are other sellers finding this brand EU/UK A2A?), our own scan history (has
+scanning it ourselves actually worked?), and category performance, using the same Action-aware
+evidence (BUY NOW, HIGH VALUE -- LOW CONFIDENCE, etc.) the Review Queue itself uses.</p>
+<p>This is separate from <a href="/discovery">Discovery</a>, which is for scanning a specific brand
+or ASIN list right now. Scan Intelligence only reads existing scan/competitor history -- it never
+spends Keepa tokens on its own; "Add to Scan Queue" and "Scan Now" are the only actions that do,
+and both require a click.</p>
+{% endcall %}
+
+{% endblock %}

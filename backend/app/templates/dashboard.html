@@ -67,11 +67,29 @@
                     <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
                     {% endif %}
                     {% for view_name in item.views %}
-                        {% if view_name != "BUY_NOW" %}
+                        {# OA_INVESTIGATE (2026-09-05) deliberately skipped
+                           here, not just missing from view_style by
+                           accident -- Command Centre stays exactly as it
+                           is (no new badge/card), the fifth view only
+                           shows in Review Queue itself. Guarded with
+                           view_style.get(...) rather than adding it here
+                           so a future view can't crash this card either. #}
+                        {% if view_name != "BUY_NOW" and view_style.get(view_name) %}
                         {% set cls, icon = view_style[view_name] %}
                         <span class="badge bg-{{ cls }}">{{ view_short_label[view_name] }}</span>
                         {% endif %}
                     {% endfor %}
+                    {% if item.va_info %}
+                        {# Atlas's own initial AI verdict (2026-09-06) -- the VA to Review
+                           card's queue bucket alone doesn't tell you this: every VA lead
+                           sits in "VA to Review" regardless of whether Atlas itself said
+                           BUY/WATCH/AVOID, unlike a scan/competitor item where the bucket
+                           (Buy Now vs Borderline) IS effectively the verdict. Same badge/
+                           colour convention as review_queue.html's row list. #}
+                        <span class="badge {{ 'bg-success' if item.va_info.verdict == 'BUY' else ('bg-warning text-dark' if item.va_info.verdict == 'WATCH' else ('bg-secondary' if item.va_info.verdict == 'AVOID' else 'bg-light text-dark border')) }}" title="Atlas's own initial AI verdict for this lead">
+                            <i class="bi bi-robot"></i> Atlas: {{ item.va_info.verdict or "Not yet rated" }}
+                        </span>
+                    {% endif %}
                 </div>
             </div>
             <div class="d-none d-md-flex text-center small mx-3" style="gap:1.25rem; white-space:nowrap;">
@@ -80,6 +98,26 @@
                 <div><div class="text-muted" style="font-size:.7rem;">AMAZON</div><div>&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div></div>
                 <div><div class="text-muted" style="font-size:.7rem;">PROFIT</div><div class="text-success">&pound;{{ "%.2f"|format(item.profit or 0) }}</div></div>
                 <div><div class="text-muted" style="font-size:.7rem;">ROI</div><div>{{ "%.0f"|format(item.roi or 0) }}%</div></div>
+                {# Sales evidence (2026-09-07, Tamara: "lots of white space
+                   ... can I get sales confirmed or price drops on the Buy
+                   rows here") -- same field/colour convention as the
+                   Review Queue row list's own Sales cell (see
+                   review_queue.html): confirmed monthly sales (green) is
+                   the strongest signal, a 30d rank-drops proxy (amber) is
+                   weaker, and no evidence at all is a visible warning
+                   (red) rather than silently blank. #}
+                <div>
+                    <div class="text-muted" style="font-size:.7rem;">SALES</div>
+                    <div class="fw-semibold {{ 'text-success' if item.monthly_sales else ('text-warning' if item.sales_drops_30d else 'text-danger') }}">
+                        {% if item.monthly_sales %}
+                            {{ item.monthly_sales }}/mo
+                        {% elif item.sales_drops_30d %}
+                            {{ item.sales_drops_30d }} drops
+                        {% else %}
+                            <i class="bi bi-exclamation-triangle"></i> none
+                        {% endif %}
+                    </div>
+                </div>
             </div>
             <div class="d-flex flex-shrink-0" style="gap:.35rem;">
                 <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ item.asin }}"><i class="bi bi-check-lg"></i> Buy</button>
@@ -159,54 +197,17 @@
     </div>
 </div>
 
-{% macro preview_card(title, icon, color, view, items, empty_text) %}
-<div class="card metric p-3 mb-3">
-    <div class="d-flex justify-content-between align-items-center mb-2">
-        <div class="fw-bold"><i class="bi {{ icon }} text-{{ color }}"></i> {{ title }}</div>
-        <a href="/review-queue?view={{ view }}" class="small text-decoration-none">View all &rarr;</a>
-    </div>
-    {% if items %}
-    <table class="table table-sm mb-0">
-        <tbody>
-        {% for item in items %}
-        <tr>
-            <td>
-                <div class="fw-semibold small">
-                    {{ (item.title[:40] if item.title else item.asin) }}{% if item.title and item.title|length > 40 %}...{% endif %}
-                </div>
-                <div class="text-muted" style="font-size:.75rem;">
-                    {{ item.asin }}
-                    {% for view_name in item.views %}
-                        {% set cls, vicon = view_style[view_name] %}
-                        <span class="badge bg-{{ cls }}">{{ view_short_label[view_name] }}</span>
-                    {% endfor %}
-                </div>
-            </td>
-            <td class="text-end small" style="white-space:nowrap;">
-                <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }} &rarr; &pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
-                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-muted' }}">&pound;{{ "%.2f"|format(item.profit or 0) }} &middot; {{ "%.0f"|format(item.roi or 0) }}% ROI</div>
-            </td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <div class="text-muted small">{{ empty_text }}</div>
-    {% endif %}
-</div>
-{% endmacro %}
-
-<div class="row">
-    <div class="col-md-4">
-        {{ preview_card("VA to Review", "bi-people-fill", "primary", "va_to_review", command_centre.va_to_review_preview, "Nothing awaiting your review.") }}
-    </div>
-    <div class="col-md-4">
-        {{ preview_card("Borderline", "bi-graph-up", "warning", "borderline", command_centre.borderline_preview, "Nothing borderline right now.") }}
-    </div>
-    <div class="col-md-4">
-        {{ preview_card("Needs Attention", "bi-exclamation-triangle-fill", "danger", "needs_attention", command_centre.needs_attention_preview, "Nothing needs investigation right now.") }}
-    </div>
-</div>
+<!-- Preview row removed (2026-09-05) -- this used to repeat VA to
+     Review/Borderline/Needs Attention a SECOND time as item-level
+     mini-tables, directly below the count+breakdown cards above that
+     already cover the same three buckets. Tamara's own confusion,
+     working leads from Command Centre instead of Review Queue, traced
+     straight back to this: it made the homepage look like a second
+     complete workspace instead of a status glance. The cards above
+     (counts, breakdowns, "View all") stay -- only the duplicate row-
+     level listing is gone. Buy Now above is intentionally NOT touched
+     -- it's normally a very short, genuinely actionable list (1 item
+     right now), not the thing driving the confusion. -->
 
 <!-- TODAY'S BUYING PERFORMANCE (2026-09-03, second UI pass) -- Atlas has
      no purchasing/spend-tracking integration yet (confirmed: no live
@@ -518,11 +519,26 @@ document.addEventListener('DOMContentLoaded', function () {
 // full comment on why this is duplicated inline rather than a shared
 // static file. Only the Buy Now table on this page uses these classes.
 document.addEventListener('DOMContentLoaded', function () {
-    var panelEl = document.getElementById('qi-detail-panel');
-    var panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+    // Real bug, 2026-09-05 (same root cause found and fixed on
+    // review_queue.html): if bootstrap.bundle.min.js fails to load for
+    // any reason, these two constructors throw and used to abort the
+    // REST of this handler before the click/submit listeners below
+    // ever registered -- every button on the page silently fell back
+    // to native (non-AJAX) form submission, landing on a raw JSON page
+    // instead of the toast. panel/toast are already treated as
+    // optional everywhere below, so catching this here is enough to
+    // keep click/submit handling alive even when bootstrap itself
+    // fails to load.
+    var panel = null, toast = null;
+    try {
+        var panelEl = document.getElementById('qi-detail-panel');
+        panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+        var toastEl = document.getElementById('qi-toast');
+        toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    } catch (err) {
+        console.error('Command Centre: bootstrap components failed to initialize -- detail panel/toast disabled, but Buy/Reject actions still work.', err);
+    }
     var body = document.getElementById('qi-detail-body');
-    var toastEl = document.getElementById('qi-toast');
-    var toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
     var toastBody = document.getElementById('qi-toast-body');
     var toastUndoBtn = document.getElementById('qi-toast-undo');
 
@@ -536,21 +552,40 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
     }
 
-    function resolve(asin, decision, reasonCategory) {
-        var params = new URLSearchParams({asin: asin, decision: decision, reason: '', reason_category: reasonCategory || ''});
+    function resolve(asin, decision, reasonCategory, reason, purchasedQty, atlasNotes) {
+        var params = new URLSearchParams({
+            asin: asin, decision: decision, reason: reason || '', reason_category: reasonCategory || '',
+            purchased_qty: purchasedQty || '', atlas_notes: atlasNotes || '',
+        });
         fetch('/review-queue/resolve', {method: 'POST', body: params})
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
                 if (panel) panel.hide();
-                showUndo(asin, data.resolved, decision);
+                if (data.already_resolved) {
+                    showAlreadyResolved();
+                } else {
+                    showUndo(asin, data.resolved, decision);
+                }
             })
             .catch(function () { alert('Could not save this decision -- please try again.'); });
+    }
+
+    // Real bug fix, 2026-09-04 -- see review_queue.html's own comment
+    // on this same fix: a stale row (already resolved elsewhere) used
+    // to show the same success/Undo toast as a real action. Nothing to
+    // Undo here -- this click changed nothing.
+    function showAlreadyResolved() {
+        if (!toast) return;
+        toastBody.textContent = 'Already resolved elsewhere -- removed from your list.';
+        toastUndoBtn.style.display = 'none';
+        toast.show();
     }
 
     function showUndo(asin, resolved, decision) {
         if (!toast) return;
         toastBody.textContent = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
+        toastUndoBtn.style.display = '';
         toastUndoBtn.onclick = function () {
             var params = new URLSearchParams({
                 asin: asin, scan: resolved.scan ? '1' : '',
@@ -570,6 +605,73 @@ document.addEventListener('DOMContentLoaded', function () {
         if (rejectBtn) { resolve(rejectBtn.dataset.asin, 'rejected', null); return; }
         var qrBtn = e.target.closest('.qi-quickreject-btn');
         if (qrBtn) { e.preventDefault(); resolve(qrBtn.dataset.asin, 'rejected', qrBtn.dataset.reason); return; }
+        var saveNoteBtn = e.target.closest('.qi-save-note-btn');
+        if (saveNoteBtn) {
+            e.preventDefault();
+            var noteForm = saveNoteBtn.closest('form');
+            var noteAsin = noteForm.querySelector('[name="asin"]').value;
+            var noteField = noteForm.querySelector('[name="atlas_notes"]');
+            var noteText = noteField ? noteField.value.trim() : '';
+            if (!noteText) { alert('Write a note first.'); if (noteField) noteField.focus(); return; }
+            saveNoteBtn.disabled = true;
+            fetch('/review-queue/save-note', {method: 'POST', body: new URLSearchParams({asin: noteAsin, atlas_notes: noteText})})
+                .then(function (r) { return r.json(); })
+                .then(function () {
+                    saveNoteBtn.disabled = false;
+                    saveNoteBtn.innerHTML = '<i class="bi bi-check-lg"></i> Saved';
+                    setTimeout(function () { saveNoteBtn.innerHTML = '<i class="bi bi-chat-left-text"></i> Save note (no decision yet)'; }, 2000);
+                })
+                .catch(function () { saveNoteBtn.disabled = false; alert('Could not save the note -- please try again.'); });
+            return;
+        }
+    });
+
+    // Real bug, 2026-09-05: this page never had a submit handler for
+    // the detail panel's own Review Actions form (_review_queue_item_
+    // detail.html's .qi-detail-actions-form) at all -- only the
+    // row-level buttons above were ever wired up. Submitting that form
+    // from "More info" always fell through to a native (non-AJAX) POST,
+    // landing on a raw JSON page -- the underlying decision still saved
+    // correctly (same server-side resolve_item either way), only the
+    // display broke. Copied verbatim from review_queue.html's own
+    // working handler, which HAS always had this listener.
+    document.addEventListener('submit', function (e) {
+        var form = e.target.closest('.qi-detail-actions-form');
+        if (!form) return;
+        e.preventDefault();
+        var asin = form.querySelector('[name="asin"]').value;
+        var decision = e.submitter ? e.submitter.value : form.querySelector('[name="decision"]').value;
+        var note = form.querySelector('[name="reason"]');
+        var categorySelect = form.querySelector('[name="reason_category"]');
+        var category = categorySelect ? categorySelect.value : '';
+        var atlasNotesField = form.querySelector('[name="atlas_notes"]');
+
+        if (decision === 'rejected') {
+            if (!category) {
+                alert('Please choose a reason before rejecting this item.');
+                if (categorySelect) categorySelect.focus();
+                return;
+            }
+            if (category === 'OTHER' && (!note || !note.value.trim())) {
+                alert('Please add a note explaining "Other".');
+                if (note) note.focus();
+                return;
+            }
+        }
+
+        var purchasedQty = '';
+        if (decision === 'approved' && form.dataset.leadSubsource === 'sheet') {
+            var qtyInput = prompt('How many units did you purchase?');
+            if (qtyInput === null) return;
+            var qtyNum = parseFloat(qtyInput);
+            if (!qtyInput.trim() || isNaN(qtyNum) || qtyNum <= 0) {
+                alert('Please enter a valid quantity purchased.');
+                return;
+            }
+            purchasedQty = qtyNum;
+        }
+
+        resolve(asin, decision, category || null, note ? note.value : '', purchasedQty, atlasNotesField ? atlasNotesField.value : '');
     });
 });
 </script>

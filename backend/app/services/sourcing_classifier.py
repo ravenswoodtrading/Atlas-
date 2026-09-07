@@ -43,6 +43,18 @@ RECENT_WINDOW_DAYS = 30
 # great lead".
 RECENT_VIABLE_ROI_PCT = 17.0
 
+# Same 50% "competition surging" trigger OpportunityLensService uses
+# (COMPETITION_SURGE_RISK_PCT there -- kept as a separate local literal
+# rather than imported, same convention RECENT_VIABLE_ROI_PCT above
+# already follows for OpportunityEngine.MIN_VIABLE_ROI, since this
+# module runs at SCAN time, before any lens exists on the data).
+COMPETITION_SURGE_TRIGGER_PCT = 50.0
+
+# Same 15% "price falling" trigger OpportunityLensService uses
+# (PRICE_SWING_RISK_PCT there -- same local-mirror convention as
+# COMPETITION_SURGE_TRIGGER_PCT just above).
+PRICE_DIP_TRIGGER_PCT = 15.0
+
 # How far below its 90-day average a price has to have fallen to count
 # as a genuine "dip" (as opposed to normal day-to-day noise). Named
 # constant, not inlined, so it's easy to recalibrate later against real
@@ -71,6 +83,46 @@ MULTIPACK_PATTERN = re.compile(
     r"\b\d+\s*[- ]?\s*(?:pack|pk|ct|count)\b|\bpack of \d+\b|\bcase of \d+\b|\bmulti[- ]?pack\b",
     re.IGNORECASE,
 )
+
+# Certainty rating (2026-09-07, Tamara) -- category-name keyword
+# heuristic for "this needs a UK mains/AC plug, so continental-EU
+# (DE/FR/ES/IT) sourcing carries a real plug/voltage-standard risk".
+# Matched case-insensitively as a substring against Product.category_name
+# (which is already resolved from Keepa's numeric category IDs
+# elsewhere -- see get_category_names), same convention as config/
+# exclusions.py's own EXCLUDED_CATEGORY_NAMES set, rather than a curated
+# numeric Keepa category ID list (safer to get "close enough" right
+# without a live Keepa category browser to verify exact IDs against --
+# easy to refine here as real false positives/negatives turn up).
+# Deliberately a SOFT confidence signal (see assess_certainty), not a
+# hard filter like EXCLUDED_CATEGORIES -- a false match here only
+# lowers/raises a certainty label, it never drops a real opportunity.
+UK_PLUG_RISK_CATEGORY_KEYWORDS = (
+    "electronics", "computer", "laptop", "monitor", "tablet", "camera",
+    "tv & video", "television", "audio", "headphone", "speaker",
+    "kitchen appliance", "vacuum", "power tool", "hair care", "hair dryer",
+    "shaver", "electric toothbrush", "printer", "gaming console", "phone",
+)
+
+# Minimum sample size before a brand's historical EU-A2A rate is trusted
+# at all (see SellerWatchService.brand_sourcing_pattern) -- below this,
+# one or two coincidental detections could otherwise masquerade as a
+# real pattern either way.
+BRAND_PATTERN_MIN_SAMPLE = 3
+BRAND_PATTERN_STRONG_EU_PCT = 70.0
+BRAND_PATTERN_WEAK_EU_PCT = 30.0
+
+# Recent-window viable days needed for a HIGH-certainty EU A2A rating
+# (as opposed to MEDIUM) -- more than the bare single-day minimum
+# _check_eu_a2a itself requires to tag EU A2A at all, since certainty is
+# asking a stricter question ("how much should you trust this") than
+# classify() itself ("is there any real evidence").
+EU_A2A_STRONG_VIABLE_DAYS = 3
+
+
+def requires_uk_plug(category_name: str | None) -> bool:
+    name = (category_name or "").lower()
+    return any(keyword in name for keyword in UK_PLUG_RISK_CATEGORY_KEYWORDS)
 
 
 @dataclass
@@ -324,19 +376,39 @@ class SourcingClassifier:
 
         product must already have fba_fee/eu_vat_rate_used/
         best_source_cost_gbp set (called AFTER FeeEngine.calculate).
-        Returns {"peak_viable_days_90d": 0} untouched if there's no EU
-        source to price against at all -- nothing to reconstruct.
+        Returns zeroed fields untouched if there's no EU source to
+        price against at all -- nothing to reconstruct.
+
+        Also counts days_at_25pct_roi_90d/priced_days_90d in the SAME
+        walk (2026-09-04, Opportunity Engine 2.0 -- Tamara's own ask:
+        "for price drops I need details of how many times in the last
+        90 days the price would have been above 25% ROI") -- reuses
+        FeeEngine.OA_TARGET_ROI_PCT, the SAME 25% bar
+        ProductRepository.is_notable/OpportunityLensService's "notable"
+        check and VerdictService.compute_metrics' own days_at_target_roi
+        already use elsewhere in the app, not a new number. Zero extra
+        Keepa cost -- daily_prices is already being walked here for
+        peak_viable_days_90d; this just checks a second threshold on
+        the same day price already in hand. Only populated for scans
+        run AFTER this change -- a historical ProductRecord scanned
+        before today has no way to retroactively reconstruct this (the
+        raw Keepa price-history response isn't persisted), so
+        OpportunityLensService must treat a missing value as "not
+        computed yet", never as a confirmed zero.
         """
         if not product.best_source_cost_gbp:
-            return {"peak_viable_days_90d": 0}
+            return {"peak_viable_days_90d": 0, "days_at_25pct_roi_90d": 0, "priced_days_90d": 0}
 
         daily_prices = KeepaParser(uk_raw).daily_buy_box_prices(90)
         viable_days = 0
+        notable_days = 0
+        priced_days = 0
 
         for day_price in daily_prices:
             if not day_price:
                 continue
 
+            priced_days += 1
             day_roi = FeeEngine.roi_at_price(
                 day_price, product.best_source_cost_gbp, category_name,
                 product.fba_fee, product.eu_vat_rate_used,
@@ -349,7 +421,138 @@ class SourcingClassifier:
             if day_roi >= RECENT_VIABLE_ROI_PCT:
                 viable_days += 1
 
-        return {"peak_viable_days_90d": viable_days}
+            if day_roi >= FeeEngine.OA_TARGET_ROI_PCT:
+                notable_days += 1
+
+        return {
+            "peak_viable_days_90d": viable_days,
+            "days_at_25pct_roi_90d": notable_days,
+            "priced_days_90d": priced_days,
+        }
+
+    @staticmethod
+    def compute_competition_spike_evidence(uk_raw: dict) -> dict:
+        """
+        "The last time offers on this listing spiked, what did price
+        actually do afterward" (2026-09-04, Opportunity Engine 2.0 --
+        Tamara's own ask: "for a listing where offers are rising we
+        should see how much of a problem this is", not just whether
+        it's happened before).
+
+        Reconstructs day-by-day offer counts AND buy-box prices over
+        the last 90 days (KeepaParser.daily_offer_counts/
+        daily_buy_box_prices -- zero extra Keepa cost, both walk data
+        already fetched for this scan). A "spike day" is one where the
+        offer count exceeds the 90-day average by MORE than
+        COMPETITION_SURGE_TRIGGER_PCT (50%) -- the SAME trigger
+        OpportunityLensService already uses to flag "competition
+        surging" as a risk, so this answers the exact question that
+        flag raises, not a different one. Finds the MOST RECENT spike
+        day in the window and reports the real price change from that
+        day to the latest priced day -- a plain percentage, not a new
+        invented "stable/dropped/crashed" category (Opportunity Engine
+        2.0 point 12: no new arbitrary thresholds).
+
+        Returns {} if there's no offer-count history to reconstruct, or
+        no day in the window ever cleared the spike trigger at all --
+        distinct from a genuine 0.0%/no-op result, since "never spiked"
+        is real information too (see OpportunityLensService's own
+        handling of this being absent vs present).
+        """
+        parser = KeepaParser(uk_raw)
+        offers_90d_avg = parser.offers_90d()
+
+        if not offers_90d_avg:
+            return {}
+
+        daily_offers = parser.daily_offer_counts(90)
+        daily_prices = parser.daily_buy_box_prices(90)
+
+        spike_threshold = offers_90d_avg * (1 + COMPETITION_SURGE_TRIGGER_PCT / 100)
+
+        last_spike_index = None
+        for i, count in enumerate(daily_offers):
+            if count > spike_threshold:
+                last_spike_index = i
+
+        if last_spike_index is None:
+            return {}
+
+        price_at_spike = daily_prices[last_spike_index]
+
+        # Latest day that actually HAD a price at all, walking backward
+        # from today -- avoids comparing against a trailing 0.0 (no
+        # data yet today) misread as "price crashed to zero".
+        latest_priced_index = None
+        for i in range(len(daily_prices) - 1, -1, -1):
+            if daily_prices[i]:
+                latest_priced_index = i
+                break
+
+        if not price_at_spike or latest_priced_index is None:
+            return {}
+
+        price_now = daily_prices[latest_priced_index]
+        price_change_pct = ((price_now - price_at_spike) / price_at_spike) * 100
+
+        return {
+            "days_since_last_competition_spike": len(daily_offers) - 1 - last_spike_index,
+            "price_change_since_competition_spike_pct": round(price_change_pct, 1),
+        }
+
+    @staticmethod
+    def compute_price_drop_offer_context(uk_raw: dict) -> dict:
+        """
+        The MIRROR question to compute_competition_spike_evidence above
+        (2026-09-04, Opportunity Engine 2.0 -- Tamara's own follow-up:
+        "if we are on a price drop listing can we see if there is
+        history of offers rising when the price dropped last"): finds
+        the most recent day the buy-box price genuinely dipped (more
+        than PRICE_DIP_TRIGGER_PCT/15% below the 90-day average price --
+        the SAME threshold OpportunityLensService's "UK price falling"
+        flag already uses, just applied day-by-day instead of only to
+        today), then reports how far offers were from THEIR OWN 90-day
+        average on that same day -- a real answer to "did competition
+        rise around the same time the price last fell", not a guess.
+
+        Zero extra Keepa cost -- same already-fetched uk_raw response,
+        same two day-by-day reconstructions compute_competition_spike_
+        evidence already walks (kept as a separate function rather than
+        merged with it -- these answer genuinely different DIRECTIONAL
+        questions and enrich different risk flags in
+        OpportunityLensService, not because the underlying data is
+        different).
+
+        Returns {} if there's no price/offer history to reconstruct, or
+        no day in the window ever cleared the dip trigger at all.
+        """
+        parser = KeepaParser(uk_raw)
+        buy_box_90d_avg = parser.buy_box_90d()
+        offers_90d_avg = parser.offers_90d()
+
+        if not buy_box_90d_avg or not offers_90d_avg:
+            return {}
+
+        daily_prices = parser.daily_buy_box_prices(90)
+        daily_offers = parser.daily_offer_counts(90)
+
+        dip_threshold = buy_box_90d_avg * (1 - PRICE_DIP_TRIGGER_PCT / 100)
+
+        last_dip_index = None
+        for i, price in enumerate(daily_prices):
+            if price and price < dip_threshold:
+                last_dip_index = i
+
+        if last_dip_index is None:
+            return {}
+
+        offers_at_dip = daily_offers[last_dip_index]
+        offers_change_pct = ((offers_at_dip - offers_90d_avg) / offers_90d_avg) * 100
+
+        return {
+            "days_since_last_price_dip": len(daily_prices) - 1 - last_dip_index,
+            "offers_change_at_last_price_dip_pct": round(offers_change_pct, 1),
+        }
 
     @staticmethod
     def classify(product: Product, brand_repeat_count: int = 0) -> SourcingClassification:
@@ -638,3 +841,140 @@ class SourcingClassifier:
                         "outside what Atlas can infer from price history.",
             },
         )
+
+    # ---- Certainty rating (2026-09-07, Tamara) -----------------------
+
+    CERTAINTY_LEVELS = ("HIGH", "MEDIUM", "LOW")
+
+    @staticmethod
+    def assess_certainty(category_name: str | None, sourcing_tag: str, reasoning: dict,
+                          brand_pattern: dict | None = None) -> dict:
+        """
+        Advisory confidence layer on TOP OF whatever sourcing_tag
+        classify() already assigned -- deliberately additive, never
+        changes sourcing_tag itself. Tamara's own worked examples (2026-
+        09-07): "anything with a plug ... could not be EU A2A", "a laptop
+        which had no UK price drops in the past 30 days is very very
+        likely OA", brands like WORX/Makita often being genuine EU A2A
+        vs Philips being ambiguous (UK retailers run their own Philips
+        sales too, so brand history alone shouldn't inflate confidence
+        the way it can for WORX/Makita).
+
+        Kept separate from classify() rather than folded into it: this
+        codebase's whole SourcingClassification design already commits
+        to classify() being the single "how was this actually sourced"
+        answer that currently_buyable/Buy Now eligibility/etc. all key
+        off of -- changing ITS decision tree risks regressing every one
+        of those. A confidence rating on top is a strictly additive,
+        lower-risk way to surface the same insight: never silently
+        relabel a tag, just say how much to trust it and why, with the
+        manual reclassify buttons (see SellerNewListing.manually_
+        classified) as the actual correction mechanism when this
+        disagrees with the tag.
+
+        reasoning: the ALREADY-PERSISTED, tag-specific dict from
+        SellerNewListing.sourcing_reasoning_json (json.loads'd by the
+        caller) -- NOT a live Product. This deliberately reuses whatever
+        classify() itself recorded rather than re-deriving it (no extra
+        Keepa call), but means the exact key names read below vary by
+        which branch produced it: _check_eu_a2a's own reasoning uses
+        "viable_days_recent" (bare, since it's already EU-scoped);
+        _fallback_unclear's uses "eu_a2a_viable_days_recent"/
+        "uk_a2a_dip_days_recent" (prefixed, since it ran and recorded
+        BOTH checks); _check_uk_a2a's and _check_wholesale's carry no EU
+        evidence fields at all. Each branch below only reads the fields
+        ITS OWN tag's reasoning actually contains -- see classify()'s own
+        docstring for why these shapes differ instead of being unified.
+
+        Deliberately reads ONLY *_recent/*_days_recent fields (each
+        rooted in day-by-day comparisons of THAT day's own UK vs EU
+        price -- see compute_recent_evidence) -- NEVER today's live
+        buy_box_now/buy_box_90d. This is what keeps a live "Amazon UK is
+        currently in a price dip" from ever affecting how much this
+        trusts a PAST EU A2A finding (Tamara's own point: the competitor
+        may have bought weeks ago expecting the price to recover -- a
+        live UK dip today says nothing about whether the original EU
+        purchase was real).
+
+        brand_pattern: optional {"eu_a2a_pct": float, "sample_size": int}
+        from SellerWatchService.brand_sourcing_pattern -- omitted (None)
+        skips the brand-history fact entirely rather than guessing from
+        a suspiciously small sample.
+
+        Returns {"level": one of CERTAINTY_LEVELS, "facts": [str, ...]}.
+        """
+        facts: list[str] = []
+        plug_risk = requires_uk_plug(category_name)
+
+        if plug_risk:
+            facts.append(
+                "Plug/voltage risk category -- EU mains items (DE/FR/ES/IT) use a "
+                "different plug standard to UK Amazon listings, so genuine EU A2A "
+                "sourcing is very unlikely here regardless of price evidence."
+            )
+
+        brand_fact = None
+        if brand_pattern and brand_pattern.get("sample_size", 0) >= BRAND_PATTERN_MIN_SAMPLE:
+            pct = brand_pattern["eu_a2a_pct"]
+            if pct >= BRAND_PATTERN_STRONG_EU_PCT:
+                brand_fact = (
+                    f"This brand has been EU A2A in {pct:.0f}% of its last "
+                    f"{brand_pattern['sample_size']} detections -- but brand history is "
+                    "context only, never a substitute for genuine evidence on THIS ASIN."
+                )
+            elif pct <= BRAND_PATTERN_WEAK_EU_PCT:
+                brand_fact = (
+                    f"This brand is only EU A2A in {pct:.0f}% of its last "
+                    f"{brand_pattern['sample_size']} detections (often UK-driven sales instead) "
+                    "-- don't assume EU sourcing from brand alone; look for genuine EU evidence."
+                )
+        if brand_fact:
+            facts.append(brand_fact)
+
+        if sourcing_tag == "EU A2A":
+            eu_viable_days = reasoning.get("viable_days_recent") or 0
+            if plug_risk:
+                level = "LOW"
+            elif eu_viable_days >= EU_A2A_STRONG_VIABLE_DAYS:
+                level = "HIGH"
+                facts.append(f"{eu_viable_days} days cleared the viable-ROI bar in the last {RECENT_WINDOW_DAYS} days -- more than a one-off.")
+            else:
+                level = "MEDIUM"
+                facts.append(f"Only {eu_viable_days} day(s) cleared the viable-ROI bar in the last {RECENT_WINDOW_DAYS} days -- real, but thin, evidence.")
+
+        elif sourcing_tag == "OA / unclear":
+            eu_priced_days = reasoning.get("eu_a2a_priced_days_recent") or 0
+            uk_dip_days = reasoning.get("uk_a2a_dip_days_recent") or 0
+            has_eu_offer_evidence = bool(eu_priced_days)
+            has_uk_dip_evidence = bool(uk_dip_days)
+
+            if not has_eu_offer_evidence:
+                facts.append(f"No EU marketplace has shown ANY price in the last {RECENT_WINDOW_DAYS} days -- EU A2A is not possible from this alone.")
+            if not has_uk_dip_evidence:
+                facts.append(f"No UK price dip in the last {RECENT_WINDOW_DAYS} days -- no evidence of a UK A2A opportunity either.")
+
+            # By-elimination logic (Tamara's own laptop example): ruling
+            # OUT every alternative (EU impossible via plug or zero
+            # offers, no UK dip either) is a CONFIDENT "genuinely OA",
+            # not just "we found nothing" -- these are epistemically
+            # different even though today's classify() can't yet tell
+            # them apart in the tag itself.
+            eu_ruled_out = plug_risk or not has_eu_offer_evidence
+            if eu_ruled_out and not has_uk_dip_evidence:
+                level = "HIGH"
+            elif has_eu_offer_evidence:
+                # EU offers exist but never cleared the viable-ROI bar --
+                # genuinely ambiguous (could be a thin margin Atlas's
+                # bar doesn't recognise, not necessarily "not EU A2A").
+                level = "MEDIUM" if not has_uk_dip_evidence else "LOW"
+            else:
+                level = "MEDIUM"
+
+        else:
+            # UK A2A / Wholesale (likely) -- no certainty rules defined
+            # yet for these (Tamara's examples were EU A2A/OA-specific);
+            # MEDIUM is an honest "no strong signal either way" default
+            # rather than a guess dressed up as HIGH/LOW.
+            level = "MEDIUM"
+
+        return {"level": level, "facts": facts}

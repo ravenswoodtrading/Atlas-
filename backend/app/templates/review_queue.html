@@ -14,6 +14,29 @@
     "BUY_NOW": "Buy Now", "VA_TO_REVIEW": "VA to Review",
     "BORDERLINE": "Borderline", "NEEDS_ATTENTION": "Needs Attention",
 } %}
+{# OA_INVESTIGATE (2026-09-05) deliberately NOT in view_style/
+   view_short_label above -- it uses its own inline orange styling
+   everywhere it's badged (matching Opportunities' existing OA colour,
+   #fd7e14), same precedent as HIGH_VALUE_LOW_CONFIDENCE's purple
+   bypassing the plain bg-{{cls}} system below, so it's never
+   mistaken for a real BUY_NOW/BORDERLINE/NEEDS_ATTENTION verdict. #}
+{# Opportunity Engine 2.0 (2026-09-04) -- the Action badge (bottom, on
+   every scan/competitor row) replaces Score/Confidence as the primary
+   thing a row communicates: "what should I do", not a raw number. Kept
+   distinct per-action (not just green/amber/red) so PRICE_DROP_BUY_NOW
+   and HIGH_VALUE_LOW_CONFIDENCE never look like ordinary BUY_NOW/
+   BORDERLINE at a glance. #}
+{# HIGH_VALUE_LOW_CONFIDENCE is deliberately NOT in this dict -- it gets
+   its own inline-styled badge below (Bootstrap has no bg-purple). #}
+{% set action_style = {
+    "BUY_NOW": ("success", "bi-check-circle-fill"),
+    "PRICE_DROP_BUY_NOW": ("info", "bi-graph-down-arrow"),
+    "BUY_WITH_CAUTION": ("warning", "bi-exclamation-triangle-fill"),
+    "INVESTIGATE": ("secondary", "bi-search"),
+    "WATCH": ("secondary", "bi-eye"),
+    "HISTORICAL_RECURRING": ("dark", "bi-clock-history"),
+    "BLOCKED": ("dark", "bi-slash-circle-fill"),
+} %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
@@ -29,7 +52,7 @@
 
 <!-- Primary filter: workflow views (section 20) -->
 <ul class="nav nav-pills mb-2 flex-wrap" style="gap:.35rem;">
-    {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention"] %}
+    {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention", "oa_investigate"] %}
     <li class="nav-item">
         <a class="nav-link {{ 'active' if view == v }}"
            href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}&marketplace={{ marketplace }}&competitor={{ competitor }}">
@@ -54,7 +77,7 @@
     <div class="col-6 col-md-2">
         <select name="source" class="form-select form-select-sm" onchange="this.form.submit()">
             <option value="all" {{ "selected" if source == "all" }}>Source: All</option>
-            {% for s in ["scan", "competitor", "lead"] %}
+            {% for s in ["scan", "competitor", "lead", "oa_investigate"] %}
             <option value="{{ s }}" {{ "selected" if source == s }}>Source: {{ source_type_labels[s] }}</option>
             {% endfor %}
         </select>
@@ -119,22 +142,68 @@
                         <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
                     </div>
                     <div class="mt-1">
-                        {% for view_name in item.views %}
-                            {% if view_name == "BUY_NOW" and item.strong_consider %}
-                                {# Strong Consider (2026-09-04) -- BUY_NOW earned via
-                                   is_notable()'s star-Consider path (25%+ ROI + confirmed
-                                   sales evidence), not a literal BUY. Same teal/star
-                                   treatment as the Opportunities page's own split, so a
-                                   real BUY and a strong-but-unconfirmed Consider never
-                                   look identical -- see _build_merged_item's own comment. #}
-                                <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
+                        {% if item.action %}
+                            {# Opportunity Engine 2.0 (2026-09-04) -- the Action badge IS
+                               the answer to "what should I do", not a score. Purple/star
+                               styling for HIGH_VALUE_LOW_CONFIDENCE specifically (Bootstrap
+                               has no bg-purple) mirrors the same "distinct, never confused
+                               with a real BUY" treatment the old Strong Consider badge used. #}
+                            {% if item.action == "HIGH_VALUE_LOW_CONFIDENCE" %}
+                                <span class="badge" style="background:#6f42c1;color:#fff;" title="{{ item.action_description }}"><i class="bi bi-star-fill"></i> {{ item.action_label }}</span>
                             {% else %}
+                                {% set cls, icon = action_style[item.action] %}
+                                <span class="badge bg-{{ cls }}" title="{{ item.action_description }}"><i class="bi {{ icon }}"></i> {{ item.action_label }}</span>
+                            {% endif %}
+                            {% if "VA_TO_REVIEW" in item.views %}
+                            <span class="badge bg-primary"><i class="bi bi-people-fill"></i> VA to Review</span>
+                            {% endif %}
+                            {% if "OA_INVESTIGATE" in item.views %}
+                            <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;" title="Also has an OA/unclear detection with no confirmed source -- see the OA Source Discovery section below."><i class="bi bi-question-diamond-fill"></i> OA to Investigate</span>
+                            {% endif %}
+                        {% else %}
+                            {# VA-only item -- no Value/Evidence/Risk lens (Lead rows keep
+                               their own BUY/WATCH/AVOID vocabulary), unchanged. OA_INVESTIGATE
+                               (2026-09-05) is handled the same way -- no lens either, own
+                               orange styling, never routed through view_style/view_short_label
+                               (see this file's own comment near their definition). #}
+                            {% for view_name in item.views %}
+                                {% if view_name == "OA_INVESTIGATE" %}
+                                <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;" title="OA/unclear detection -- no confirmed source yet. Worth investigating, not a confirmed buy."><i class="bi bi-question-diamond-fill"></i> OA to Investigate</span>
+                                {% else %}
                                 {% set cls, icon = view_style[view_name] %}
                                 <span class="badge bg-{{ cls }}"><i class="bi {{ icon }}"></i> {{ view_short_label[view_name] }}</span>
-                            {% endif %}
-                        {% endfor %}
+                                {% endif %}
+                            {% endfor %}
+                        {% endif %}
+                        {% if item.va_info %}
+                            {# Atlas's own initial AI verdict (2026-09-06) -- distinct from
+                               the workflow badges above (VA to Review, Buy Now, etc), which
+                               say what QUEUE this sits in, not what Atlas itself concluded.
+                               Shown for every item with a VA source, including one that also
+                               has a scan-side Action badge -- those are two different
+                               questions about the same lead. "Not yet rated" covers both a
+                               still-queued lead and one Atlas gave up on (verdict None). #}
+                            <span class="badge {{ 'bg-success' if item.va_info.verdict == 'BUY' else ('bg-warning text-dark' if item.va_info.verdict == 'WATCH' else ('bg-secondary' if item.va_info.verdict == 'AVOID' else 'bg-light text-dark border')) }}" title="Atlas's own initial AI verdict for this lead">
+                                <i class="bi bi-robot"></i> Atlas: {{ item.va_info.verdict or "Not yet rated" }}
+                            </span>
+                        {% endif %}
                         {% if item.conflict %}
                             <span class="badge bg-dark" title="{{ item.conflict_note or 'Sources disagree -- worth a second look.' }}"><i class="bi bi-exclamation-diamond"></i> Conflict</span>
+                        {% endif %}
+                        {# "Ever bought / ever on VA sheet before" (2026-09-07,
+                           Tamara: "a badge on the lead if it is an item we have
+                           ever bought before or a lead that has ever appeared
+                           on our VA sheet") -- real history, not a current
+                           status, so shown regardless of source/queue view.
+                           Teal = a known quantity (you've actually bought this
+                           before); slate = seen before but not necessarily
+                           bought (worth checking why it didn't convert last
+                           time, or whether it's a genuine repeat opportunity). #}
+                        {% if item.ever_purchased %}
+                        <span class="badge" style="background:#0f766e;color:#fff;" title="You've purchased this ASIN before -- see Historical Buying record."><i class="bi bi-bag-check-fill"></i> Bought before</span>
+                        {% endif %}
+                        {% if item.ever_on_va_sheet %}
+                        <span class="badge" style="background:#475569;color:#fff;" title="This ASIN has appeared on the VA Lead Sheet before."><i class="bi bi-clock-history"></i> Seen on VA sheet before</span>
                         {% endif %}
                         {% for src in item.sources %}
                         <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
@@ -194,49 +263,100 @@
             </div>
             <div>
                 <div class="text-muted">Buy price</div>
+                {% if item.oa_price_guide and not item.best_source_marketplace %}
+                {# OA Source Discovery (2026-09-05) -- no confirmed source,
+                   so a real "£0.00 buy price" would misread as "sourced
+                   for free" rather than "unknown". Same price-guide
+                   wording as Opportunities' own OA row
+                   (_competitors_opportunities.html), reused verbatim. #}
+                <div class="text-muted">Unknown</div>
+                <div style="font-size:.75em;">buy &le; &pound;{{ "%.2f"|format(item.oa_price_guide.target) }} <span class="text-muted">(breakeven &pound;{{ "%.2f"|format(item.oa_price_guide.breakeven) }})</span></div>
+                {% else %}
                 <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
+                {% endif %}
             </div>
             <div>
                 <div class="text-muted">Amazon price</div>
                 <div>{{ "£%.2f"|format(item.buy_box_now) if item.buy_box_now else "--" }}</div>
+                {# VA's own expected sale price (2026-09-07, Tamara: "we
+                   need to add VA expected sales price on the leads") --
+                   was silently substituted IN PLACE of the line above
+                   whenever set; now its own separate, labelled line so
+                   neither figure is ever mistaken for the other. #}
+                {% if item.va_info and item.va_info.va_expected_sale_price is not none %}
+                <span class="badge bg-primary mt-1" title="The VA's own expected sale price, from when they sourced this -- not necessarily today's Amazon price."><i class="bi bi-person-badge"></i> VA: £{{ "%.2f"|format(item.va_info.va_expected_sale_price) }}</span>
+                {% endif %}
             </div>
             <div>
-                <div class="text-muted">Profit</div>
-                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">
-                    &pound;{{ "%.2f"|format(item.profit or 0) }}
+                {# Opportunity Engine 2.0 point 7 -- today's and 90d-typical
+                   ALWAYS shown separately, never silently collapsed into
+                   one "best of" number. Real bug fixed 2026-09-06 (Tamara):
+                   this used to silently show the VA's OWN figure (their
+                   estimate against whatever Amazon price THEY saw when
+                   sourcing it) labelled as "today" -- item.profit is now
+                   ALWAYS Atlas's own live calculation, None (shown as
+                   "--") when analysis hasn't run yet rather than implying
+                   Atlas checked and found zero. The VA's own figure is
+                   shown as its own separate, clearly-labelled line below,
+                   never blended into this number again. #}
+                <div class="text-muted">Profit (today)</div>
+                {% if item.profit is none %}
+                <div class="text-muted">-- <span style="font-size:.75em;">not yet analyzed</span></div>
+                {% else %}
+                <div class="{{ 'text-success' if item.profit > 0 else 'text-danger' }}">
+                    &pound;{{ "%.2f"|format(item.profit) }}
                 </div>
+                {% endif %}
+                {% if item.value and item.value.typical_profit_90d and item.profit is not none and (item.value.typical_profit_90d | round(2)) != (item.profit | round(2)) %}
+                <div class="text-muted" style="font-size:.75em;">90d typical: &pound;{{ "%.2f"|format(item.value.typical_profit_90d) }}</div>
+                {% endif %}
+                {% if item.va_info and item.va_info.va_profit is not none %}
+                {# Restyled 2026-09-07 (Tamara: "VA expected profit is too
+                   hard to see here") -- was plain .75em coloured text,
+                   easy to lose next to the bold £ Profit figure right
+                   above it. A solid badge reads at a glance instead. #}
+                <span class="badge bg-primary mt-1" title="The VA's own figure, from whatever Amazon price they saw when sourcing this -- not necessarily today's.">
+                    <i class="bi bi-person-badge"></i> VA expected: &pound;{{ "%.2f"|format(item.va_info.va_profit) }}{% if item.va_info.va_roi is not none %} / {{ "%.0f"|format(item.va_info.va_roi) }}%{% endif %}
+                </span>
+                {% endif %}
             </div>
             <div>
-                <div class="text-muted">ROI</div>
-                <div>{{ "%.0f"|format(item.roi or 0) }}%</div>
+                <div class="text-muted">ROI (today)</div>
+                {% if item.roi is none %}
+                <div class="text-muted">--</div>
+                {% else %}
+                <div>{{ "%.0f"|format(item.roi) }}%</div>
+                {% endif %}
+                {% if item.value and item.value.typical_roi_90d and item.roi is not none and (item.value.typical_roi_90d | round(1)) != (item.roi | round(1)) %}
+                <div class="text-muted" style="font-size:.75em;">90d typical: {{ "%.0f"|format(item.value.typical_roi_90d) }}%</div>
+                {% endif %}
             </div>
-            <div>
-                <div class="text-muted">Score</div>
-                <div class="{{ 'text-success' if (item.score or 0) >= 70 else ('text-warning' if (item.score or 0) >= 40 else 'text-muted') }}">
-                    {{ item.score if item.score is not none else "--" }}
-                </div>
-            </div>
-            <!-- Sales evidence (2026-09-04) -- was completely absent from
-                 this row, a real gap for a decision the sales figure
-                 directly bears on. Same fallback as the detail panel's
-                 own "Trend & Sales Signals" section: a confirmed monthly
-                 figure when Keepa has one, otherwise sales rank drops
-                 (Keepa's own "a sale probably happened" proxy) rather
-                 than nothing at all. -->
+            <!-- Sales evidence (2026-09-04, restyled 2026-09-06 -- Tamara:
+                 "sales evidence more obvious") -- was rendered as plain,
+                 uncoloured text, identical visual weight to "Last checked"
+                 (a neutral timestamp), so a real decision-relevant signal
+                 blended into metadata. Now colour/weight-matched to
+                 Evidence and Profit's own existing convention on this
+                 same row: confirmed sales = strong (green, bold), a rank-
+                 drops proxy = weaker/cautionary (amber), and -- the
+                 important change -- NO sales evidence at all is now a
+                 visible warning (red) rather than muted grey, since
+                 "nothing confirms this sells" is itself a real risk this
+                 row was previously making easy to skim past. -->
             <div>
                 <div class="text-muted">Sales</div>
-                <div>
+                <div class="fw-semibold {{ 'text-success' if item.monthly_sales else ('text-warning' if item.sales_drops_30d else 'text-danger') }}">
                     {% if item.monthly_sales %}
-                        {{ item.monthly_sales }}/mo
+                        <i class="bi bi-graph-up-arrow"></i> {{ item.monthly_sales }}/mo
                     {% elif item.sales_drops_30d %}
-                        <span class="text-muted">{{ item.sales_drops_30d }} rank drops (30d)</span>
+                        <i class="bi bi-graph-up"></i> {{ item.sales_drops_30d }} rank drops (30d)
                     {% else %}
-                        <span class="text-muted">No sales evidence</span>
+                        <i class="bi bi-exclamation-triangle"></i> No sales evidence
                     {% endif %}
                 </div>
             </div>
             <div>
-                <div class="text-muted">Added</div>
+                <div class="text-muted" title="This is the most recent scan/detection date, not when the lead was first found -- a recheck resets this.">Last checked</div>
                 <div>{{ item.when | ago }}</div>
             </div>
         </div>
@@ -284,11 +404,28 @@
 // the WHOLE document (including that later script tag) has finished
 // parsing/executing, so deferring to it is enough.
 document.addEventListener('DOMContentLoaded', function () {
-    var panelEl = document.getElementById('qi-detail-panel');
-    var panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+    // Real bug, 2026-09-05: if bootstrap.bundle.min.js fails to load
+    // for any reason (flaky CDN, offline, blocked) these two
+    // constructors throw "bootstrap is not defined" -- and since that
+    // was previously unguarded, it aborted the REST of this handler
+    // before the click/submit listeners below ever got registered,
+    // silently turning every button on the page into a native (non-
+    // AJAX) form submission -- e.g. clicking Avoid landed on a raw JSON
+    // page instead of showing the toast. panel/toast are already
+    // treated as optional everywhere below (openAsin/showUndo/
+    // showAlreadyResolved all no-op when null), so catching this here
+    // is enough to keep the actual click/submit handling alive even
+    // when bootstrap itself is unavailable.
+    var panel = null, toast = null;
+    try {
+        var panelEl = document.getElementById('qi-detail-panel');
+        panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+        var toastEl = document.getElementById('qi-toast');
+        toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    } catch (err) {
+        console.error('Review Queue: bootstrap components failed to initialize -- detail panel/toast disabled, but Buy/Watch/Avoid actions still work.', err);
+    }
     var body = document.getElementById('qi-detail-body');
-    var toastEl = document.getElementById('qi-toast');
-    var toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
     var toastBody = document.getElementById('qi-toast-body');
     var toastUndoBtn = document.getElementById('qi-toast-undo');
 
@@ -302,25 +439,68 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
     }
 
-    function resolve(asin, decision, reasonCategory, reason) {
+    // Real bug found live, 2026-09-07 (Tamara: "the buying decisions are
+    // feeding through ... but notes still aren't") -- the ROW-level
+    // quick Buy/Reject buttons below (.qi-buy-btn/.qi-quickreject-btn)
+    // call resolve() with no atlasNotes argument at all, by design (the
+    // row has no note field of its own). But the detail panel DOES have
+    // one, and it's entirely plausible to open the panel, write a note,
+    // then decide via the row's own quick button instead of scrolling
+    // to the panel's own decision buttons at the bottom -- silently
+    // dropping whatever was just typed even though the decision itself
+    // goes through fine. This reads any note sitting in the panel's own
+    // form, but ONLY if that panel is currently open for this SAME
+    // asin (never guesses/borrows a note meant for a different item).
+    function noteFromOpenPanel(asin) {
+        var form = body ? body.querySelector('.qi-detail-actions-form') : null;
+        if (!form) return '';
+        var asinField = form.querySelector('[name="asin"]');
+        if (!asinField || asinField.value !== asin) return '';
+        var noteField = form.querySelector('[name="atlas_notes"]');
+        return noteField ? noteField.value.trim() : '';
+    }
+
+    function resolve(asin, decision, reasonCategory, reason, purchasedQty, atlasNotes, alsoExclude) {
         var params = new URLSearchParams({
             asin: asin, decision: decision,
             reason: reason || '', reason_category: reasonCategory || '',
+            purchased_qty: purchasedQty || '', atlas_notes: atlasNotes || '',
+            also_exclude: alsoExclude ? '1' : '',
         });
         fetch('/review-queue/resolve', {method: 'POST', body: params})
             .then(function (r) { return r.json(); })
             .then(function (data) {
                 document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
                 if (panel) panel.hide();
-                showUndo(asin, data.resolved, decision);
+                if (data.already_resolved) {
+                    showAlreadyResolved();
+                } else {
+                    showUndo(asin, data.resolved, decision);
+                }
             })
             .catch(function () { alert('Could not save this decision -- please try again.'); });
+    }
+
+    // Real bug fix, 2026-09-04: a row can still be showing after
+    // something else (another tab, an automated recheck) already
+    // resolved the same ASIN -- clicking Buy/Reject on it used to come
+    // back "ok" and show this SAME success/Undo toast, implying the
+    // click had just done something it hadn't (there's nothing to
+    // Undo -- this click changed nothing). Removes the stale row (it's
+    // genuinely not outstanding any more) but says so honestly instead
+    // of claiming success.
+    function showAlreadyResolved() {
+        if (!toast) { return; }
+        toastBody.textContent = 'Already resolved elsewhere -- removed from your list.';
+        toastUndoBtn.style.display = 'none';
+        toast.show();
     }
 
     function showUndo(asin, resolved, decision) {
         if (!toast) { return; }
         var label = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
         toastBody.textContent = label;
+        toastUndoBtn.style.display = '';
         toastUndoBtn.onclick = function () {
             var params = new URLSearchParams({
                 asin: asin,
@@ -346,7 +526,27 @@ document.addEventListener('DOMContentLoaded', function () {
         if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
 
         var buyBtn = e.target.closest('.qi-buy-btn');
-        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null); return; }
+        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null, '', '', noteFromOpenPanel(buyBtn.dataset.asin)); return; }
+
+        var saveNoteBtn = e.target.closest('.qi-save-note-btn');
+        if (saveNoteBtn) {
+            e.preventDefault();
+            var noteForm = saveNoteBtn.closest('form');
+            var noteAsin = noteForm.querySelector('[name="asin"]').value;
+            var noteField = noteForm.querySelector('[name="atlas_notes"]');
+            var noteText = noteField ? noteField.value.trim() : '';
+            if (!noteText) { alert('Write a note first.'); if (noteField) noteField.focus(); return; }
+            saveNoteBtn.disabled = true;
+            fetch('/review-queue/save-note', {method: 'POST', body: new URLSearchParams({asin: noteAsin, atlas_notes: noteText})})
+                .then(function (r) { return r.json(); })
+                .then(function () {
+                    saveNoteBtn.disabled = false;
+                    saveNoteBtn.innerHTML = '<i class="bi bi-check-lg"></i> Saved';
+                    setTimeout(function () { saveNoteBtn.innerHTML = '<i class="bi bi-chat-left-text"></i> Save note (no decision yet)'; }, 2000);
+                })
+                .catch(function () { saveNoteBtn.disabled = false; alert('Could not save the note -- please try again.'); });
+            return;
+        }
 
         var qrBtn = e.target.closest('.qi-quickreject-btn');
         if (qrBtn) {
@@ -359,10 +559,35 @@ document.addEventListener('DOMContentLoaded', function () {
             if (reason === 'OTHER') {
                 var note = window.prompt('Why are you rejecting this? (required)');
                 if (!note || !note.trim()) { return; }
-                resolve(qrBtn.dataset.asin, 'rejected', reason, note.trim());
+                resolve(qrBtn.dataset.asin, 'rejected', reason, note.trim(), '', noteFromOpenPanel(qrBtn.dataset.asin));
                 return;
             }
-            resolve(qrBtn.dataset.asin, 'rejected', reason);
+            resolve(qrBtn.dataset.asin, 'rejected', reason, '', '', noteFromOpenPanel(qrBtn.dataset.asin));
+            return;
+        }
+
+        // OA to Investigate classification correction (see
+        // _review_queue_item_detail.html's own comment) -- writes
+        // straight to SellerNewListing.sourcing_tag, then re-opens the
+        // SAME panel so the corrected badge/button state shows
+        // immediately (mirrors the OA "Save source" form's own re-open
+        // pattern just below). Does NOT resolve/remove the row -- a
+        // reclassify to EU/UK A2A drops it out of this view on its own
+        // next page load (the OA to Investigate query is scoped to
+        // sourcing_tag=="OA / unclear"), not via any client-side removal.
+        var reclassifyBtn = e.target.closest('.qi-reclassify-btn');
+        if (reclassifyBtn) {
+            e.preventDefault();
+            var group = reclassifyBtn.closest('.qi-reclassify-group');
+            var rAsin = group.dataset.asin;
+            var tag = reclassifyBtn.dataset.tag;
+            fetch('/review-queue/reclassify', {method: 'POST', body: new URLSearchParams({asin: rAsin, sourcing_tag: tag})})
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (!data.ok) { alert('Could not save this classification -- please try again.'); return; }
+                    openAsin(rAsin);
+                })
+                .catch(function () { alert('Could not save this classification -- please try again.'); });
             return;
         }
     });
@@ -379,6 +604,8 @@ document.addEventListener('DOMContentLoaded', function () {
         var note = form.querySelector('[name="reason"]');
         var categorySelect = form.querySelector('[name="reason_category"]');
         var category = categorySelect ? categorySelect.value : '';
+        var atlasNotesField = form.querySelector('[name="atlas_notes"]');
+        var alsoExcludeBox = form.querySelector('[name="also_exclude"]');
 
         // Avoid must always carry a reason (2026-09-04) -- a bare
         // rejection with no category was useful information lost for
@@ -398,7 +625,42 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
 
-        resolve(asin, decision, category || null, note ? note.value : '');
+        // VA Lead Sheet purchased quantity (2026-09-05) -- Lead Sheet has
+        // its own "Purchased Qty" column, asked for here so it can be
+        // pushed straight back alongside the decision (see
+        // google_sheets_lead_sync.push_decision_to_sheet). Only for a
+        // sheet-sourced lead being approved, never guessed otherwise.
+        var purchasedQty = '';
+        if (decision === 'approved' && form.dataset.leadSubsource === 'sheet') {
+            var qtyInput = prompt('How many units did you purchase?');
+            if (qtyInput === null) return;  // cancelled
+            var qtyNum = parseFloat(qtyInput);
+            if (!qtyInput.trim() || isNaN(qtyNum) || qtyNum <= 0) {
+                alert('Please enter a valid quantity purchased.');
+                return;
+            }
+            purchasedQty = qtyNum;
+        }
+
+        resolve(asin, decision, category || null, note ? note.value : '', purchasedQty, atlasNotesField ? atlasNotesField.value : '', alsoExcludeBox ? alsoExcludeBox.checked : false);
+    });
+
+    // OA workbench "Save source" form (see _review_queue_item_detail.html)
+    // -- deliberately does NOT call resolve()/reload the row list: saving
+    // a source only persists it and recomputes economics (see
+    // OaSourceDiscoveryService.save_manual_source), it never resolves
+    // the item. Re-opens the SAME panel afterwards so the "Source Found"
+    // status and the pre-filled form reflect what was just saved.
+    document.addEventListener('submit', function (e) {
+        var form = e.target.closest('.qi-oa-save-source-form');
+        if (!form) return;
+        e.preventDefault();
+        var asin = form.querySelector('[name="asin"]').value;
+        var params = new URLSearchParams(new FormData(form));
+        fetch('/review-queue/oa/save-source', {method: 'POST', body: params})
+            .then(function (r) { return r.json(); })
+            .then(function () { openAsin(asin); })
+            .catch(function () { alert('Could not save this source -- please try again.'); });
     });
 });
 </script>

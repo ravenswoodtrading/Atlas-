@@ -530,6 +530,22 @@ class Lead(Base):
     # in with no record anywhere of where that price came from.
     source_detail: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # The sheet's real clickable "Source URL" column (2026-09-06) --
+    # distinct from source_detail above, which is a free-text retailer
+    # NAME/note ("logitech", "amazon.de") picked from whichever alias
+    # matched first and was never guaranteed to be an actual URL. NULL
+    # if the sheet had no matching column, or for a manual lead.
+    source_url: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
+    # The sheet's own "Product Name" column (2026-09-06) -- a sheet
+    # lead has no title until LeadAnalysisService successfully fetches
+    # Keepa data (see _lead_dict's own "title" fallback chain), which
+    # could be a while, or never if analysis keeps failing. This is
+    # captured at ingest time so the lead is never just a bare ASIN in
+    # the meantime. NULL for a manual lead (Verdict Checker's own title
+    # comes from Keepa the same way).
+    title: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     va_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     va_profit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     va_cost_price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
@@ -580,11 +596,74 @@ class Lead(Base):
     # manual/shortlist leads, which have no sheet row to sync to.
     synced_to_sheet_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
+    # Pull-based VA Lead Sheet sync (2026-09-05, replaces the stuck
+    # ngrok-dependent webhook design above with an OAuth pull/push --
+    # see google_sheets_lead_sync.py). va_notes is the VA's own "VA
+    # Notes" column, read-only from Atlas's side -- never overwritten
+    # here. atlas_notes is Atlas's OWN comment, kept in a SEPARATE
+    # sheet column so neither side can silently clobber the other's
+    # text (Tamara's explicit choice over one shared/last-write-wins
+    # field). purchased_qty is asked for at decide-time when a
+    # source="sheet" lead is approved (Lead Sheet has its own
+    # "Purchased Qty" column) and pushed back alongside the decision.
+    va_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    atlas_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    purchased_qty: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
     added_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class SheetLeadSyncState(Base):
+    """
+    One row per DISTINCT ROW CONTENT Atlas has ever seen on the VA's
+    "Lead Sheet" tab -- keyed by content_hash (unique), NOT by asin.
+
+    Real bug found and reverted live twice during build (2026-09-05)
+    before landing on this design: Lead Sheet legitimately lists the
+    same ASIN more than once over time (a product re-sourced later with
+    a different price/store/rating is a genuinely different row, not an
+    edit of the old one). Keying sync state on ASIN meant only the LAST
+    such row's hash could ever be remembered, so every OTHER historical
+    occurrence of that ASIN looked "changed since baseline" on every
+    single poll forever -- both the first baseline run and every run
+    after it wrongly re-ingested/re-decided real historical rows this
+    way (first incident: 44 leads + 26 decisions; second: 63 leads + 46
+    decisions; both fully reverted, no lasting damage). Keying on the
+    row's own content hash instead means two different rows sharing an
+    ASIN are simply two independent, correctly-remembered hashes -- no
+    collision possible. The only cost is a harmless bit of residue: an
+    edited row's PRE-edit hash stays in this table forever, unused.
+
+    content_hash covers the row's full raw cell values (every column,
+    not just the ones Atlas maps into Lead) -- see google_sheets_lead_
+    sync._row_content_hash. asin is kept as a plain indexed (not
+    unique) field for lookups/debugging only, never the dedup key.
+    """
+    __tablename__ = "sheet_lead_sync_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asin: Mapped[str] = mapped_column(String, index=True)
+    content_hash: Mapped[str] = mapped_column(String, unique=True, index=True, default="")
+    last_synced_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Lead Sheet's OWN "Date Last Added" column, captured verbatim
+    # (2026-09-07, Tamara: "the row itself has a column actually with
+    # whether the ASIN is new or not ... use this data") -- either the
+    # literal string "New ASIN" (this row's own first appearance) or a
+    # real date string like "06 May 26" (this ASIN was previously added
+    # on that date, before this row's own submission). This is the VA
+    # team's own authoritative repeat-detection, not a guess Atlas
+    # derives -- ReviewQueueService._batch_historical_flags' "ever_on_
+    # va_sheet" flag now reads this directly instead of just "does a
+    # sync-state row exist for this ASIN at all" (that alone doesn't
+    # distinguish a genuine repeat from an ASIN's own first-ever row).
+    date_last_added: Mapped[str] = mapped_column(String, default="")
 
 
 class TrackedSeller(Base):
@@ -696,6 +775,17 @@ class SellerNewListing(Base):
     sourcing_reclassified_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, default=None
     )
+
+    # True once a human has manually corrected sourcing_tag (2026-09-07,
+    # Tamara: found a real "OA / unclear" item -- B07HFGCP63 -- that was
+    # actually A2A; Atlas's own classifier only checked the last 10 days
+    # of price history and found no supporting evidence in that window,
+    # so it defaulted to OA with an honest caveat rather than a wrong-but-
+    # confident tag). Once set, SellerWatchService._persist_classification
+    # skips overwriting sourcing_tag on the next automated run_check/
+    # rescan_unscored/reclassify_all pass, so a manual correction survives
+    # instead of silently reverting on the next scheduled reclassification.
+    manually_classified: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SignalQuery(Base):
@@ -1021,6 +1111,20 @@ class OaSourceCandidate(Base):
     retailer_title: Mapped[str] = mapped_column(String, default="")
     retailer_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     retailer_stock_text: Mapped[str] = mapped_column(String, default="")
+
+    # Added 2026-09-05 -- Review Queue OA workbench (manual source
+    # entry). retailer_price_gbp above stays the item's own price;
+    # delivery is tracked separately so the workbench can show the
+    # £price + £delivery = £effective-cost breakdown Tamara asked for,
+    # rather than folding delivery silently into one number. 0.0 for
+    # every row from before this column existed or from the automated
+    # Google-Shopping path (which has no delivery figure at all).
+    delivery_gbp: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Free-text note on a manually-entered source (e.g. "price includes
+    # a 10% off code", "checked in-store stock too") -- optional,
+    # "" for every row before this column existed or with no note.
+    notes: Mapped[str] = mapped_column(String, default="")
 
     # "ean" | "mpn" | "brand_mpn" | "brand_title" | "title_only" | ""
     # (no candidate at all) -- see the user's own 5-tier hierarchy in
@@ -1587,5 +1691,415 @@ class StorageFeeWatch(Base):
     should_consider_shifting: Mapped[bool] = mapped_column(Boolean, default=False)
 
     last_refreshed_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class RevisitLog(Base):
+    """
+    One row per ASIN actually revisited by RevisitPoolService
+    (Opportunity Engine 2.0 Phase 3A, 2026-09-04) -- the feedback data
+    Atlas has been missing (see the ASIN Re-Entry Audit this phase is
+    built on: 75.4% of ever-IGNORE ASINs were never touched again by
+    anything). Never updated in place, one row per revisit attempt --
+    same append-only convention as ProductRecord -- so the history of
+    what got picked, what it looked like before, what it looked like
+    after, and whether it actually paid off accumulates for later
+    EMPIRICAL tuning of the selection criteria, rather than continuing
+    to guess. Purely additive: this table starts empty on a fresh DB
+    and is created automatically by Base.metadata.create_all() on next
+    app startup, same as any other brand-new table (see migrate_db.py's
+    own docstring for why that's only needed for ADDING COLUMNS to an
+    EXISTING table, not for a whole new one like this).
+    """
+    __tablename__ = "revisit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    asin: Mapped[str] = mapped_column(String, index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+
+    # Why this ASIN was picked, and how long it had been sitting --
+    # selection_rank is its 1-based position in that day's profit-
+    # primary-ranked batch (see RevisitPoolService.get_candidates),
+    # kept so a later analysis can ask "does rank within the batch
+    # predict recovery" without re-deriving it from scratch.
+    selection_rank: Mapped[int] = mapped_column(Integer, default=0)
+    days_since_last_scan: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Snapshot of the LATEST known ProductRecord for this ASIN
+    # immediately before this revisit ran.
+    previous_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    previous_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    previous_profit_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    previous_roi: Mapped[float] = mapped_column(Float, default=0.0)
+    previous_roi_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    previous_recommendation: Mapped[str] = mapped_column(String, default="")
+
+    # Snapshot of the FRESH ProductRecord this revisit's rescan
+    # produced -- left at their defaults (None/0.0/"") when status is
+    # "no_fresh_record" (see RevisitPoolService.run_batch: the ASIN no
+    # longer resolves, got excluded/gated since it was first found, or
+    # the scan ran out of tokens partway through the batch).
+    fresh_scanned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    fresh_profit: Mapped[float] = mapped_column(Float, default=0.0)
+    fresh_profit_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    fresh_roi: Mapped[float] = mapped_column(Float, default=0.0)
+    fresh_roi_90d: Mapped[float] = mapped_column(Float, default=0.0)
+    fresh_recommendation: Mapped[str] = mapped_column(String, default="")
+
+    # The resulting queue action -- reuses review_queue_service's OWN
+    # QUEUE_PRIORITY_BUY_NOW/QUEUE_PRIORITY_BORDERLINE vocabulary where
+    # it applies, falling back to the raw fresh recommendation string
+    # (e.g. "IGNORE"/"GATED") otherwise -- never a new invented
+    # category (see RevisitPoolService.run_batch).
+    resulting_action: Mapped[str] = mapped_column(String, default="")
+
+    # True only when the FRESH numbers clear ProductRepository.
+    # is_notable() (the same "worth a look" bar used everywhere else in
+    # Atlas) and the PREVIOUS snapshot did not -- a genuine recovery,
+    # not just "still exactly as unremarkable as before".
+    recovered: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Best fresh ROI (today or 90d) exceeded 500% -- the empirical
+    # cutoff identified in the Opportunity Engine 2.0 simulation where
+    # source-match/data-parsing errors concentrated (e.g. a near-zero
+    # EU cost against a normal UK price -- the same "phantom cost"
+    # signature KeepaParser's own docstring documents fixing
+    # elsewhere), not a new scoring weight -- a display/trust flag only.
+    verify_source_match: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # "scanned" (a fresh record was produced and compared normally) |
+    # "no_fresh_record" (the rescan produced nothing new for this ASIN)
+    status: Mapped[str] = mapped_column(String, default="scanned")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class HistoricalPurchase(Base):
+    """
+    One row per real purchase from the team's own purchasing workbook
+    (Historical Buying Intelligence, Phase 4C/4D, 2026-09-04) --
+    ground-truth evidence of what Atlas/the team have ACTUALLY bought
+    and sold before, as distinct from what Keepa/competitor scanning
+    THINKS looks promising. See HistoricalBuyingService for the reason
+    this exists: the Phase 4C analysis found 89 of 102 real EU A2A
+    buy-sheet brands were already visible to Discovery Intelligence,
+    but 80 of those 89 (90%) showed ZERO confirmed BUY under the
+    current Opportunity Lens despite documented real profit -- real
+    buying history was completely outside Atlas's intelligence loop.
+
+    Populated ONLY by HistoricalBuyingService.import_workbook() (a
+    manual, human-triggered one-off/occasional import -- see that
+    method's own docstring), never by any scheduler or live Keepa
+    call. This is explicitly NOT a new operational purchasing system
+    (Atlas doesn't track live purchasing state here) -- it is a
+    read-only, append-only EXTRACT of historical intelligence from an
+    external workbook, re-importable by re-running the same import
+    (which replaces the previous extract wholesale -- see
+    import_workbook's own docstring for why "replace", not "merge").
+
+    is_eu_a2a is set ONLY from an explicit Store match (Amazon.de/.fr/
+    .es/.it) -- deliberately NEVER inferred from sourcing_method, per
+    the approved brief ("Do not infer A2A from Sourcing Method alone").
+    Every other field is kept as close to the source workbook's own
+    columns as possible (see import_workbook) so provenance is never
+    lost -- store and sourcing_method are BOTH preserved, never
+    collapsed into one classification.
+    """
+    __tablename__ = "historical_purchases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    date_ordered: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+
+    asin: Mapped[str] = mapped_column(String, default="", index=True)
+    product_name: Mapped[str] = mapped_column(String, default="")
+
+    # Raw AND normalized (strip+lower) brand -- normalized is what
+    # HistoricalBuyingService/DiscoveryIntelligenceService key on (same
+    # convention as ProductRecord.brand elsewhere), raw is kept for
+    # display/provenance so a workbook typo/casing quirk is still
+    # visible rather than silently rewritten.
+    brand_raw: Mapped[str] = mapped_column(String, default="")
+    brand: Mapped[str] = mapped_column(String, default="", index=True)
+
+    category: Mapped[str] = mapped_column(String, default="")
+
+    # Exactly as the workbook's own Store column reads (e.g.
+    # "Amazon.de", "Boots", "currys") -- NOT normalized/lowercased, so
+    # the UI can show it verbatim; is_eu_a2a below is the normalized,
+    # classified signal derived from this.
+    store: Mapped[str] = mapped_column(String, default="")
+    is_eu_a2a: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # Workbook's own free-text "Sourcing Method" column (e.g. "John",
+    # "Manual", "Replen", "Arbisource", "Atlas", "VA - John") --
+    # preserved verbatim, never used to derive is_eu_a2a.
+    sourcing_method: Mapped[str] = mapped_column(String, default="")
+
+    cost_price: Mapped[float] = mapped_column(Float, default=0.0)
+    sale_price: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Workbook's own column is literally named "Potential ROI" -- kept
+    # under that name (not renamed to "roi") so nobody mistakes this
+    # for a confirmed/realized outcome; see HistoricalBuyingService's
+    # own module docstring for the same caveat.
+    potential_roi: Mapped[float] = mapped_column(Float, default=0.0)
+    profit_per_unit: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity: Mapped[float] = mapped_column(Float, default=0.0)
+    profit_total: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Which import run produced this row (see import_workbook) -- lets
+    # a re-import replace only rows from a PREVIOUS import, not rows
+    # some other future feature might add here independently.
+    import_batch_id: Mapped[str] = mapped_column(String, default="", index=True)
+
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AttentionIgnoredBrand(Base):
+    """
+    Attention Engine v1 (Phase 5B, 2026-09-04) -- "Ignore for now": a
+    human explicitly hiding one brand from Attention recommendations
+    without deleting any of the evidence behind it. Deliberately NOT a
+    second source of truth for scoring/priority -- it only filters what
+    attention_engine_service.get_attention_candidates() surfaces; the
+    brand's Discovery tier, scan history, and buying history are
+    completely untouched and it can be un-ignored at any time (see
+    unignore_brand). No automatic/permanent removal exists anywhere --
+    this table only ever grows or shrinks by an explicit human action.
+    """
+    __tablename__ = "attention_ignored_brands"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    brand: Mapped[str] = mapped_column(String, unique=True, index=True)
+    ignored_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ExcludedBrand(Base):
+    """
+    A brand Atlas should stop scanning/tracking altogether, for any
+    reason OTHER than "can't get Amazon approval" (see GatedBrand's own
+    docstring for why that stays a separate table with different
+    behaviour -- a gated brand is still TRACKED when incidentally
+    found, e.g. via Competitor Watch, in case it's worth pursuing
+    ungating; an excluded brand is not -- this is "we've decided
+    against this brand", full stop).
+
+    2026-09-05: built after a real gap was found -- Attention Engine
+    v1 (attention_engine_service.py) had no awareness of gating at all,
+    so a handful of gated brands (Canon, HP, Samsung, SanDisk, Braun,
+    Rimmel, Oral-B) were showing up as scan/attention candidates with
+    no warning, and nothing existed to deliberately remove a brand from
+    active scanning with a recorded reason (as opposed to gating, which
+    is specifically about Amazon approval). This table is unconditional
+    and brand-wide -- no category scoping like GatedBrand supports,
+    since the ask here is simpler: "stop scanning this brand, here's
+    why", not "gated in this one category".
+
+    Checked in the SAME place gating is (BrandScanService.scan Step 1,
+    before any token is spent on a brand-search-driven scan) and in
+    attention_engine_service's candidate universe (excluded AND gated
+    brands are both filtered out before any lane is assigned). Adding
+    an exclusion also immediately removes any existing ScanQueueItem
+    rows for that brand (see ProductRepository.add_brand_exclusion) --
+    unlike gating, which deliberately leaves a stuck item sitting
+    inert in the queue for a human to notice and act on, an explicit
+    exclusion means "get it out of the queue now", not just "stop
+    spending tokens on it starting next tick".
+    """
+    __tablename__ = "excluded_brands"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    brand: Mapped[str] = mapped_column(String, unique=True, index=True)
+    reason: Mapped[str] = mapped_column(String, default="")
+    excluded_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class OaResearchFinding(Base):
+    """
+    One AI research worker result for one competitor-sourced ASIN --
+    "Atlas -- OA Source Intelligence & Competitor Opportunity Engine"
+    brief, 2026-09-05, approved after the 20-case known-good/known-bad
+    benchmark (see oa_research_agent_20case_benchmark_report.json).
+
+    Deliberately a NEW, separate table rather than columns bolted onto
+    OaSourceCandidate/OaSourceRun -- those are tightly coupled to the
+    SerpAPI-batch/auto-promote pipeline (price_source, shopping_provider,
+    added_to_review_queue) that this phase must not touch. Nothing
+    existing reads this table, so shadow-mode runs are zero-risk to
+    every other page/pipeline in Atlas.
+
+    HARD RULE (Tamara, 2026-09-05): a source with no viable CURRENT
+    price never produces BUY_NOW or BORDERLINE, no matter how strong
+    the historical evidence is -- it always resolves to
+    SOURCE_INTELLIGENCE. Historical evidence enriches Source
+    Intelligence; it never creates a buying lead by itself. Current and
+    historical evidence are stored in permanently separate columns so a
+    later current-price check can never silently overwrite historical
+    evidence (e.g. Currys sold this for £59.99 on 28 Aug; today's
+    £119.99 check must not erase that £59.99 record).
+
+    Shadow mode (current phase): this table is written by
+    OaResearchWorkerService but nothing else in Atlas reads or acts on
+    it yet -- no save_opportunity, no Review Queue write, no
+    SellerNewListing mutation. `existing_pipeline_outcome` records what
+    Atlas's LIVE pipeline already concluded for the same ASIN at the
+    same time, purely so shadow results can be compared against it by
+    a human before any promotion is considered.
+    """
+    __tablename__ = "oa_research_findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Attribution -- links back to the competitor sighting that
+    # triggered this research. Nullable: a standalone recheck of an
+    # ASIN may have no single specific listing to point to.
+    seller_new_listing_id: Mapped[int | None] = mapped_column(
+        ForeignKey("seller_new_listings.id"), nullable=True, index=True, default=None
+    )
+    asin: Mapped[str] = mapped_column(String, index=True)
+
+    # VERIFIED_CURRENT | VERIFIED_HISTORICAL | FETCH_FAILED |
+    # SEARCH_EXHAUSTED | NO_MATCH | CONFLICTING_MATCH -- see brief §14.
+    # Distinguishes "could not verify" from "verified wrong": a
+    # FETCH_FAILED/SEARCH_EXHAUSTED result is an infrastructure gap,
+    # not a judgment that the product doesn't match.
+    result_state: Mapped[str] = mapped_column(String, default="")
+
+    # Current source -- populated only when a live, purchasable price
+    # was actually confirmed on the retailer's own page (or via Brave
+    # fallback). Never set from a stale/thin snippet alone.
+    current_retailer: Mapped[str] = mapped_column(String, default="")
+    current_url: Mapped[str] = mapped_column(String, default="")
+    current_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    current_stock_text: Mapped[str] = mapped_column(String, default="")
+    current_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # Historical source -- stored SEPARATELY from current_* above and
+    # NEVER overwritten by a later current-price check on the same
+    # ASIN (brief §21, a hard requirement).
+    historical_retailer: Mapped[str] = mapped_column(String, default="")
+    historical_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    historical_observed_note: Mapped[str] = mapped_column(String, default="")  # e.g. "sale ended ~5 days ago, 28 Aug"
+    historical_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # Structured status fields (added per Tamara's review, 2026-09-05)
+    # -- cleaner filtering/UI grouping than parsing atlas_inference
+    # free text for every row.
+    current_source_status: Mapped[str] = mapped_column(String, default="")  # VIABLE | NOT_VIABLE | OUT_OF_STOCK | ABOVE_AMAZON | UNKNOWN
+    historical_source_status: Mapped[str] = mapped_column(String, default="")  # FOUND | NOT_FOUND
+    sourcing_classification: Mapped[str] = mapped_column(String, default="")  # A2A | OA | UNKNOWN
+
+    # Confidence + inference (brief §13, §4) -- never a definitive
+    # attribution claim. Prompted to always use hedged language
+    # ("likely source" / "possible source"), never "competitor bought
+    # this from X" -- see OaResearchWorkerService's own system prompt.
+    source_confidence: Mapped[str] = mapped_column(String, default="")  # HIGH | MEDIUM | LOW
+    atlas_inference: Mapped[str] = mapped_column(String, default="")
+
+    # What this run WOULD do -- shadow mode only, never acted on
+    # directly. HARD RULE: no viable current price => always
+    # SOURCE_INTELLIGENCE, never BUY_NOW/BORDERLINE, regardless of how
+    # strong the historical evidence is.
+    recommended_outcome: Mapped[str] = mapped_column(String, default="")  # BUY_NOW | BORDERLINE | SOURCE_INTELLIGENCE | NO_USEFUL_SOURCE
+    estimated_profit_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    estimated_roi_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    # What Atlas's EXISTING live pipeline already concluded for this
+    # same ASIN, captured at the same time -- for shadow-mode side-by-
+    # side comparison only (brief §23.8), e.g. "no_retailer_found" or
+    # "candidate_found (not promoted)" or "promoted to Review Queue".
+    existing_pipeline_outcome: Mapped[str] = mapped_column(String, default="")
+
+    # Auditability -- mirrors OaSourceCandidate's own convention
+    # (queries_used_json/shopping_candidates_json) so a human can see
+    # exactly what was searched and why a conclusion was reached.
+    queries_used_json: Mapped[str] = mapped_column(String, default="")
+    reasoning_json: Mapped[str] = mapped_column(String, default="")
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Human review of the shadow result (Tamara, 2026-09-05) -- lets
+    # each shadow finding be individually scored against the worker's
+    # own conclusion before any promotion is considered: was this a
+    # genuinely good opportunity, a mismatch the worker got wrong, or a
+    # case that was never really OA at all and should have been
+    # classified A2A/Wholesale instead. Free vocabulary by design (no
+    # enum yet -- too early to know the right taxonomy); suggested
+    # values: GENUINE_OPPORTUNITY | MISMATCH | SHOULD_BE_A2A |
+    # SHOULD_BE_WHOLESALE | CORRECT_REJECTION | NEEDS_MORE_INFO.
+    human_verdict: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    human_notes: Mapped[str] = mapped_column(String, default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SalesHistorySnapshot(Base):
+    """
+    One row per ASIN from a SellerToolKit "Sales Summary - By ASIN"
+    export (2026-09-07, Tamara: "shall I upload some data on everything
+    we have ever purchased to date?" -- she uploaded a real Amazon
+    SALES report instead of the Buy Sheet purchasing workbook
+    HistoricalPurchase already covers).
+
+    Deliberately its OWN table, not folded into HistoricalPurchase --
+    the two answer genuinely different questions from genuinely
+    different sources: HistoricalPurchase is the team's own manually-
+    maintained purchasing/sourcing workbook (cost price, sourcing
+    method, store), aggregated PER PURCHASE EVENT; this is a real
+    Amazon SALES report (orders, units, profit, ROI, current stock)
+    aggregated PER ASIN over a date range, with no purchase-event detail
+    at all (SellerToolKit's own export always reports "Date" as "n/a"
+    at this aggregation level -- confirmed against the real file).
+    Both are still genuine, independent evidence of "we have handled
+    this ASIN before" -- see ReviewQueueService._batch_historical_flags,
+    which reads asins from BOTH tables for the "Bought before" badge.
+
+    Populated ONLY by SalesHistoryService.import_seller_toolkit_export()
+    -- a manual, human-triggered import, never a scheduler or live
+    request handler, same "replace wholesale on each import" convention
+    HistoricalPurchase's own import_workbook already uses (this is a
+    point-in-time snapshot export, not an incremental feed) -- see that
+    method's own docstring for why "replace", not "merge".
+    """
+    __tablename__ = "sales_history_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    asin: Mapped[str] = mapped_column(String, default="", index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    brand: Mapped[str] = mapped_column(String, default="")
+    category: Mapped[str] = mapped_column(String, default="")
+
+    orders: Mapped[int] = mapped_column(Integer, default=0)
+    units: Mapped[int] = mapped_column(Integer, default=0)
+    profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
+    sales: Mapped[float] = mapped_column(Float, default=0.0)
+    cog: Mapped[float] = mapped_column(Float, default=0.0)
+    fees: Mapped[float] = mapped_column(Float, default=0.0)
+    roi_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    margin_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    current_stock_qty: Mapped[int] = mapped_column(Integer, default=0)
+
+    # The export's own reporting window (from the filename/report header,
+    # e.g. 2026-05-01 to 2026-09-07) -- kept so a later, narrower or wider
+    # re-export doesn't read as ambiguous about what period these
+    # aggregate figures actually cover.
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    imported_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

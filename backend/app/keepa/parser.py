@@ -30,6 +30,28 @@ class KeepaParser:
     # library's own KEEPA_ST_ORDINAL constant.
     KEEPA_EPOCH = datetime(2011, 1, 1, tzinfo=timezone.utc)
 
+    # Amazon's own stable seller ID on amazon.co.uk -- confirmed live,
+    # 2026-09-07 (Tamara flagged B0CFV7Z7SJ: "this only had amazon on
+    # the buy box in the past 30 days"): cross-referenced against a
+    # SECOND real ASIN where stats.buyBoxIsAmazon was True at the
+    # moment stats.buyBoxSellerId equalled this exact value -- the same
+    # ID also appears in B0CFV7Z7SJ's own buyBoxSellerIdHistory. Amazon
+    # sells under one stable account per marketplace, so this is safe
+    # to treat as a fixed constant (not derived per-product) -- the
+    # only reliable way to identify Amazon in buyBoxSellerIdHistory when
+    # the product's OWN stats.buyBoxIsAmazon happens to be False at the
+    # current moment (e.g. Amazon is between stock, as B0CFV7Z7SJ was
+    # when this was found -- stats.buyBoxIsAmazon alone would have
+    # silently missed a real 30-day pattern of total Amazon dominance).
+    AMAZON_UK_SELLER_ID = "A3P5ROKL5A1OLE"
+
+    # buyBoxSellerIdHistory's own "no current buy box holder" sentinel
+    # values (confirmed live: -1 appears constantly, e.g. out of stock/
+    # no qualifying offer; -2 seen occasionally, meaning unclear from
+    # Keepa's own docs but never a real seller ID either way) -- neither
+    # counts as a competitor OR as Amazon.
+    NO_BUY_BOX_HOLDER_CODES = ("-1", "-2")
+
     def __init__(self, product: dict):
         self.product = product
 
@@ -350,6 +372,242 @@ class KeepaParser:
             daily_prices.append(round(effective_price, 2))
 
         return daily_prices
+
+    def daily_buy_box_peak_prices(self, window_days: int) -> list:
+        """
+        Real bug found live, 2026-09-07 (Tamara, re: B0FQCB7YS9: "it had
+        a buy box of £229 for a number of days in August" -- turned out
+        to be Amazon's own listed price, not the buy box, but chasing
+        that down surfaced a genuine, separate gap): daily_buy_box_prices
+        above takes exactly ONE snapshot per day -- whatever price was in
+        effect at that day's own midnight boundary -- so a real intraday
+        price spike that both rose AND reverted within the same day (a
+        real one confirmed live: 2026-08-27, buy box jumped to £181.54 at
+        17:36 and was back down to £153.99 by 19:25) is invisible to it
+        entirely; the midnight snapshot for that day shows £154.69, and
+        a genuine several-hour buying window that would have cleared a
+        real ROI bar is silently never counted.
+
+        This is deliberately its OWN method, not a change to
+        daily_buy_box_prices' existing behaviour -- that function has 8+
+        callers across EU A2A/UK A2A/competition-spike classification
+        (see SourcingClassifier) whose thresholds were calibrated against
+        its snapshot semantics; changing it under them risks shifting
+        real classifications in ways not modelled here. This is used
+        ONLY for VerdictService.compute_metrics' viable-days-at-ROI
+        metric, which is explicitly asking "was there EVER a real buying
+        window this day", not "what was the price at midnight" -- the
+        MAX price seen at any point during the day is the right answer
+        to that question (a higher buy box price is a BETTER outcome for
+        whoever holds it, i.e. what WE would have sold at that day).
+
+        Same triple-walk/step-carry-forward mechanics as daily_buy_box_
+        prices (a day with no price change of its own still carries
+        forward whatever was already in effect from a previous day), but
+        tracks the MAX price observed within each day's own boundaries
+        instead of a single point-in-time value. 0.0 for a day with no
+        price data at all, same convention as daily_buy_box_prices.
+        """
+        csv = self.product.get("csv")
+
+        if not csv or len(csv) <= self.CSV_BUY_BOX:
+            return [0.0] * window_days
+
+        series = csv[self.CSV_BUY_BOX]
+
+        if not series or len(series) % 3 != 0:
+            return [0.0] * window_days
+
+        MAX_SANE_PRICE_CENTS = 100_000  # GBP 1000 -- same ceiling as daily_buy_box_prices
+
+        changes = []
+        for i in range(0, len(series), 3):
+            minutes, price = series[i], series[i + 1]
+            price_gbp = price / 100 if price not in (-1, None) and 0 < price < MAX_SANE_PRICE_CENTS else 0.0
+            timestamp = self.KEEPA_EPOCH + timedelta(minutes=minutes)
+            changes.append((timestamp, price_gbp))
+
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=window_days)
+
+        daily_peak_prices = []
+        carried_price = 0.0  # whatever was in effect BEFORE this day started
+        change_index = 0
+
+        for day_offset in range(window_days):
+            day_start = window_start + timedelta(days=day_offset)
+            day_end = day_start + timedelta(days=1)
+
+            day_peak = carried_price
+
+            while change_index < len(changes) and changes[change_index][0] < day_end:
+                carried_price = changes[change_index][1]
+                if carried_price > day_peak:
+                    day_peak = carried_price
+                change_index += 1
+
+            daily_peak_prices.append(round(day_peak, 2))
+
+        return daily_peak_prices
+
+    def buy_box_holder_breakdown(self, window_days: int) -> dict:
+        """
+        Real gap found live, 2026-09-07 (Tamara, re: B0CFV7Z7SJ: "this
+        only had amazon on the buy box in the past 30 days which is a
+        red flag I should see") -- confirmed true against the real raw
+        Keepa data (buyBoxSellerIdHistory): every single buy-box win in
+        the last 30 days went to Amazon itself, with gaps where nobody
+        held it, and genuinely ZERO third-party wins. The existing
+        amazon_buy_box_percentage() below can't catch this: it reads
+        stats.buyBoxIsAmazon (the CURRENT moment only) and returns 0 the
+        instant Amazon isn't the CURRENT holder -- which is common
+        precisely when Amazon rotates in and out of stock, exactly
+        B0CFV7Z7SJ's own situation (stats.buyBoxIsAmazon was False --
+        Amazon between stock -- at the moment this was found, silently
+        hiding a genuine 30-day pattern of total Amazon dominance).
+
+        Walks the raw buyBoxSellerIdHistory field (a TOP-LEVEL product
+        key -- an [minutes_str, sellerId_str, ...] pair series, NOT the
+        csv[CSV_BUY_BOX] triple series, which only carries price/shipping,
+        never seller identity), holding each seller "in effect" between
+        change points the same step/carry-forward convention as
+        daily_buy_box_prices, then buckets TIME (not raw event count,
+        which would over-weight a day with many rapid flips) into three
+        totals over the window: amazon_minutes, competitor_minutes,
+        no_holder_minutes (NO_BUY_BOX_HOLDER_CODES, e.g. out of stock).
+
+        `third_party_ever_won` is the clean, unambiguous flag this was
+        actually built for: True the instant ANY real competitor ID
+        appears anywhere in the window, regardless of how briefly --
+        the honest "has ANY reseller ever actually cracked this buy box
+        recently" question, distinct from a percentage that a single
+        long competitor stretch could dominate either direction.
+
+        Returns all-zero / third_party_ever_won=False (never a crash or
+        a guess) when buyBoxSellerIdHistory is missing or empty --
+        e.g. an older/partial Keepa response.
+        """
+        history = self.product.get("buyBoxSellerIdHistory") or []
+
+        if len(history) < 2:
+            return {"amazon_minutes": 0, "competitor_minutes": 0, "no_holder_minutes": 0, "third_party_ever_won": False}
+
+        usable_len = len(history) - (len(history) % 2)
+
+        changes = []
+        for i in range(0, usable_len, 2):
+            try:
+                minutes = int(history[i])
+            except (TypeError, ValueError):
+                continue
+            seller_id = history[i + 1]
+            timestamp = self.KEEPA_EPOCH + timedelta(minutes=minutes)
+            changes.append((timestamp, seller_id))
+
+        if not changes:
+            return {"amazon_minutes": 0, "competitor_minutes": 0, "no_holder_minutes": 0, "third_party_ever_won": False}
+
+        changes.sort(key=lambda c: c[0])
+
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=window_days)
+
+        # Whoever was in effect AT window_start, carried forward from
+        # before the window even began -- same "a day with no change of
+        # its own still reflects the last real state" reasoning as
+        # daily_buy_box_prices/daily_buy_box_peak_prices above.
+        current_seller = None
+        change_index = 0
+        while change_index < len(changes) and changes[change_index][0] <= window_start:
+            current_seller = changes[change_index][1]
+            change_index += 1
+
+        amazon_minutes = 0
+        competitor_minutes = 0
+        no_holder_minutes = 0
+        third_party_ever_won = False
+        segment_start = window_start
+
+        def bucket(seller_id, duration_minutes):
+            nonlocal amazon_minutes, competitor_minutes, no_holder_minutes, third_party_ever_won
+            if seller_id is None or seller_id in self.NO_BUY_BOX_HOLDER_CODES:
+                no_holder_minutes += duration_minutes
+            elif seller_id == self.AMAZON_UK_SELLER_ID:
+                amazon_minutes += duration_minutes
+            else:
+                competitor_minutes += duration_minutes
+                third_party_ever_won = True
+
+        while change_index < len(changes) and changes[change_index][0] < now:
+            change_time, next_seller = changes[change_index]
+            duration = (change_time - segment_start).total_seconds() / 60
+            bucket(current_seller, duration)
+            current_seller = next_seller
+            segment_start = change_time
+            change_index += 1
+
+        bucket(current_seller, (now - segment_start).total_seconds() / 60)
+
+        return {
+            "amazon_minutes": round(amazon_minutes),
+            "competitor_minutes": round(competitor_minutes),
+            "no_holder_minutes": round(no_holder_minutes),
+            "third_party_ever_won": third_party_ever_won,
+        }
+
+    def daily_offer_counts(self, window_days: int) -> list:
+        """
+        Same "step" reconstruction as daily_buy_box_prices, for the
+        offer-count series instead of price (2026-09-04, Opportunity
+        Engine 2.0 -- Tamara's own ask: "for a listing where offers are
+        rising we should see how much of a problem this is", i.e. what
+        did price actually do the last time competition spiked, not
+        just whether it's spiked before).
+
+        CSV_OFFER_COUNT_NEW (index 11) is plain [time, value] PAIR-
+        structured (see _last_value's own docstring), NOT triple-
+        structured like BUY_BOX_SHIPPING -- so this walks pairs, not
+        triples, but holds each count constant between change points
+        the same way. 0 for a day with no offer-count data at all.
+        """
+        csv = self.product.get("csv")
+
+        if not csv or len(csv) <= self.CSV_OFFER_COUNT_NEW:
+            return [0] * window_days
+
+        series = csv[self.CSV_OFFER_COUNT_NEW]
+
+        if not series or len(series) < 2:
+            return [0] * window_days
+
+        # Odd-length series has a dangling trailing timestamp with no
+        # paired value yet -- same edge case _last_value guards against.
+        usable_len = len(series) - 1 if len(series) % 2 else len(series)
+
+        changes = []
+        for i in range(0, usable_len, 2):
+            minutes, count = series[i], series[i + 1]
+            offer_count = int(count) if count not in (-1, None) else 0
+            timestamp = self.KEEPA_EPOCH + timedelta(minutes=minutes)
+            changes.append((timestamp, offer_count))
+
+        now = datetime.now(timezone.utc)
+        window_start = now - timedelta(days=window_days)
+
+        daily_counts = []
+        effective_count = 0
+        change_index = 0
+
+        for day_offset in range(window_days):
+            day = window_start + timedelta(days=day_offset)
+
+            while change_index < len(changes) and changes[change_index][0] <= day:
+                effective_count = changes[change_index][1]
+                change_index += 1
+
+            daily_counts.append(effective_count)
+
+        return daily_counts
 
     # ---- Sales rank ----
 
@@ -712,19 +970,30 @@ class KeepaParser:
 
     def image(self) -> str:
         """
-        Full URL to the product's primary (first-listed) image, or ""
-        if Keepa has none on file. Zero extra API cost -- imagesCSV is
-        already part of the same product object every scan already
-        fetches, just never read before now (2026-09-04). Keepa's raw
-        field is a comma-separated list of image FILENAMES, not full
-        URLs -- confirmed against a real Keepa Product Finder CSV
-        export already in this repo (KeepaExport-2026-07-27-
-        ProductFinder.csv's own "Image" column), which resolves them
-        against the same media-amazon.com CDN path used here.
+        Full URL to the product's primary image, or "" if Keepa has
+        none on file. Zero extra API cost -- this is already part of
+        the same product object every scan already fetches.
+
+        Real bug, fixed 2026-09-05: this originally read "imagesCSV" as
+        a comma-separated list of filenames (confirmed against a Keepa
+        Product Finder CSV export's own "Image" column) -- but that's
+        the CSV EXPORT's shape, not the keepa Python library's actual
+        product object, which returns "images" as a LIST OF DICTS
+        instead (each with 'l'/'m' large/medium filenames and a
+        'variant' tag like "MAIN"/"FRNT"/"SIDE"/"BACK"). "imagesCSV"
+        doesn't exist on the real response at all, so this silently
+        returned "" for every single product ever scanned -- confirmed
+        live: 0 of 17,863 saved records had an image, including scans
+        from today, well after this was first added. Prefers the
+        MAIN-variant entry (falls back to the first one if no variant
+        is tagged MAIN), and its large filename (falls back to medium).
         """
-        images_csv = self.product.get("imagesCSV") or ""
-        first = images_csv.split(",")[0].strip() if images_csv else ""
-        return f"https://m.media-amazon.com/images/I/{first}" if first else ""
+        images = self.product.get("images") or []
+        if not images:
+            return ""
+        main = next((img for img in images if img.get("variant") == "MAIN"), images[0])
+        filename = main.get("l") or main.get("m") or ""
+        return f"https://m.media-amazon.com/images/I/{filename}" if filename else ""
 
     # ---- Reviews ----
 

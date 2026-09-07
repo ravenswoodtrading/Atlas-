@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.database.database import SessionLocal
 from app.database.models import Lead
 from app.services.product_repository import ProductRepository
-from app.services.review_queue_service import ReviewQueueService, apply_lead_decision
+from app.services.review_queue_service import ReviewQueueService, apply_lead_decision, clean_atlas_notes
 from app.routes.verdict import highlight_figures
 from app.services.verdict_service import resolve_source_marketplace
 
@@ -60,13 +60,47 @@ SOURCE_MARKETPLACE_ALIASES = [
     "source_marketplace", "source marketplace", "marketplace", "source country",
     "country", "buy from", "source market",
 ]
+# VA's own free-text column -- read-only from Atlas's side, see
+# Lead.va_notes's own docstring for why this is never written back to.
+VA_NOTES_ALIASES = ["va notes", "va_notes", "notes", "comment", "comments", "summary"]
+# Lead Sheet's own repeat-detection column (2026-09-07, Tamara: "the row
+# itself has a column ... either says new ASIN or the date it was last
+# added") -- read by google_sheets_lead_sync.py to populate
+# SheetLeadSyncState.date_last_added, never mapped onto Lead itself.
+DATE_LAST_ADDED_ALIASES = ["date last added", "last added", "date added"]
+# The VA's decision/rating signal on the real Lead Sheet (confirmed with
+# Tamara, 2026-09-05) -- "Avoid" | "Review" | "Ok", mapped in
+# _normalize_client_rating below. Distinct from SOURCING_TYPE_ALIASES/
+# VA_NOTES_ALIASES, which are different columns entirely.
+CLIENT_RATING_ALIASES = ["client rating", "client_rating", "rating"]
+# Real gaps found live, 2026-09-06 (Tamara): the sheet's own "Product
+# Name" and "Source URL" columns were never captured at all -- a sheet
+# lead had no title until Keepa analysis succeeded (which could be a
+# while, or never), and the only "source" info kept was a free-text
+# retailer NAME (source_detail), never an actual clickable link.
+PRODUCT_NAME_ALIASES = ["product name", "title", "name"]
+SOURCE_URL_ALIASES = ["source url", "source_url", "url", "link"]
+
+
+def _normalize_header(text: str) -> str:
+    """
+    Lowercase + collapse ALL internal whitespace (not just leading/
+    trailing) to a single space. Added 2026-09-05 after a real miss:
+    Lead Sheet's actual "CoG \n(unit)" header has an embedded newline
+    that survived a plain .strip().lower(), so it never matched the
+    "cog (unit)" alias -- cost price silently only ever came from
+    "Actual CoG" (usually blank pre-purchase). Robust to this and any
+    similar future whitespace quirk without hardcoding a literal
+    newline sequence.
+    """
+    return " ".join(str(text).strip().lower().split())
 
 
 def _extract(payload: dict, aliases: list) -> str | None:
-    normalized = {str(k).strip().lower(): v for k, v in payload.items()}
+    normalized = {_normalize_header(k): v for k, v in payload.items()}
 
     for alias in aliases:
-        value = normalized.get(alias)
+        value = normalized.get(_normalize_header(alias))
         if value not in (None, ""):
             return value
 
@@ -124,15 +158,115 @@ def _stringify(value) -> str | None:
 
 
 def _extract_float(payload: dict, aliases: list) -> float | None:
+    """
+    Real bug found live, 2026-09-06: Lead Sheet's real price cells come
+    through as "£65.00"/"£37.99" -- the £ symbol was never stripped,
+    so float() raised on every single one and va_sale_price/va_cost_
+    price silently ended up None for every real lead. Strips every
+    currency symbol Atlas deals with elsewhere (GBP/EUR/USD), not just
+    £, since a VA/Sourcing Method column can reference an EU A2A buy.
+    """
     value = _extract(payload, aliases)
 
     if value is None:
         return None
 
+    cleaned = str(value)
+    for symbol in ("£", "€", "$", "%", ","):
+        cleaned = cleaned.replace(symbol, "")
+
     try:
-        return float(str(value).replace("%", "").replace(",", "").strip())
+        return float(cleaned.strip())
     except ValueError:
         return None
+
+
+def normalize_client_rating(value) -> str | None:
+    """
+    Lead Sheet's real "Client Rating" column is the VA/client's decision
+    signal. First checked with Tamara 2026-09-05 against a small sample
+    (Avoid/Review/Ok) -- widened the same day after a real gap was found
+    live: a full column scan of all 720 rows turned up a richer real
+    vocabulary (Avoid 330, Good 120, Review 88, Ok 84, OOS 44, Already
+    bought 21, blank 18, No purchase (other reason) 14) that this
+    function didn't recognize, so genuinely already-decided leads
+    (Good/OOS in particular) were being left stuck pending in Atlas.
+
+    "Already bought" -> approved and "No purchase (other reason)" ->
+    rejected are reasonable-but-not-explicitly-confirmed interpretations
+    (flagged to Tamara) -- everything else here was either directly
+    confirmed or is an unambiguous synonym (Good ~ Ok, OOS -> Atlas's
+    own "oos" decision). "Review" and anything unrecognized/blank
+    deliberately return None -- left pending for a human on either
+    side, never guessed at.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("avoid", "no purchase (other reason)"):
+        return "rejected"
+    if text in ("ok", "good", "already bought"):
+        return "approved"
+    if text == "oos":
+        return "oos"
+    return None
+
+
+def ingest_sheet_lead_row(payload: dict, db) -> Lead:
+    """
+    Single shared entry point for "a VA sheet row became/updated an
+    Atlas Lead" -- used by BOTH the webhook below (unchanged external
+    behavior, kept alive in case Apps Script is ever revived) and the
+    pull-based google_sheets_lead_sync.pull_and_ingest_va_leads
+    (2026-09-05). Extracted so this mapping logic exists in exactly one
+    place -- see that module's own docstring for why the transport
+    changed but this logic didn't need to.
+
+    Raises ValueError if the payload has no recognizable ASIN -- the
+    caller decides what to do with that (webhook: 400; poller: skip
+    and log).
+    """
+    asin = _extract(payload, ASIN_ALIASES)
+    if not asin:
+        raise ValueError("Payload has no recognizable ASIN column")
+    asin = str(asin).strip().upper()
+
+    # UPDATES an existing still-pending (decision IS NULL) sheet lead for
+    # this ASIN in place rather than always inserting a new row
+    # (2026-09-02, fixing a real duplicate-Review-Queue bug -- a VA sheet
+    # re-sending the same still-unreviewed ASIN on a later sync created a
+    # fresh row every time instead of recognizing it was already queued).
+    # Reset back to "queued" so it gets re-analyzed with whatever changed.
+    lead = (
+        db.query(Lead)
+        .filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None))
+        .order_by(Lead.id.desc())
+        .first()
+    )
+
+    if lead is None:
+        lead = Lead(asin=asin, source="sheet")
+        db.add(lead)
+
+    lead.sourcing_type = _normalize_sourcing_type(_extract(payload, SOURCING_TYPE_ALIASES))
+    lead.raw_sheet_data = json.dumps(payload)
+    lead.va_roi = _extract_float(payload, VA_ROI_ALIASES)
+    lead.va_profit = _extract_float(payload, VA_PROFIT_ALIASES)
+    lead.va_cost_price = _extract_float(payload, VA_COST_PRICE_ALIASES)
+    lead.va_sale_price = _extract_float(payload, VA_SALE_PRICE_ALIASES)
+    lead.source_detail = _stringify(_extract(payload, SOURCE_DETAIL_ALIASES))
+    lead.source_marketplace = _extract_source_marketplace(payload)
+    lead.va_notes = _stringify(_extract(payload, VA_NOTES_ALIASES))
+    lead.title = _stringify(_extract(payload, PRODUCT_NAME_ALIASES))
+    lead.source_url = _stringify(_extract(payload, SOURCE_URL_ALIASES))
+    lead.status = "queued"
+    lead.verdict = None
+    lead.rationale = None
+    lead.keepa_metrics = None
+    lead.analysis_attempts = 0
+
+    db.flush()
+    return lead
 
 
 @router.post("/api/webhook/sheet-lead")
@@ -142,51 +276,12 @@ def sheet_lead_webhook(payload: dict, x_webhook_secret: str = Header(default=Non
     if not expected_secret or x_webhook_secret != expected_secret:
         raise HTTPException(status_code=401, detail="Invalid or missing webhook secret")
 
-    asin = _extract(payload, ASIN_ALIASES)
-
-    if not asin:
-        raise HTTPException(status_code=400, detail="Payload has no recognizable ASIN column")
-
-    asin = str(asin).strip().upper()
-
     db = SessionLocal()
     try:
-        # UPDATES an existing still-pending (decision IS NULL) sheet
-        # lead for this ASIN in place rather than always inserting a new
-        # row (2026-09-02, fixing a real duplicate-Review-Queue bug -- a
-        # VA sheet re-sending the same still-unreviewed ASIN on a later
-        # day's sync created a fresh row every time instead of
-        # recognizing it was already queued; two real ASINs each got
-        # duplicated this way across consecutive daily syncs). Reset
-        # back to "queued" (verdict/rationale/keepa_metrics cleared, see
-        # LeadAnalysisService.process_queued_batch) so it gets
-        # re-analyzed with whatever changed in this newer submission,
-        # rather than leaving a stale verdict from the earlier one
-        # showing in the queue.
-        lead = (
-            db.query(Lead)
-            .filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None))
-            .order_by(Lead.id.desc())
-            .first()
-        )
-
-        if lead is None:
-            lead = Lead(asin=asin, source="sheet")
-            db.add(lead)
-
-        lead.sourcing_type = _normalize_sourcing_type(_extract(payload, SOURCING_TYPE_ALIASES))
-        lead.raw_sheet_data = json.dumps(payload)
-        lead.va_roi = _extract_float(payload, VA_ROI_ALIASES)
-        lead.va_profit = _extract_float(payload, VA_PROFIT_ALIASES)
-        lead.va_cost_price = _extract_float(payload, VA_COST_PRICE_ALIASES)
-        lead.va_sale_price = _extract_float(payload, VA_SALE_PRICE_ALIASES)
-        lead.source_detail = _stringify(_extract(payload, SOURCE_DETAIL_ALIASES))
-        lead.source_marketplace = _extract_source_marketplace(payload)
-        lead.status = "queued"
-        lead.verdict = None
-        lead.rationale = None
-        lead.keepa_metrics = None
-        lead.analysis_attempts = 0
+        try:
+            lead = ingest_sheet_lead_row(payload, db)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         db.commit()
         db.refresh(lead)
@@ -298,17 +393,39 @@ def review_decide(
     decision: str = Form(...),
     reason: str = Form(""),
     reason_category: str = Form(""),
+    purchased_qty: str = Form(""),
+    atlas_notes: str = Form(""),
     return_to: str = Form("/review"),
 ):
     db = SessionLocal()
+    is_sheet_lead = False
     try:
         lead = db.get(Lead, lead_id)
 
         if lead is not None:
-            apply_lead_decision(lead, decision, reason, reason_category or None)
+            is_sheet_lead = lead.source == "sheet"
+            qty = None
+            if is_sheet_lead and decision == "approved" and purchased_qty.strip():
+                try:
+                    qty = float(purchased_qty.strip())
+                except ValueError:
+                    qty = None
+            cleaned_atlas_notes = clean_atlas_notes(atlas_notes)
+            if cleaned_atlas_notes:
+                lead.atlas_notes = cleaned_atlas_notes
+            apply_lead_decision(lead, decision, reason, reason_category or None, purchased_qty=qty)
             db.commit()
     finally:
         db.close()
+
+    # Push to Lead Sheet immediately -- best-effort, never blocks the
+    # Atlas-side decision already committed above.
+    if is_sheet_lead:
+        try:
+            from app.services.google_sheets_lead_sync import push_decision_to_sheet
+            push_decision_to_sheet(lead_id)
+        except Exception as exc:
+            print(f"push_decision_to_sheet failed for lead {lead_id}: {exc}")
 
     return RedirectResponse(url=return_to, status_code=303)
 

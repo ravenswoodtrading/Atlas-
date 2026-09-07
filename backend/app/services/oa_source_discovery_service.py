@@ -1655,3 +1655,126 @@ class OaSourceDiscoveryService:
 
         finally:
             db.close()
+
+    @staticmethod
+    def get_manual_candidate(asin: str):
+        """
+        Most recent real (non-test) OaSourceCandidate for this ASIN,
+        across any run -- Review Queue OA workbench (2026-09-05), used
+        to show a previously-saved source on reload rather than losing
+        it the moment the detail panel closes. Read-only; no session
+        held open past this call, so simple scalar columns on the
+        returned row remain readable (no relationship lazy-loads here).
+        """
+        db = SessionLocal()
+        try:
+            return (
+                db.query(OaSourceCandidate)
+                .join(OaSourceRun, OaSourceCandidate.run_id == OaSourceRun.id)
+                .filter(OaSourceCandidate.asin == asin, OaSourceRun.is_test == False)
+                .order_by(OaSourceCandidate.created_at.desc())
+                .first()
+            )
+        finally:
+            db.close()
+
+    @staticmethod
+    def save_manual_source(asin: str, retailer_domain: str, retailer_url: str,
+                            retailer_price_gbp: float, delivery_gbp: float = 0.0,
+                            notes: str = "") -> dict:
+        """
+        Review Queue OA workbench (2026-09-05) -- persists a human-found
+        retail source for an OA-investigate ASIN. Deliberately narrower
+        than update_candidate above: no fresh Keepa refetch (this ASIN's
+        already-scanned ProductRecord already has everything needed --
+        title/brand/ean/buy_box_now/category_name/fba_fee, all free),
+        and NO call to _promote_if_qualifying -- Tamara's own explicit
+        instruction: entering a source price must never automatically
+        become a BUY, only compute and show the economics. The existing
+        Buy/Reject/Unsure Review Actions form remains the one decision
+        path, exactly as it already does for every other Review Queue
+        item.
+
+        Reuses the OaSourceCandidate/OaSourceRun tables as-is (see
+        delivery_gbp/notes' own docstrings for the only schema addition
+        this required) -- creates a lightweight ad-hoc run + candidate
+        the first time a source is saved for an ASIN that never went
+        through the automated OA Source Discovery batch, else updates
+        the existing one. effective landed cost (price + delivery) is
+        what actually feeds FeeEngine -- the same "UK-OA" marketplace
+        convention update_candidate's own fallback branch already uses,
+        so this produces identical profit/ROI math to the rest of Atlas,
+        just without the auto-promote step.
+        """
+        db = SessionLocal()
+        try:
+            candidate = (
+                db.query(OaSourceCandidate)
+                .join(OaSourceRun, OaSourceCandidate.run_id == OaSourceRun.id)
+                .filter(OaSourceCandidate.asin == asin, OaSourceRun.is_test == False)
+                .order_by(OaSourceCandidate.created_at.desc())
+                .first()
+            )
+
+            record = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin)
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+
+            if not candidate:
+                run = OaSourceRun(status="done", completed_at=datetime.now(timezone.utc))
+                db.add(run)
+                db.flush()
+
+                target_today = (
+                    FeeEngine.max_source_cost(
+                        record.buy_box_now, record.category_name, record.fba_fee, FeeEngine.OA_TARGET_ROI_PCT,
+                    )
+                    if record else 0.0
+                )
+
+                candidate = OaSourceCandidate(
+                    run_id=run.id, asin=asin,
+                    title=record.title if record else "",
+                    brand=record.brand if record else "",
+                    ean=record.ean if record else "",
+                    amazon_price_gbp=record.buy_box_now if record else 0.0,
+                    category_name=record.category_name if record else "",
+                    target_price_today_gbp=target_today,
+                )
+                db.add(candidate)
+                db.flush()
+
+            candidate.retailer_domain = retailer_domain or candidate.retailer_domain
+            candidate.retailer_url = retailer_url or candidate.retailer_url
+            candidate.retailer_price_gbp = retailer_price_gbp
+            candidate.delivery_gbp = delivery_gbp or 0.0
+            candidate.notes = notes or ""
+            candidate.price_source = "manual"
+            candidate.outcome = "candidate_found"
+
+            effective_cost = retailer_price_gbp + (delivery_gbp or 0.0)
+            fba_fee = record.fba_fee if record else 0.0
+
+            hypothetical = Product(
+                asin=asin, title=candidate.title, brand=candidate.brand, category="",
+                ean=candidate.ean, buy_box_now=candidate.amazon_price_gbp, fba_fee=fba_fee,
+                best_source_marketplace="UK-OA", best_source_cost_gbp=effective_cost,
+            )
+            fees = FeeEngine.calculate(hypothetical, category_name=candidate.category_name)
+            candidate.estimated_profit_gbp = fees.profit
+            candidate.estimated_roi_pct = fees.roi
+
+            db.commit()
+
+            return {
+                "candidate_id": candidate.id,
+                "effective_cost": effective_cost,
+                "profit": fees.profit,
+                "roi": fees.roi,
+                "target_price_today_gbp": candidate.target_price_today_gbp,
+            }
+        finally:
+            db.close()

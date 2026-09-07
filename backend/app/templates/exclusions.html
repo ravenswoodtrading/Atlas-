@@ -239,4 +239,67 @@
 </div>
 {% endif %}
 
+<h5 class="mb-2 mt-4">Excluded Brands ({{ excluded_brands|length }})</h5>
+<p class="text-muted">
+    Brands you've decided to stop scanning/tracking altogether, for any reason OTHER than Amazon approval (that's Gated Brands, above). Different from gating: an excluded brand is removed from the Scan Queue immediately, and Scan Intelligence's Attention Engine will never recommend it. A brand-search scan of an excluded brand is skipped before any Keepa token is spent, same as a gated one.
+</p>
+
+<div class="card metric p-3 mb-4">
+    <form method="post" action="/exclude/brand/add" class="row g-2 align-items-end">
+        <input type="hidden" name="return_to" value="/exclusions">
+        <div class="col-md-4">
+            <label class="form-label small">Brand</label>
+            <input type="text" class="form-control form-control-sm" name="brand" placeholder="e.g. acme" required>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label small">Reason</label>
+            <input type="text" class="form-control form-control-sm" name="reason" placeholder="e.g. too much competition, poor margins historically">
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-dark btn-sm w-100">
+                <i class="bi bi-slash-circle"></i> Exclude brand
+            </button>
+        </div>
+    </form>
+</div>
+
+{% if not excluded_brands %}
+    <div class="alert alert-info">
+        No excluded brands yet.
+    </div>
+{% else %}
+<div class="card metric p-3">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Brand</th>
+                    <th>Reason</th>
+                    <th>Excluded on</th>
+                    <th>Remove</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in excluded_brands %}
+                <tr>
+                    <td class="fw-semibold">{{ e.brand }}</td>
+                    <td class="small text-muted">{{ e.reason or "--" }}</td>
+                    <td class="small text-muted">{{ e.excluded_at.strftime("%Y-%m-%d %H:%M") if e.excluded_at else "" }}</td>
+                    <td>
+                        <form method="post" action="/exclude/brand/remove">
+                            <input type="hidden" name="exclusion_id" value="{{ e.id }}">
+                            <input type="hidden" name="return_to" value="/exclusions">
+                            <button class="btn btn-sm btn-outline-danger" type="submit">
+                                <i class="bi bi-trash"></i> Remove
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
 {% endblock %}

@@ -1,12 +1,19 @@
 import json
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import or_
+
 from app.database.database import SessionLocal
-from app.database.models import Lead, ProductRecord, SellerNewListing, TrackedSeller
+from app.database.models import (
+    Lead, ProductRecord, SellerNewListing, TrackedSeller, HistoricalPurchase, SheetLeadSyncState,
+    SalesHistorySnapshot,
+)
 from app.services.activity_log import ActivityLog
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
 from app.services.seller_watch_service import SellerWatchService
+from app.services.sourcing_classifier import SourcingClassifier
+from app.services import opportunity_lens_service as lens_service
 
 # Nav consolidation fast-follow (2026-08-24) -- Reviewed History was
 # Lead-only; there was no equivalent history view for scan/competitor
@@ -51,28 +58,18 @@ MAX_CONSIDER_LEADS = 150
 MAX_STALE_RECHECK_PER_RUN = 50
 
 # A PEAK_WINDOW lead already cleared OpportunityEngine.MIN_VIABLE_ROI
-# (17%, raised from 10% 2026-08-23) at the peak price just to be
-# tagged PEAK_WINDOW at all -- that floor means "not worthless", not
-# "worth the risk". Buying against a recent price peak is inherently
-# riskier than a normal BUY/CONSIDER (you're betting the price gets
-# back there again), so the Review Queue holds PEAK_WINDOW leads to a
-# higher bar before surfacing them: BOTH the peak ROI must be genuinely
-# strong AND the underlying score must already be at CONSIDER-tier
-# quality, despite failing the current/90d-avg price gate that kept it
-# out of CONSIDER/BUY.
-#
-# Was an OR (either bar alone was enough) until 2026-09-03 -- real bug,
-# not a design choice: a score=22 lead with roi=-44.9% at today's price
-# (a genuine LOSS) was showing up purely because its speculative peak
-# ROI cleared 35%, and several other sub-30-score leads did the same
-# (Tamara, 2026-09-03: "including some of the peak ones that really
-# aren't good enough... slow scoring leads getting through"). A bad
-# score means the underlying demand/trend/competition picture is weak
-# regardless of what a one-off historical price spike says, so a weak
-# score should disqualify a peak lead even with a strong peak ROI, not
-# just be a second way in.
-PEAK_WORTH_IT_ROI = 35
-PEAK_WORTH_IT_SCORE = 65
+# (17%, raised from 10% 2026-08-23) at the peak price, PLUS real sales
+# evidence and 5+ genuinely profitable days in the last 90 (see
+# OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D), just to be tagged
+# PEAK_WINDOW at all. A second, stricter "worth the risk" gate
+# (PEAK_WORTH_IT_ROI/PEAK_WORTH_IT_SCORE) used to live here on top of
+# that -- REMOVED 2026-09-04 (Opportunity Engine 2.0): confirmed via
+# simulation that it silently discarded 123 of 202 unreviewed
+# PEAK_WINDOW records OpportunityEngine had already vetted as real
+# evidence. OpportunityEngine's own gate is now authoritative -- see
+# list_leads' own comment at the PEAK_WINDOW merge point below, and
+# OpportunityLensService, which classifies every PEAK_WINDOW record as
+# HISTORICAL_RECURRING rather than a hard pass/fail.
 
 # Unified Review Queue VIEWS (Review Queue backend build, 2026-09-03
 # follow-up -- "unified review queue / one decision per ASIN") -- a
@@ -94,6 +91,17 @@ QUEUE_PRIORITY_VA_TO_REVIEW = "VA_TO_REVIEW"
 QUEUE_PRIORITY_BORDERLINE = "BORDERLINE"
 QUEUE_PRIORITY_NEEDS_ATTENTION = "NEEDS_ATTENTION"
 
+# Fifth view, added 2026-09-05 (Tamara's own scoped request -- "OA
+# Source Discovery needs to become a proper Review Queue view", so
+# working Command Centre -> Review Queue never misses a category of
+# lead). Deliberately its OWN view, never folded into BUY_NOW/
+# BORDERLINE/NEEDS_ATTENTION: these are OA/unclear detections with NO
+# confirmed source yet (see SellerWatchService.list_oa_worth_
+# investigating) -- "can we find a source for this at all", a
+# different question from "buy this now". See _item_views' oa_
+# investigate branch for why it never also earns a lens-derived view.
+QUEUE_PRIORITY_OA_INVESTIGATE = "OA_INVESTIGATE"
+
 # Reserved (explicitly NOT built yet, per instruction) for the future
 # "Atlas Attention Queue" -- no item produced today is ever given this
 # view; it exists purely so the views vocabulary already has a slot for
@@ -103,6 +111,7 @@ QUEUE_VIEW_URGENT = "URGENT"
 QUEUE_PRIORITIES = (
     QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW,
     QUEUE_PRIORITY_BORDERLINE, QUEUE_PRIORITY_NEEDS_ATTENTION,
+    QUEUE_PRIORITY_OA_INVESTIGATE,
 )
 
 # For sorting/the single "primary" view a list needs to sort by -- the
@@ -116,6 +125,10 @@ _PRIORITY_RANK = {
     QUEUE_PRIORITY_BUY_NOW: 1,
     QUEUE_PRIORITY_VA_TO_REVIEW: 2,
     QUEUE_PRIORITY_BORDERLINE: 3,
+    # Weakest/last -- "worth investigating the source", never the
+    # single strongest view an item leads with over a real BUY_NOW/
+    # NEEDS_ATTENTION/BORDERLINE finding on the same ASIN.
+    QUEUE_PRIORITY_OA_INVESTIGATE: 4,
     QUEUE_VIEW_URGENT: 0,
 }
 
@@ -125,6 +138,32 @@ _PRIORITY_RANK = {
 # subsystem's categories; this constant exists purely so today's items
 # already carry the field a later merge won't have to retrofit.
 ATTENTION_CATEGORY_SOURCING = "SOURCING"
+
+# Opportunity Engine 2.0 (2026-09-04) -- maps OpportunityLensService's
+# 8-state Action vocabulary onto the existing 4 QUEUE_PRIORITY tabs, so
+# the tab/filter/sort plumbing everywhere else (routes/review_queue.py,
+# review_queue.html) keeps working unchanged. This is a LOOKUP, not a
+# re-decision -- the Action itself (see each item's own "action"/
+# "action_label") is what actually determines a scan/competitor item's
+# next step (point 14); this mapping only decides which of the 3
+# visible tabs it's filed under for browsing. BUY_NOW/PRICE_DROP_BUY_
+# NOW/BUY_WITH_CAUTION are all genuinely "worth buying now, differing
+# only in what risk flag (if any) applies" -- grouped together, exactly
+# matching what QUEUE_PRIORITY_BUY_NOW already meant before this
+# change. HIGH_VALUE_LOW_CONFIDENCE/INVESTIGATE/WATCH all land in the
+# existing "Consider" tab. HISTORICAL_RECURRING (freshness-gated or a
+# real PEAK_WINDOW pattern) lands in NEEDS_ATTENTION, matching exactly
+# where a stale notable item already landed before this change.
+ACTION_TO_QUEUE_PRIORITY = {
+    lens_service.ACTION_BUY_NOW: QUEUE_PRIORITY_BUY_NOW,
+    lens_service.ACTION_PRICE_DROP_BUY_NOW: QUEUE_PRIORITY_BUY_NOW,
+    lens_service.ACTION_BUY_WITH_CAUTION: QUEUE_PRIORITY_BUY_NOW,
+    lens_service.ACTION_HIGH_VALUE_LOW_CONFIDENCE: QUEUE_PRIORITY_BORDERLINE,
+    lens_service.ACTION_INVESTIGATE: QUEUE_PRIORITY_BORDERLINE,
+    lens_service.ACTION_WATCH: QUEUE_PRIORITY_BORDERLINE,
+    lens_service.ACTION_HISTORICAL_RECURRING: QUEUE_PRIORITY_NEEDS_ATTENTION,
+    lens_service.ACTION_BLOCKED: QUEUE_PRIORITY_NEEDS_ATTENTION,
+}
 
 # Scan/competitor recommendation values that map to BORDERLINE -- the
 # existing "Consider tab" tier, unchanged, just given a name in the
@@ -333,8 +372,77 @@ def classify_offer_freshness(
     return "STALE"
 
 
+def clean_atlas_notes(raw: str) -> str:
+    """
+    Strips a submitted Atlas note and rejects the literal junk value
+    "none" (case-insensitive) as if it were blank (2026-09-07, Tamara:
+    "I wrote content in though did it not save?" -- traced to a
+    handful of leads whose atlas_notes was already the literal string
+    "None" from an old data-quality artifact; the notes textarea used
+    to pre-fill with that as real, editable content rather than a
+    placeholder, so it was easy to leave in place and resubmit
+    unchanged, permanently masking whatever real text was typed
+    alongside it). Used at every write site (review_queue_resolve,
+    review_queue_save_note, leads.py's review_decide) so this specific
+    junk value can never be persisted as if it were a real note again,
+    regardless of where it originated.
+    """
+    cleaned = (raw or "").strip()
+    return "" if cleaned.lower() == "none" else cleaned
+
+
+def analysis_failure_message(rationale: str | None, will_retry: bool) -> dict | None:
+    """
+    Human-readable replacement for a failed-analysis rationale (2026-09-07,
+    Tamara: "Where we have a lack of decision due to AI credits running
+    out lets make this a nicer error message") -- _record_failure (see
+    lead_analysis_service.py) writes a fixed
+    "Could not analyze after N attempts -- {reason}" string where reason
+    is often a raw provider error (a real one seen live: a multi-line
+    Gemini 429 RESOURCE_EXHAUSTED response, JSON braces and all). Shown
+    as-is, this used to render as one long unreadable blob through the
+    same +/!/- bullet parser real AI-written reasoning uses.
+
+    Returns None when `rationale` isn't one of these -- i.e. a real
+    verdict was reached and the caller should render it normally.
+    Otherwise returns {"message": str, "will_retry": bool} for the
+    template's own distinct, friendlier panel.
+
+    will_retry: True while the lead is still "queued" (attempts remain,
+    the next scheduler tick will try again); False once MAX_ANALYSIS_
+    ATTEMPTS is reached and Atlas has permanently given up on an AI
+    verdict for this lead -- these need different framing, not the same
+    "hang on, trying again" message when nothing more will happen.
+    """
+    if not rationale or not rationale.startswith("Could not analyze after"):
+        return None
+
+    lower = rationale.lower()
+    if "keepa has no data" in lower:
+        message = (
+            "Atlas has no Keepa price history for this ASIN, so it can't compute real "
+            "profit/ROI or reach a verdict -- usually means a genuinely new or very "
+            "low-volume listing."
+        )
+    elif "resource_exhausted" in lower or "429" in rationale or "quota" in lower or "rate limit" in lower:
+        message = (
+            "Atlas couldn't reach an AI verdict -- both Claude and its Gemini fallback were "
+            "out of capacity when this was last checked. The price and profit figures on "
+            "this lead (where shown) are still real and current; only the BUY/WATCH/AVOID "
+            "call itself is missing."
+        )
+    else:
+        message = (
+            "Atlas hit an unexpected error while analyzing this lead and couldn't reach a "
+            "verdict. The price and profit figures on this lead (where shown) are still real."
+        )
+
+    return {"message": message, "will_retry": will_retry}
+
+
 def apply_lead_decision(
-    lead: Lead, decision: str, reason: str | None = None, reason_category: str | None = None
+    lead: Lead, decision: str, reason: str | None = None, reason_category: str | None = None,
+    purchased_qty: float | None = None,
 ) -> None:
     """
     What "deciding" a lead actually means -- shared by /review/decide
@@ -372,6 +480,14 @@ def apply_lead_decision(
     webhook never sends one (the sheet has no such column), so this is
     None there, same as before.
 
+    purchased_qty: units actually bought (2026-09-05) -- only ever
+    meaningful when decision="approved" on a source="sheet" lead, since
+    Lead Sheet has its own "Purchased Qty" column this gets pushed back
+    into (see google_sheets_lead_sync.push_decision_to_sheet). None for
+    every other decision/source; never required here, the caller (the
+    decide form) is what enforces "ask for it when approving a sheet
+    lead".
+
     "oos" and "watch" BOTH auto-add the ASIN to the existing Watchlist,
     reusing its already-built re-check machinery (WatchlistService.
     check_stale runs weekly, or visit /watchlist to force an immediate
@@ -387,6 +503,8 @@ def apply_lead_decision(
     lead.decision_reason_category = reason_category or None
     lead.status = "reviewed"
     lead.reviewed_at = datetime.now(timezone.utc)
+    if purchased_qty is not None:
+        lead.purchased_qty = purchased_qty
 
     if decision in ("oos", "watch"):
         title, brand = "", ""
@@ -508,8 +626,20 @@ class ReviewQueueService:
             except Exception:
                 metrics = {}
 
-        profit = lead.va_profit if lead.va_profit is not None else metrics.get("keepa_estimate_profit")
-        roi = lead.va_roi if lead.va_roi is not None else metrics.get("keepa_estimate_roi")
+        # Real bug found live, 2026-09-06 (Tamara): "profit"/"roi" here
+        # are shown labelled "Profit (today)"/"ROI (today)" everywhere
+        # (row list, detail panel header) -- but va_profit/va_roi are
+        # the VA's OWN figures, calculated against whatever Amazon price
+        # THEY saw when they sourced the lead, not today's. Atlas's own
+        # keepa_estimate_profit/roi (VerdictService.compute_metrics) use
+        # the SAME va_cost_price but against a freshly-fetched Keepa
+        # price, so THAT is what "today" honestly means. Preferring
+        # va_profit over it (the old behaviour) could silently show a
+        # stale VA figure labelled as today's, unnoticed. va_profit/
+        # va_roi are kept as their OWN separate fields below so both can
+        # be shown side by side, never conflated into one number again.
+        profit = metrics.get("keepa_estimate_profit")
+        roi = metrics.get("keepa_estimate_roi")
 
         # Atlas's own evidence-based sourcing classification (2026-09-03,
         # Review Queue backend build -- see VerdictService.compute_metrics'
@@ -528,13 +658,45 @@ class ReviewQueueService:
             "lead_subsource": lead.source,  # "manual" | "sheet" | "shortlist"
             "lead_id": lead.id,
             "asin": lead.asin,
-            "title": metrics.get("title") or lead.asin,
+            # Real gap found live, 2026-09-06: a sheet lead has no
+            # Keepa-derived title until analysis succeeds (which can be
+            # a while, or never) -- lead.title (the sheet's own
+            # "Product Name" column, captured at ingest time) fills that
+            # gap so the lead is never just a bare ASIN in the meantime.
+            "title": metrics.get("title") or lead.title or lead.asin,
             "brand": metrics.get("brand") or "",
+            # "" until this lead has been Keepa-analyzed at least once
+            # (see VerdictService.compute_metrics' "image" field, added
+            # 2026-09-07) -- the template falls back to a placeholder
+            # icon in that case, same as the scan/competitor path.
+            "image": metrics.get("image") or "",
             "best_source_marketplace": lead.source_detail or lead.sourcing_type or "",
+            "source_url": lead.source_url,
             "best_source_cost_gbp": lead.va_cost_price or 0.0,
-            "buy_box_now": lead.va_sale_price or metrics.get("buy_box_now") or 0.0,
-            "profit": profit or 0.0,
-            "roi": roi or 0.0,
+            # Real bug found live, 2026-09-07 (Tamara: "we need to add VA
+            # expected sales price on the leads ... a column that they
+            # fill in") -- this used to silently substitute the VA's OWN
+            # hoped-for sale price (from whatever Amazon price they saw
+            # when sourcing it) in place of Atlas's live figure whenever
+            # it was set, exactly the same conflation already fixed once
+            # for profit/roi below (never conflate margin vs ROI, or a
+            # VA guess vs Atlas's own live number -- see [[feedback_
+            # atlas_margin_vs_roi]]). Now always Atlas's own live Keepa
+            # price; va_expected_sale_price carries the VA's own figure
+            # as its own separate, clearly-labelled field instead.
+            "buy_box_now": metrics.get("buy_box_now") or 0.0,
+            "va_expected_sale_price": lead.va_sale_price,
+            # profit/roi: Atlas's own "today" calculation -- None (not
+            # 0.0) when analysis hasn't run yet, so the template can
+            # honestly show "not yet calculated" instead of implying
+            # Atlas checked and found zero. va_profit/va_roi: the VA's
+            # own figure, kept as a SEPARATE field -- see this method's
+            # own comment above on why these must never be blended into
+            # one number again.
+            "profit": profit,
+            "roi": roi,
+            "va_profit": lead.va_profit,
+            "va_roi": lead.va_roi,
             "profit_90d": metrics.get("keepa_estimate_profit_90d") or 0.0,
             "roi_90d": metrics.get("keepa_estimate_roi_90d") or 0.0,
             "score": 0,
@@ -560,8 +722,17 @@ class ReviewQueueService:
             "keepa_metrics": metrics,
             "reasoning": sourcing_classification.get("reasoning") or {},
             "rationale": lead.rationale,
+            "analysis_failure": analysis_failure_message(lead.rationale, will_retry=lead.status == "queued"),
             "sourcing_tag": atlas_sourcing_tag or lead.sourcing_type,
             "sourcing_tag_source": "atlas" if atlas_sourcing_tag else ("va" if lead.sourcing_type else None),
+            # VA Lead Sheet bidirectional comments (2026-09-05) -- va_notes
+            # is the VA's own "VA Notes" column, read-only from Atlas's
+            # side; atlas_notes is Atlas's own comment, kept in a
+            # SEPARATE sheet column so neither side clobbers the other's
+            # text (see Lead.va_notes/atlas_notes's own docstring).
+            "va_notes": lead.va_notes,
+            "atlas_notes": lead.atlas_notes,
+            "purchased_qty": lead.purchased_qty,
             "currently_buyable": False,
             "seller": None,
             "listing_id": 0,
@@ -624,6 +795,42 @@ class ReviewQueueService:
                 db.query(Lead)
                 .filter(Lead.status == "analyzed", Lead.decision.is_(None), Lead.verdict.in_(verdicts))
                 .order_by(Lead.analyzed_at.desc())
+                .all()
+            )
+            return [ReviewQueueService._lead_dict(lead) for lead in rows]
+        finally:
+            db.close()
+
+    @staticmethod
+    def _pending_sheet_leads_unrated() -> list:
+        """
+        Every still-undecided source="sheet" Lead whose verdict ISN'T
+        BUY/WATCH -- i.e. exactly the ones _pending_leads' two verdict-
+        scoped calls above never pick up: still "queued" (verdict None,
+        analysis never ran or hasn't reached it yet), or "analyzed" with
+        verdict AVOID or None (LeadAnalysisService gave up after
+        MAX_ANALYSIS_ATTEMPTS -- e.g. Keepa has no data, or every Claude
+        call failed for a reason that had nothing to do with the ASIN,
+        such as the account being out of credits).
+
+        Added 2026-09-06 per Tamara's explicit instruction: "the VA
+        queue is all leads regardless of whether they are good or not
+        -- if we can't rate them we should just try [to show them]".
+        Atlas being unable to rate a lead must never make it invisible
+        -- a human can still look at it even with no AI opinion at all.
+        Scoped to source="sheet" only (not manual/shortlist leads,
+        whose existing hidden-when-AVOID/unrated behaviour is
+        unchanged) -- this is specifically about the VA Sheet workflow.
+        """
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Lead)
+                .filter(
+                    Lead.source == "sheet", Lead.decision.is_(None),
+                    or_(Lead.verdict.is_(None), Lead.verdict.notin_(("BUY", "WATCH"))),
+                )
+                .order_by(Lead.added_at.desc())
                 .all()
             )
             return [ReviewQueueService._lead_dict(lead) for lead in rows]
@@ -716,6 +923,17 @@ class ReviewQueueService:
             except Exception:
                 reasoning = {}
 
+        # Certainty rating (2026-09-07, Tamara) -- see SourcingClassifier.
+        # assess_certainty's own docstring for the full reasoning. Computed
+        # here (zero extra Keepa cost -- pure DB reads against the exact
+        # reasoning already persisted at classification time) rather than
+        # only for OA_INVESTIGATE items, since it's meaningful for ANY
+        # competitor-sourced tag, not just "OA / unclear".
+        brand_pattern = SellerWatchService.brand_sourcing_pattern(record.brand)
+        certainty = SourcingClassifier.assess_certainty(
+            record.category_name, listing.sourcing_tag, reasoning, brand_pattern=brand_pattern,
+        )
+
         return {
             "source": "competitor",
             "asin": listing.asin,
@@ -739,6 +957,8 @@ class ReviewQueueService:
             "reasoning": reasoning,
             "rationale": None,
             "sourcing_tag": listing.sourcing_tag,
+            "manually_classified": listing.manually_classified,
+            "certainty": certainty,
             "currently_buyable": listing.currently_buyable,
             "seller": seller,
             "listing_id": listing.id,
@@ -760,6 +980,32 @@ class ReviewQueueService:
             "last_offer_buyable": record.last_offer_buyable,
             "review_reason_category": listing.review_reason_category,
         }
+
+    @staticmethod
+    def _oa_investigate_lead_dict(entry: dict) -> dict:
+        """
+        OA Source Discovery item, added 2026-09-05 to fold the
+        Opportunities page's "worth investigating" bucket into Review
+        Queue as its own view. `entry` is exactly what
+        SellerWatchService.list_oa_worth_investigating returns --
+        {"listing", "record", "seller", "oa_price_guide"}, the same
+        shape _competitor_lead_dict already takes plus the price guide.
+
+        Deliberately REUSES _competitor_lead_dict wholesale rather than
+        rebuilding the same field list (no duplicated OA logic, per
+        instruction) -- only source and oa_price_guide differ. source
+        is overridden to "oa_investigate", not "competitor": these are
+        SellerNewListing rows same as any competitor detection, but
+        _item_views must never run them through the generic scan/
+        competitor lens (that would risk labelling a no-known-source
+        item BUY_NOW/BORDERLINE off a recommendation that assumes a
+        real source cost -- exactly what Tamara's instruction says not
+        to do).
+        """
+        lead = ReviewQueueService._competitor_lead_dict(entry)
+        lead["source"] = "oa_investigate"
+        lead["oa_price_guide"] = entry.get("oa_price_guide")
+        return lead
 
     @staticmethod
     def list_leads(sort: str = "when_desc", latest_records: list = None) -> list:
@@ -842,16 +1088,22 @@ class ReviewQueueService:
 
             lead = ReviewQueueService._scan_lead_dict(record)
 
-            if record.recommendation == "PEAK_WINDOW":
-                # "Worth the risk" gate -- see PEAK_WORTH_IT_ROI/
-                # PEAK_WORTH_IT_SCORE above. peak_roi lives only in
-                # report_json (no DB column), hence checking it here
-                # rather than in ProductRepository.list_latest's
-                # review_filter="peak" branch, which only has the ORM
-                # record's own columns to filter on.
-                peak_roi = lead["parsed_report"].get("peak_roi") or 0
-                if peak_roi < PEAK_WORTH_IT_ROI or record.score < PEAK_WORTH_IT_SCORE:
-                    continue
+            # Opportunity Engine 2.0 (2026-09-04): the second "worth the
+            # risk" gate (PEAK_WORTH_IT_ROI/PEAK_WORTH_IT_SCORE) used to
+            # live here and silently dropped any PEAK_WINDOW record that
+            # didn't ALSO clear it -- confirmed live via the Opportunity
+            # Engine 2.0 simulation that this discarded 123 of 202
+            # unreviewed PEAK_WINDOW records outright, on top of
+            # OpportunityEngine's OWN peak-viable gate (5+ profitable
+            # days in 90, real sales evidence, ROI>=17% -- see
+            # OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D/MIN_VIABLE_ROI),
+            # which had ALREADY vetted these as real evidence. That
+            # first gate is now authoritative -- every PEAK_WINDOW
+            # record OpportunityEngine itself produced reaches the
+            # queue, where OpportunityLensService classifies it as
+            # HISTORICAL_RECURRING (never silently discarded, see that
+            # module's own docstring) rather than being a second,
+            # stricter, redundant filter on top of the first.
 
             seen_scan_asins.add(record.asin)
             leads.append(lead)
@@ -874,7 +1126,18 @@ class ReviewQueueService:
                 continue
             leads.append(ReviewQueueService._competitor_lead_dict(entry))
 
+        # OA Source Discovery (2026-09-05) -- see QUEUE_PRIORITY_OA_
+        # INVESTIGATE's own comment. sourcing_tag=="OA / unclear" is
+        # disjoint from whatever tag list_notable_buyable/list_
+        # historical_a2a_not_buyable require (a listing has exactly one
+        # sourcing_tag), so no dedup guard against seen_competitor_
+        # listing_ids is needed here -- confirmed against both those
+        # methods' own tag filters.
+        for entry in SellerWatchService.list_oa_worth_investigating(limit=MAX_LEADS):
+            leads.append(ReviewQueueService._oa_investigate_lead_dict(entry))
+
         leads.extend(ReviewQueueService._pending_leads(LEAD_MAIN_VERDICTS))
+        leads.extend(ReviewQueueService._pending_sheet_leads_unrated())
 
         ReviewQueueService._flag_conflicts(leads)
 
@@ -965,51 +1228,55 @@ class ReviewQueueService:
                     views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
                 else:
                     views.add(QUEUE_PRIORITY_BUY_NOW)
-            elif recommendation != "WATCH":
-                # AVOID never reaches here (_pending_leads only pulls
-                # BUY/WATCH verdicts) -- an unexpected/missing verdict
-                # is surfaced, not silently dropped.
+            elif recommendation not in ("WATCH", "AVOID", None):
+                # AVOID and None (2026-09-06, widened per Tamara's own
+                # instruction -- see _pending_sheet_leads_unrated) are
+                # deliberately NOT flagged NEEDS_ATTENTION here: a
+                # sheet lead Atlas rated AVOID, or one it was never
+                # able to rate at all (Keepa had no data, or every
+                # Claude call failed -- e.g. the account ran out of
+                # credits), still belongs in the ordinary VA_TO_REVIEW
+                # backlog for a human to look at, not flagged as
+                # urgent -- Atlas has no positive signal here, but no
+                # reason to treat it as more pressing than the rest of
+                # the queue either. Only a genuinely unexpected verdict
+                # value still gets surfaced this way rather than
+                # silently dropped.
                 views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
             return views
 
-        # scan / competitor -- OpportunityEngine's own vocabulary.
+        if lead["source"] == "oa_investigate":
+            # Unconditional, single view -- deliberately NEVER runs
+            # through the lens_service.compute branch below. These
+            # listings have no confirmed source cost (best_source_
+            # marketplace/best_source_cost_gbp are blank), so the
+            # underlying ProductRecord's own recommendation reflects
+            # Amazon-side economics only and would be misleading run
+            # through the same BUY_NOW/BORDERLINE logic real sourced
+            # opportunities use -- exactly what Tamara's instruction
+            # says not to do ("do not label as confirmed OA or BUY").
+            # If the SAME ASIN is separately also a real scan/
+            # competitor opportunity, that reaches _item_views as its
+            # OWN lead dict and unions in via _build_merged_item --
+            # this branch only ever adds OA_INVESTIGATE, never removes
+            # or blocks another source's view.
+            return {QUEUE_PRIORITY_OA_INVESTIGATE}
+
+        # scan / competitor -- Opportunity Engine 2.0 (2026-09-04):
+        # Value/Evidence/Risk/Action now decides this, not a single
+        # is_notable()-plus-freshness check -- see
+        # OpportunityLensService.compute for the full decision tree and
+        # ACTION_TO_QUEUE_PRIORITY (module-level, above) for how its
+        # 8-state Action maps onto these 4 tabs. The computed lens is
+        # stashed on the lead dict itself (lead["lens"]) so
+        # _build_merged_item can surface the full Value/Evidence/Risk
+        # breakdown, not just which tab it landed in.
         if lead.get("conflict_note"):
             views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
-        # Widened 2026-09-04, Tamara's own explicit decision -- BUY_NOW
-        # used to require a literal recommendation=="BUY". Real example
-        # that surfaced this: a CONSIDER-tier competitor listing with
-        # 25%+ ROI and confirmed sales evidence showed as "Buy Now" on
-        # the Opportunities page (SellerWatchService.list_notable_
-        # buyable, which already uses is_notable's broader "star" bar)
-        # but only reached Borderline here. Explicitly asked: "should
-        # that item appear in Buy Now" -- yes, trust the SAME star bar
-        # everywhere, via the SAME ProductRepository.is_notable() every
-        # other "worth a look now" surface (Opportunities, Discord
-        # alerts, Scan Queue's own notable filter) already trusts,
-        # rather than a second, stricter, literal-BUY-only definition
-        # living only here. NOT the same situation as the Discovery
-        # Intelligence "Western Digital" fix from earlier the same day
-        # (a DIFFERENT bug: there, a single CONSIDER-tier profit figure
-        # was substituting for a MISSING confirmed BUY across many
-        # scans with zero evidence either way; here, is_notable's own
-        # bar -- 25%+ ROI AND confirmed real sales evidence -- is being
-        # explicitly trusted as its own sufficient standard, not used
-        # to paper over an absence of evidence).
-        if ProductRepository.is_notable(
-            recommendation, lead.get("monthly_sales") or 0,
-            lead.get("roi") or 0, lead.get("roi_90d") or 0,
-            lead.get("sales_drops_30d") or 0,
-        ):
-            if lead.get("freshness") in STALE_FRESHNESS_STATES:
-                views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
-            else:
-                views.add(QUEUE_PRIORITY_BUY_NOW)
-        elif recommendation in BORDERLINE_RECOMMENDATIONS:
-            views.add(QUEUE_PRIORITY_BORDERLINE)
-        elif not views:
-            views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
+        lead["lens"] = lens_service.compute(lead)
+        views.add(ACTION_TO_QUEUE_PRIORITY[lead["lens"]["action"]])
 
         # Competitor-specific (section 8's own worked example): real
         # historical A2A evidence exists but today's recommendation
@@ -1024,6 +1291,23 @@ class ReviewQueueService:
         if lead["source"] == "competitor" and recommendation != "BUY":
             hist = (lead.get("reasoning") or {}).get("historical_a2a_evidence") or {}
             if hist.get("eu_a2a") or hist.get("uk_a2a"):
+                views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
+
+            # A competitor detection reaching this function at all
+            # already means SellerWatchService.list_notable_buyable/
+            # list_historical_a2a_not_buyable found a real listing worth
+            # surfacing -- if the lens's own Value/Evidence/Risk read
+            # still leaves it at the lowest-priority WATCH action (e.g.
+            # the underlying ProductRecord's own economics are weak or
+            # zero, common for a competitor find Atlas hasn't fully
+            # priced), that's still "a human found something here worth
+            # a look", not "safe to bury in the low-priority Consider
+            # tab" -- preserved from the pre-Opportunity-Engine-2.0
+            # behaviour (the old catch-all "nothing else matched ->
+            # NEEDS_ATTENTION"), scoped to competitor items only since
+            # scan-sourced WATCH items are a genuinely new, intentional
+            # low-priority tier (see OpportunityLensService.compute).
+            if lead["lens"]["action"] == lens_service.ACTION_WATCH:
                 views.add(QUEUE_PRIORITY_NEEDS_ATTENTION)
 
         return views
@@ -1111,6 +1395,21 @@ class ReviewQueueService:
             "strong_consider": bool(
                 QUEUE_PRIORITY_BUY_NOW in views and primary.get("recommendation") != "BUY"
             ),
+            # Opportunity Engine 2.0 (2026-09-04) -- the Value/Evidence/
+            # Risk/Action breakdown from OpportunityLensService.compute,
+            # stashed onto scan/competitor source items in _item_views.
+            # None for a VA-only item (Lead rows keep their own separate
+            # BUY/WATCH/AVOID vocabulary, not run through this lens) --
+            # the template falls back to va_info's own verdict/rationale
+            # in that case, same as it already does for score/confidence.
+            "action": (display.get("lens") or {}).get("action"),
+            "action_label": (display.get("lens") or {}).get("action_label"),
+            "action_description": (display.get("lens") or {}).get("action_description"),
+            "value": (display.get("lens") or {}).get("value"),
+            "good": (display.get("lens") or {}).get("good"),
+            "evidence": (display.get("lens") or {}).get("evidence"),
+            "risk": (display.get("lens") or {}).get("risk"),
+            "freshness_caption": (display.get("lens") or {}).get("freshness_caption"),
             "title": display.get("title") or primary.get("title"),
             "brand": display.get("brand") or primary.get("brand"),
             # "" for a VA-only item (VA leads never captured a Keepa
@@ -1122,6 +1421,7 @@ class ReviewQueueService:
             "confidence": display.get("confidence"),
             "sourcing_tag": display.get("sourcing_tag") or primary.get("sourcing_tag"),
             "sourcing_tag_source": display.get("sourcing_tag_source") or primary.get("sourcing_tag_source"),
+            "manually_classified": bool(display.get("manually_classified") or primary.get("manually_classified")),
             "best_source_marketplace": display.get("best_source_marketplace"),
             "best_source_cost_gbp": display.get("best_source_cost_gbp"),
             "buy_box_now": display.get("buy_box_now"),
@@ -1131,6 +1431,37 @@ class ReviewQueueService:
             "review_reason_category": display.get("review_reason_category"),
             "monthly_sales": display.get("monthly_sales"),
             "sales_drops_30d": display.get("sales_drops_30d"),
+            # OA Source Discovery (2026-09-05) -- {"target", "breakeven"}
+            # from SellerWatchService.oa_price_guide_for_record, or None
+            # for any item with no oa_investigate source_item. Read
+            # directly off source_items rather than display/primary,
+            # since an OA item merged alongside a real BUY_NOW/
+            # NEEDS_ATTENTION finding for the same ASIN would otherwise
+            # have `display` pick the non-OA item instead (see display's
+            # own "prefer a source item with a real linked ProductRecord"
+            # comment -- both do here, so this can't rely on that pick).
+            "oa_price_guide": next(
+                (item.get("oa_price_guide") for item in source_items if item["source"] == "oa_investigate"), None,
+            ),
+            # Classification correction (2026-09-07) -- same "read
+            # directly off the oa_investigate source_item" reasoning as
+            # oa_price_guide just above: the generic sourcing_tag/
+            # manually_classified fields a few lines up can resolve to a
+            # DIFFERENT source_item's tag for a merged item (e.g. a real
+            # BUY_NOW scan finding for the same ASIN), which would
+            # silently fail to highlight the right button in the OA
+            # workbench's "Atlas classified this as" block below.
+            "oa_investigate_sourcing_tag": next(
+                (item.get("sourcing_tag") for item in source_items if item["source"] == "oa_investigate"), None,
+            ),
+            "oa_investigate_manually_classified": next(
+                (item.get("manually_classified") for item in source_items if item["source"] == "oa_investigate"), False,
+            ),
+            # Certainty rating (2026-09-07) -- same oa_investigate-scoped
+            # reasoning as the two fields just above.
+            "oa_investigate_certainty": next(
+                (item.get("certainty") for item in source_items if item["source"] == "oa_investigate"), None,
+            ),
             # Scan/competitor-side "why this score" breakdown (2026-09-04)
             # -- OpportunityEngine's trend/score_breakdown/confidence_
             # breakdown, already computed and stored on ProductRecord.
@@ -1147,11 +1478,28 @@ class ReviewQueueService:
                     "lead_subsource": va_item.get("lead_subsource"),
                     "verdict": va_item.get("recommendation"),
                     "rationale": va_item.get("rationale"),
+                    "analysis_failure": va_item.get("analysis_failure"),
                     "already_in_inventory": va_item.get("already_in_inventory"),
                     "inventory_detail": va_item.get("inventory_detail"),
                     "similar_rejections": va_item.get("similar_rejections"),
                     "buyability_blocker": va_item.get("buyability_blocker"),
                     "keepa_metrics": va_item.get("keepa_metrics"),
+                    "va_notes": va_item.get("va_notes"),
+                    "atlas_notes": va_item.get("atlas_notes"),
+                    "purchased_qty": va_item.get("purchased_qty"),
+                    "source_url": va_item.get("source_url"),
+                    # The VA's OWN profit/ROI figures (2026-09-06) --
+                    # kept deliberately separate from the top-level
+                    # profit/roi fields, which are now always Atlas's
+                    # own "today" calculation -- see _lead_dict's own
+                    # comment on why these must never be blended into
+                    # one number again.
+                    "va_profit": va_item.get("va_profit"),
+                    "va_roi": va_item.get("va_roi"),
+                    # The VA's own expected sale price (2026-09-07) --
+                    # same "kept separate, never blended into Atlas's own
+                    # live figure" reasoning as va_profit/va_roi above.
+                    "va_expected_sale_price": va_item.get("va_expected_sale_price"),
                 }
                 if va_item else None
             ),
@@ -1192,6 +1540,82 @@ class ReviewQueueService:
             by_asin[asin].append(lead)
 
         return [ReviewQueueService._build_merged_item(asin, by_asin[asin]) for asin in order]
+
+    @staticmethod
+    def _batch_historical_flags(asins: list) -> dict:
+        """
+        "Have we ever bought this, or ever seen it on the VA sheet
+        before" (2026-09-07, Tamara: "a badge on the lead if it is an
+        item we have ever bought before or a lead that has ever
+        appeared on our VA sheet") -- ONE batched IN(...) query per
+        flag, never a per-item query, so annotating a several-hundred-
+        item queue page costs 2 queries total regardless of size (same
+        "batch once, not per-row" convention as ProductRepository.
+        get_latest_per_asin/SellerWatchService.distinct_seller_counts
+        elsewhere in this build).
+
+        "Ever bought" reads TWO independent sources, matched OR
+        (2026-09-07 follow-up: Tamara uploaded a real SellerToolKit
+        sales export, not the Buy Sheet workbook this originally only
+        read) -- HistoricalPurchase (the team's own purchasing-workbook
+        import, Phase 4C/4D -- 601 distinct ASINs measured live) AND
+        SalesHistorySnapshot (a real Amazon sales-by-ASIN export --
+        if it's been SOLD, it was necessarily also sourced/bought, even
+        though that export has no purchase-event detail of its own; see
+        that model's own docstring for why it's a separate table, not
+        folded into HistoricalPurchase).
+
+        "Ever on VA sheet" deliberately reads SheetLeadSyncState, NOT
+        Lead -- the Lead table only has a row for an ASIN that was
+        actually ingested as a NEW/changed detection (24 rows measured
+        live), while SheetLeadSyncState has one per row Atlas has EVER
+        seen on the sheet at all, including the 700+ historical rows
+        baselined on first sync without ever becoming a Lead (see
+        pull_and_ingest_va_leads' own docstring on why that baseline
+        step exists) -- 681 distinct ASINs measured live, the number
+        that actually answers "has this ever appeared on our VA sheet".
+
+        Returns {asin: {"ever_purchased": bool, "ever_on_va_sheet": bool}}
+        for every asin in the input list (never a sparse dict a template
+        would need `.get(..., {})` to guard against).
+        """
+        if not asins:
+            return {}
+
+        db = SessionLocal()
+        try:
+            purchased = {
+                row[0] for row in
+                db.query(HistoricalPurchase.asin).filter(HistoricalPurchase.asin.in_(asins)).distinct().all()
+            }
+            purchased |= {
+                row[0] for row in
+                db.query(SalesHistorySnapshot.asin).filter(SalesHistorySnapshot.asin.in_(asins)).distinct().all()
+            }
+            # Real bug found live, 2026-09-07 (Tamara: "the seen on VA
+            # sheet before isn't right ... the row itself has a column
+            # ... either says new ASIN or the date it was last added ...
+            # use this data") -- merely having ANY SheetLeadSyncState row
+            # for an ASIN doesn't mean "seen before": EVERY ASIN gets
+            # exactly one such row the first time it's ever added too.
+            # Lead Sheet's own "Date Last Added" column is the VA team's
+            # own authoritative repeat marker -- "New ASIN" means this
+            # occurrence IS the first ever; a real date means it was
+            # added before, on that date. Only a real date value counts.
+            va_sheet = {
+                row[0] for row in
+                db.query(SheetLeadSyncState.asin)
+                .filter(SheetLeadSyncState.asin.in_(asins))
+                .filter(SheetLeadSyncState.date_last_added.notin_(("", "New ASIN")))
+                .distinct().all()
+            }
+        finally:
+            db.close()
+
+        return {
+            asin: {"ever_purchased": asin in purchased, "ever_on_va_sheet": asin in va_sheet}
+            for asin in asins
+        }
 
     @staticmethod
     def get_queue_item(asin: str) -> dict | None:
@@ -1235,13 +1659,32 @@ class ReviewQueueService:
                 .all()
             )
             for listing, seller, competitor_record in listings:
-                source_dicts.append(ReviewQueueService._competitor_lead_dict(
-                    {"listing": listing, "record": competitor_record, "seller": seller}
-                ))
+                entry = {"listing": listing, "record": competitor_record, "seller": seller}
+                # OA Source Discovery (2026-09-05) -- same sourcing_tag
+                # check list_oa_worth_investigating filters on, so a
+                # detail-panel lookup for an OA item gets the SAME
+                # source="oa_investigate"/oa_price_guide shape list_leads()
+                # already gives it in the full queue, not a generic
+                # "competitor" dict that would let it slip through
+                # _item_views' lens-based branch instead of its own.
+                if listing.sourcing_tag == "OA / unclear":
+                    entry["oa_price_guide"] = SellerWatchService.oa_price_guide_for_record(competitor_record)
+                    source_dicts.append(ReviewQueueService._oa_investigate_lead_dict(entry))
+                else:
+                    source_dicts.append(ReviewQueueService._competitor_lead_dict(entry))
 
+            # Real bug found live, 2026-09-06: this used to only match
+            # status="analyzed" leads -- the SAME gap _pending_sheet_
+            # leads_unrated() fixed for the full list_leads() view (an
+            # unrated/never-analyzed sheet lead is real and should still
+            # be openable), but this separate single-ASIN lookup has its
+            # own query and was never updated to match. A sheet lead
+            # (any status) is included regardless of verdict; a manual/
+            # shortlist lead keeps the original analyzed-only behaviour.
             pending_leads = (
                 db.query(Lead)
-                .filter(Lead.asin == asin, Lead.status == "analyzed", Lead.decision.is_(None))
+                .filter(Lead.asin == asin, Lead.decision.is_(None))
+                .filter(or_(Lead.status == "analyzed", Lead.source == "sheet"))
                 .all()
             )
             for lead in pending_leads:
@@ -1253,7 +1696,9 @@ class ReviewQueueService:
             return None
 
         ReviewQueueService._flag_conflicts(source_dicts)
-        return ReviewQueueService._build_merged_item(asin, source_dicts)
+        merged = ReviewQueueService._build_merged_item(asin, source_dicts)
+        merged.update(ReviewQueueService._batch_historical_flags([asin])[asin])
+        return merged
 
     @staticmethod
     def list_queue_items(sort: str = "when_desc", latest_records: list = None) -> list:
@@ -1278,6 +1723,13 @@ class ReviewQueueService:
             + ReviewQueueService.list_consider_leads(sort=sort, latest_records=latest_records)
         )
         items = ReviewQueueService.merge_by_asin(leads)
+
+        # "Ever bought / ever on VA sheet before" badges (2026-09-07) --
+        # see _batch_historical_flags' own docstring. One pair of batch
+        # queries for the whole page, not one per item.
+        historical_flags = ReviewQueueService._batch_historical_flags([item["asin"] for item in items])
+        for item in items:
+            item.update(historical_flags.get(item["asin"], {"ever_purchased": False, "ever_on_va_sheet": False}))
 
         rank = {p: i for i, p in enumerate(QUEUE_PRIORITIES)}
         items.sort(key=lambda item: rank.get(item["queue_priority"], len(QUEUE_PRIORITIES)))
@@ -1327,7 +1779,8 @@ class ReviewQueueService:
         }
 
     @staticmethod
-    def resolve_item(asin: str, decision: str, reason: str | None = None, reason_category: str | None = None) -> dict:
+    def resolve_item(asin: str, decision: str, reason: str | None = None, reason_category: str | None = None,
+                      purchased_qty: float | None = None) -> dict:
         """
         ONE decision resolves every outstanding source record for this
         ASIN at once (unified Review Queue build, 2026-09-03 -- "I
@@ -1384,10 +1837,15 @@ class ReviewQueueService:
                 .all()
             ]
 
+            # Same fix as get_queue_item above (2026-09-06): without this,
+            # clicking Buy/Reject on an unrated/never-analyzed sheet lead
+            # (now visible per _pending_sheet_leads_unrated) matched
+            # nothing here and silently did nothing.
             lead_ids = [
                 row.id for row in
                 db.query(Lead.id)
-                .filter(Lead.asin == asin, Lead.status == "analyzed", Lead.decision.is_(None))
+                .filter(Lead.asin == asin, Lead.decision.is_(None))
+                .filter(or_(Lead.status == "analyzed", Lead.source == "sheet"))
                 .all()
             ]
         finally:
@@ -1401,17 +1859,38 @@ class ReviewQueueService:
             SellerWatchService.set_review(listing_id, scan_verdict, reason=reason, reason_category=reason_category)
             resolved["competitor"].append(listing_id)
 
+        sheet_leads_to_push = []
         if lead_ids:
             db2 = SessionLocal()
             try:
                 for lead_id in lead_ids:
                     lead = db2.get(Lead, lead_id)
                     if lead and lead.decision is None:  # re-check freshness under this fresh session
-                        apply_lead_decision(lead, decision, reason, reason_category)
+                        # purchased_qty only ever meaningful for the sheet-
+                        # sourced lead being approved -- see apply_lead_
+                        # decision's own docstring. Never applied to a
+                        # scan/manual/shortlist lead that happens to share
+                        # this ASIN.
+                        qty = purchased_qty if (lead.source == "sheet" and decision == "approved") else None
+                        apply_lead_decision(lead, decision, reason, reason_category, purchased_qty=qty)
                         resolved["lead"].append(lead_id)
+                        if lead.source == "sheet":
+                            sheet_leads_to_push.append(lead_id)
                 db2.commit()
             finally:
                 db2.close()
+
+        # Push the decision back to Lead Sheet immediately (2026-09-05,
+        # replaces the old ngrok-dependent polling design -- see
+        # google_sheets_lead_sync.push_decision_to_sheet's own docstring).
+        # Best-effort: a Sheets API hiccup must never block the Atlas-side
+        # decision itself, which has already been committed above.
+        for lead_id in sheet_leads_to_push:
+            try:
+                from app.services.google_sheets_lead_sync import push_decision_to_sheet
+                push_decision_to_sheet(lead_id)
+            except Exception as exc:
+                print(f"push_decision_to_sheet failed for lead {lead_id}: {exc}")
 
         # "oos"/"watch" on the SCAN side ALSO auto-adds to Watchlist,
         # mirroring /review/set's own existing single-item behaviour
@@ -1649,10 +2128,10 @@ class ReviewQueueService:
             "source": "lead",
             "lead_subsource": lead.source,
             "asin": lead.asin,
-            "title": metrics.get("title") or lead.asin,
+            "title": metrics.get("title") or lead.title or lead.asin,
             "brand": metrics.get("brand") or "",
             "category_name": metrics.get("category_name") or "",
-            "buy_box_now": metrics.get("buy_box_now"),
+            "buy_box_now": lead.va_sale_price or metrics.get("buy_box_now"),
             "recommendation": lead.verdict,
             "decision": lead.decision,
             "decision_reason": lead.decision_reason,
@@ -1810,6 +2289,12 @@ class ReviewQueueService:
         if not stale_asins:
             return {"stale_found": 0, "rechecked": 0, "expired": 0}
 
+        # Captured BEFORE scan() -- see recheck_weak_leads' own comment
+        # on this same pattern (2026-09-05 incident) for why per-ASIN
+        # freshness, not the call-level result, is what decides whether
+        # an item is safe to finalize on.
+        run_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
         scanner = BrandScanService(usage_category="review_queue_recheck")
         result = scanner.scan(
             "review-queue-stale-recheck", asins=stale_asins,
@@ -1826,7 +2311,10 @@ class ReviewQueueService:
                     .order_by(ProductRecord.scanned_at.desc())
                     .first()
                 )
-                if record and not record.review and record.recommendation in ("IGNORE", "GATED"):
+                if (
+                    record and record.scanned_at >= run_started_at
+                    and not record.review and record.recommendation in ("IGNORE", "GATED")
+                ):
                     ProductRepository.set_review(
                         asin, "down",
                         reason=f"Auto-rechecked after {stale_hours // 24}+ days unreviewed -- fresh numbers no longer clear the bar ({record.recommendation})",
@@ -1845,5 +2333,123 @@ class ReviewQueueService:
             "stale_found": stale_total_found,
             "rechecked": result.get("asins_scanned") or 0,
             "expired": expired,
+            "error": result.get("error"),
+        }
+
+    @staticmethod
+    def recheck_weak_leads(age_days: int = 7, max_per_run: int = MAX_STALE_RECHECK_PER_RUN) -> dict:
+        """
+        Second daily safety net, added 2026-09-05 alongside
+        recheck_stale_items -- Tamara's explicit policy on the
+        BORDERLINE/NEEDS_ATTENTION backlog: "a 36 day old lead I would
+        say is likely dead... I think the less good leads should go
+        altogether after say 15 days" (default tightened to 7 days the
+        same day -- "I have too many items to review currently", with
+        15 as a fallback to loosen back up later if 7 turns out too
+        aggressive). Deliberately narrower than
+        recheck_stale_items: only WATCH and HISTORICAL_RECURRING
+        actions qualify (the weakest two lens outcomes) -- a real
+        HighValueLowConfidence/Investigate item is never touched by
+        this, regardless of age, since that's live signal Tamara wants
+        preserved.
+
+        Same recheck-then-decide shape as recheck_stale_items (never
+        auto-clear on age alone): rescans the oldest `max_per_run`
+        qualifying ASINs, and only resolves the ones whose FRESH action
+        is still WATCH/HISTORICAL_RECURRING. A rescan that comes back
+        stronger just naturally drops out of this filter next run --
+        nothing to do here.
+
+        Deliberately a single bounded batch per call, same as
+        recheck_stale_items -- no internal retry loop. A backlog larger
+        than max_per_run just takes several days to clear via the daily
+        scheduler, same as any other stale backlog here, rather than
+        one script trying to force it all through in one sitting (see
+        the 2026-09-05 bulk-recheck incident this replaced: an
+        unsupervised while-loop burned hours of real Keepa tokens
+        against a static queue).
+
+        Uses resolve_item (not ProductRepository.set_review directly)
+        since a WATCH/HISTORICAL_RECURRING item can originate from any
+        of the unified queue's sources, not only a scan record -- same
+        reasoning as every other decision path in this file.
+        """
+        WEAK_ACTIONS = {lens_service.ACTION_WATCH, lens_service.ACTION_HISTORICAL_RECURRING}
+        items = ReviewQueueService.list_queue_items()
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=age_days)
+
+        weak_items = [
+            item for item in items
+            if item.get("action") in WEAK_ACTIONS
+            and item.get("when") and item["when"] < cutoff
+            and set(item["sources"]) != {"lead"}
+        ]
+        weak_items.sort(key=lambda item: item["when"])
+        weak_asins = [item["asin"] for item in weak_items[:max_per_run]]
+        weak_total_found = len(weak_items)
+
+        if not weak_asins:
+            return {"weak_found": 0, "rechecked": 0, "rejected": 0}
+
+        # Captured BEFORE scan() -- the ONLY reliable way to tell which
+        # of weak_asins actually got a fresh Keepa fetch this run vs
+        # which scan() silently skipped (ran out of tokens partway
+        # through a chunk, or never started at all -- see
+        # KeepaTokensExhaustedError handling in _fetch_in_chunks).
+        # asins_scanned/error on the result are call-level, not per-
+        # ASIN, so they can't tell us that on their own -- an early
+        # version of this method finalized off result.get("error")
+        # alone and still rejected 50 real leads off STALE data on a
+        # near-empty-token run where scan() failed before fetching
+        # anything (real incident, 2026-09-05, reverted by hand).
+        # Comparing each record's OWN scanned_at against this timestamp
+        # closes that gap for every failure shape at once, including a
+        # partial run where only some of the batch actually got fetched.
+        run_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        scanner = BrandScanService(usage_category="review_queue_recheck")
+        result = scanner.scan(
+            "review-queue-weak-lead-recheck", asins=weak_asins,
+            limit=len(weak_asins), force_rescan=True,
+        )
+
+        rejected = 0
+        db = SessionLocal()
+        try:
+            for asin in weak_asins:
+                record = (
+                    db.query(ProductRecord)
+                    .filter(ProductRecord.asin == asin)
+                    .order_by(ProductRecord.scanned_at.desc())
+                    .first()
+                )
+                if not record or record.scanned_at < run_started_at:
+                    # Not actually rescanned this run (tokens ran out
+                    # before reaching it, or scan() failed outright) --
+                    # leave it exactly alone. It stays a candidate and
+                    # gets picked up oldest-first on a future run, same
+                    # as any item that never got its turn.
+                    continue
+                fresh_lead = ReviewQueueService._scan_lead_dict(record)
+                fresh_action = lens_service.compute(fresh_lead)["action"]
+                if fresh_action in WEAK_ACTIONS:
+                    ReviewQueueService.resolve_item(
+                        asin, "rejected",
+                        reason=f"Auto-rechecked after {age_days}+ days as a weak lead ({lens_service.ACTION_LABELS.get(fresh_action, fresh_action)}) -- still not a priority on fresh numbers",
+                        reason_category="NOT_INTERESTED",
+                    )
+                    rejected += 1
+        finally:
+            db.close()
+
+        ActivityLog.record(
+            "review_queue_recheck",
+            f"{len(weak_asins)}/{weak_total_found} weak lead(s) rechecked (oldest-first, capped at {max_per_run}/day), {rejected} still weak -> rejected",
+        )
+
+        return {
+            "weak_found": weak_total_found,
+            "rechecked": result.get("asins_scanned") or 0,
+            "rejected": rejected,
             "error": result.get("error"),
         }

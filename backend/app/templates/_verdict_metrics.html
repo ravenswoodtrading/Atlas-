@@ -146,24 +146,24 @@
     </div>
 </div>
 
-{% if (not va_ground_truth) and metrics.viable_days_90d and metrics.viable_days_90d.priced_days %}
+{% if (not va_ground_truth) and metrics.viable_days_90d and metrics.viable_days_90d.priced_days_90d %}
 <div class="vr-card mb-3">
-    <div class="vr-section-title"><i class="bi bi-calendar-range"></i> Days at a viable price (last 90 days, not the average)</div>
+    <div class="vr-section-title"><i class="bi bi-calendar-range"></i> Days at a viable price (not the average)</div>
     <div class="small" style="color:#6c7580;margin-bottom:.5rem;">
-        Rebuilt day-by-day from the actual price history -- catches a product that's genuinely a good buy on most days even when a few outlier days would pull a plain average off in either direction.
+        Rebuilt day-by-day from the actual price history -- catches a product that's genuinely a good buy on most days even when a few outlier days would pull a plain average off in either direction. Two different windows, not one window at two bars (2026-09-07) -- a tighter bar over a shorter, more-recent window catches a margin that's only opened up recently; a lower bar over the full 90 days catches one that's faded.
     </div>
     <div class="d-flex gap-4 flex-wrap">
         <div>
-            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_target_roi }} / {{ metrics.viable_days_90d.priced_days }}</div>
-            <div class="small" style="color:#6c7580;">days at 25%+ ROI (strong)</div>
+            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_25pct_30d }} / {{ metrics.viable_days_90d.priced_days_30d }}</div>
+            <div class="small" style="color:#6c7580;">days at 25%+ ROI, last 30 days (strong, recent)</div>
         </div>
         <div>
-            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_min_roi }} / {{ metrics.viable_days_90d.priced_days }}</div>
-            <div class="small" style="color:#6c7580;">days at 10%+ ROI (bare minimum)</div>
+            <div class="vr-metric-value">{{ metrics.viable_days_90d.days_at_20pct_90d }} / {{ metrics.viable_days_90d.priced_days_90d }}</div>
+            <div class="small" style="color:#6c7580;">days at 20%+ ROI, last 90 days</div>
         </div>
     </div>
-    {% if metrics.viable_days_90d.priced_days < 90 %}
-    <div class="small mt-2" style="color:#6c7580;">{{ 90 - metrics.viable_days_90d.priced_days }} of the last 90 days had no buy-box price at all (e.g. out of stock) and aren't counted above.</div>
+    {% if metrics.viable_days_90d.priced_days_90d < 90 %}
+    <div class="small mt-2" style="color:#6c7580;">{{ 90 - metrics.viable_days_90d.priced_days_90d }} of the last 90 days had no buy-box price at all (e.g. out of stock) and aren't counted above.</div>
     {% endif %}
 </div>
 {% endif %}

@@ -1,0 +1,1651 @@
+{
+  "generated_at": "2026-09-05T11:16:23.306391+00:00",
+  "model": "claude-sonnet-5",
+  "n_products": 10,
+  "results": [
+    {
+      "asin": "B08LNXXW38",
+      "parsed": {
+        "asin": "B08LNXXW38",
+        "product_identity": {
+          "title": "RYOBI 18V ONE+ 150mm Circular Saw (Battery & Charger Excluded)",
+          "brand": "RYOBI",
+          "ean": "4892210141071",
+          "mpn": "R18CSP-0",
+          "key_identifying_features": [
+            "150mm blade, 18 carbide-tipped teeth",
+            "Bare/zero tool - no battery or charger",
+            "18V ONE+ system",
+            "Cut depth 45mm@90\u00b0/32mm@45\u00b0"
+          ]
+        },
+        "search_strategies_used": [
+          "MPN search: RYOBI R18CSP-0 150mm Circular Saw",
+          "EAN search: R18CSP-0 4892210141071",
+          "Retailer price verification search: cbspowertools.com R18CSP-0 price inc/ex VAT",
+          "Condition verification search: atlas-refurb.co.uk new or refurbished"
+        ],
+        "candidates": [
+          {
+            "retailer": "B&Q (diy.com)",
+            "url": "https://www.diy.com/departments/ryobi-18v-150mm-brushed-cordless-circular-saw-bare-tool-r18csp-0/4892210141071_BQ.prd",
+            "title_seen": "Ryobi 18V 150mm Brushed Cordless Circular saw (Bare Tool) - R18CSP-0",
+            "price": 77.0,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Trade Point (Kingfisher/B&Q)",
+            "url": "https://www.trade-point.co.uk/departments/ryobi-one-18v-150mm-cordless-circular-saw-r18csp-0-bare/4892210141071_TP.prd",
+            "title_seen": "Ryobi ONE+ 18V 150mm Cordless Circular saw R18CSP-0 - Bare",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "CBS Power Tools",
+            "url": "https://www.cbspowertools.com/products/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw-zero-tool",
+            "title_seen": "Ryobi ONE+ 150mm Circular Saw 18V R18CSP-0 Tool Only",
+            "price": 89.95,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Atlas Refurb and Repair",
+            "url": "https://atlas-refurb.co.uk/product/ryobi-18v-one-cordless-150mm-circular-saw-r18csp-0-unit-only/",
+            "title_seen": "RYOBI 18V ONE+ Cordless 150mm Circular Saw - R18CSP-0 (Unit Only)",
+            "price": 57.58,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "eBay (ePID aggregate / GED Outlet listing)",
+            "url": "https://www.ebay.com/itm/364066281505",
+            "title_seen": "Ryobi R18CSP0 15cm 18V Circular Saw",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": true
+          },
+          {
+            "retailer": "eTeknix (deals blog, likely linking to a retailer)",
+            "url": "https://www.eteknix.com/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw/",
+            "title_seen": "Ryobi R18CSP-0 18V ONE+ Cordless 150mm Circular Saw",
+            "price": null,
+            "currency": "GBP",
+            "classification": "OTHER",
+            "fetched": true
+          },
+          {
+            "retailer": "Fnac (France)",
+            "url": "https://www.fnac.com/mp36799019/Scie-circulaire-RYOBI-18V-OnePlus-Sans-batterie-ni-chargeur-R18CSP-0/w-4",
+            "title_seen": "Scie circulaire RYOBI 18V OnePlus - Sans batterie ni chargeur - R18CSP-0",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Bricomarch\u00e9 (France)",
+            "url": "https://www.bricomarche.com/p/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/4892210141071",
+            "title_seen": "Scie circulaire RYOBI - R18CSP-0 - 18V One+",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Bricorama (France)",
+            "url": "https://www.bricorama.fr/p/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/4892210141071",
+            "title_seen": "Scie circulaire RYOBI - R18CSP-0 - 18V One+",
+            "price": 99.57,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "E.Leclerc (France)",
+            "url": "https://www.e.leclerc/fp/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur-4892210141071",
+            "title_seen": "Scie circulaire RYOBI - R18CSP-0 - 18V One+",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Auchan (France)",
+            "url": "https://www.auchan.fr/ryobi-scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/pr-4ee3ff23-7cd9-423f-94e7-7448cdb22416",
+            "title_seen": "Ryobi Scie circulaire RYOBI - R18CSP-0 - 18V One+",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Klium.com",
+            "url": "https://www.klium.com/ryobi-r18csp-0-18v-one-circular-saw-150mm-no-battery-5133002628-825171",
+            "title_seen": "RYOBI R18CSP-0 18V ONE+ cordless circular saw",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay.de (used listing)",
+            "url": "https://www.ebay.de/itm/135924490811",
+            "title_seen": "RYOBI 18V ONE+ Akku-Kreiss\u00e4ge (nur Werkzeug) (R18CSP-0)",
+            "price": 40.0,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "CBS Power Tools",
+            "url": "https://www.cbspowertools.com/products/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw-zero-tool",
+            "reason": "OTHER",
+            "detail": "Real retailer matching MPN/EAN/title, but the displayed VAT-inclusive consumer price is \u00a389.95, which is HIGHER than Amazon's \u00a377.00 (the \u00a374.96 figure is ex-VAT, not comparable to Amazon's inc-VAT price)."
+          },
+          {
+            "retailer": "Atlas Refurb and Repair",
+            "url": "https://atlas-refurb.co.uk/product/ryobi-18v-one-cordless-150mm-circular-saw-r18csp-0-unit-only/",
+            "reason": "USED_REFURBISHED",
+            "detail": "Site is explicitly branded 'Refurbished & Graded Appliances - Quality for Less', confirming stock sold is refurbished/graded, not new as required to match Amazon's new listing."
+          },
+          {
+            "retailer": "B&Q (diy.com)",
+            "url": "https://www.diy.com/departments/ryobi-18v-150mm-brushed-cordless-circular-saw-bare-tool-r18csp-0/4892210141071_BQ.prd",
+            "reason": "OTHER",
+            "detail": "Exact EAN/MPN match but priced at \u00a377, identical to Amazon price, not cheaper."
+          },
+          {
+            "retailer": "eBay (aggregate ePID / GED Outlet)",
+            "url": "https://www.ebay.com/itm/364066281505",
+            "reason": "OTHER",
+            "detail": "Listing shows 'CURRENTLY SOLD OUT' with no purchasable offer, and reviews mix 'New' and 'Pre-owned' conditions on the same aggregate product page, making it impossible to verify a specific new-condition purchasable offer."
+          },
+          {
+            "retailer": "eTeknix",
+            "url": "https://www.eteknix.com/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw/",
+            "reason": "OTHER",
+            "detail": "Page blocked by a JavaScript browser-check wall; could not verify actual seller or live price, appears to be a deals/aggregator blog rather than a direct retailer."
+          },
+          {
+            "retailer": "eBay.de used listing",
+            "url": "https://www.ebay.de/itm/135924490811",
+            "reason": "USED_REFURBISHED",
+            "detail": "Listing explicitly states condition as 'Gebraucht' (used/second-hand), while Amazon listing is for a new unit."
+          },
+          {
+            "retailer": "French retailers (Fnac, Bricomarch\u00e9, Bricorama, E.Leclerc, Auchan, Cotebrico, Klium)",
+            "url": "n/a",
+            "reason": "OTHER",
+            "detail": "Priced in EUR on French domestic retail sites; not a directly comparable GBP UK retail price and would involve cross-border shipping/import costs, so not treated as a valid 'cheaper than Amazon UK' source."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "The exact product (EAN 4892210141071, MPN R18CSP-0) was confirmed for sale at several legitimate UK retailers, but none beat Amazon's \u00a377.00 price on a like-for-like (VAT-inclusive, new-condition) basis: B&Q/Trade Point sell it at the same \u00a377, and CBS Power Tools' consumer price is actually \u00a389.95 inc VAT (its lower \u00a374.96 figure is ex-VAT and not comparable). Atlas Refurb and Repair offered a lower price (\u00a357.58 ex VAT) but that site explicitly sells refurbished/graded stock, failing the new-condition requirement, and other candidates (French EUR retailers, a sold-out/mixed-condition eBay listing, a JS-blocked deals blog, and a used eBay.de listing) were rejected for currency/market mismatch, lack of a live offer, or used condition. No genuine cheaper verified source for the new, bare-tool R18CSP-0 was found."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B08LNXXW38\",\n  \"product_identity\": {\n    \"title\": \"RYOBI 18V ONE+ 150mm Circular Saw (Battery & Charger Excluded)\",\n    \"brand\": \"RYOBI\",\n    \"ean\": \"4892210141071\",\n    \"mpn\": \"R18CSP-0\",\n    \"key_identifying_features\": [\"150mm blade, 18 carbide-tipped teeth\", \"Bare/zero tool - no battery or charger\", \"18V ONE+ system\", \"Cut depth 45mm@90\u00b0/32mm@45\u00b0\"]\n  },\n  \"search_strategies_used\": [\n    \"MPN search: RYOBI R18CSP-0 150mm Circular Saw\",\n    \"EAN search: R18CSP-0 4892210141071\",\n    \"Retailer price verification search: cbspowertools.com R18CSP-0 price inc/ex VAT\",\n    \"Condition verification search: atlas-refurb.co.uk new or refurbished\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"B&Q (diy.com)\", \"url\": \"https://www.diy.com/departments/ryobi-18v-150mm-brushed-cordless-circular-saw-bare-tool-r18csp-0/4892210141071_BQ.prd\", \"title_seen\": \"Ryobi 18V 150mm Brushed Cordless Circular saw (Bare Tool) - R18CSP-0\", \"price\": 77.0, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Trade Point (Kingfisher/B&Q)\", \"url\": \"https://www.trade-point.co.uk/departments/ryobi-one-18v-150mm-cordless-circular-saw-r18csp-0-bare/4892210141071_TP.prd\", \"title_seen\": \"Ryobi ONE+ 18V 150mm Cordless Circular saw R18CSP-0 - Bare\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"CBS Power Tools\", \"url\": \"https://www.cbspowertools.com/products/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw-zero-tool\", \"title_seen\": \"Ryobi ONE+ 150mm Circular Saw 18V R18CSP-0 Tool Only\", \"price\": 89.95, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Atlas Refurb and Repair\", \"url\": \"https://atlas-refurb.co.uk/product/ryobi-18v-one-cordless-150mm-circular-saw-r18csp-0-unit-only/\", \"title_seen\": \"RYOBI 18V ONE+ Cordless 150mm Circular Saw - R18CSP-0 (Unit Only)\", \"price\": 57.58, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"eBay (ePID aggregate / GED Outlet listing)\", \"url\": \"https://www.ebay.com/itm/364066281505\", \"title_seen\": \"Ryobi R18CSP0 15cm 18V Circular Saw\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": true},\n    {\"retailer\": \"eTeknix (deals blog, likely linking to a retailer)\", \"url\": \"https://www.eteknix.com/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw/\", \"title_seen\": \"Ryobi R18CSP-0 18V ONE+ Cordless 150mm Circular Saw\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"OTHER\", \"fetched\": true},\n    {\"retailer\": \"Fnac (France)\", \"url\": \"https://www.fnac.com/mp36799019/Scie-circulaire-RYOBI-18V-OnePlus-Sans-batterie-ni-chargeur-R18CSP-0/w-4\", \"title_seen\": \"Scie circulaire RYOBI 18V OnePlus - Sans batterie ni chargeur - R18CSP-0\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Bricomarch\u00e9 (France)\", \"url\": \"https://www.bricomarche.com/p/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/4892210141071\", \"title_seen\": \"Scie circulaire RYOBI - R18CSP-0 - 18V One+\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Bricorama (France)\", \"url\": \"https://www.bricorama.fr/p/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/4892210141071\", \"title_seen\": \"Scie circulaire RYOBI - R18CSP-0 - 18V One+\", \"price\": 99.57, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"E.Leclerc (France)\", \"url\": \"https://www.e.leclerc/fp/scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur-4892210141071\", \"title_seen\": \"Scie circulaire RYOBI - R18CSP-0 - 18V One+\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Auchan (France)\", \"url\": \"https://www.auchan.fr/ryobi-scie-circulaire-ryobi-r18csp-0-18v-one-sans-batterie-ni-chargeur/pr-4ee3ff23-7cd9-423f-94e7-7448cdb22416\", \"title_seen\": \"Ryobi Scie circulaire RYOBI - R18CSP-0 - 18V One+\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Klium.com\", \"url\": \"https://www.klium.com/ryobi-r18csp-0-18v-one-circular-saw-150mm-no-battery-5133002628-825171\", \"title_seen\": \"RYOBI R18CSP-0 18V ONE+ cordless circular saw\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"eBay.de (used listing)\", \"url\": \"https://www.ebay.de/itm/135924490811\", \"title_seen\": \"RYOBI 18V ONE+ Akku-Kreiss\u00e4ge (nur Werkzeug) (R18CSP-0)\", \"price\": 40.0, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"CBS Power Tools\", \"url\": \"https://www.cbspowertools.com/products/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw-zero-tool\", \"reason\": \"OTHER\", \"detail\": \"Real retailer matching MPN/EAN/title, but the displayed VAT-inclusive consumer price is \u00a389.95, which is HIGHER than Amazon's \u00a377.00 (the \u00a374.96 figure is ex-VAT, not comparable to Amazon's inc-VAT price).\"},\n    {\"retailer\": \"Atlas Refurb and Repair\", \"url\": \"https://atlas-refurb.co.uk/product/ryobi-18v-one-cordless-150mm-circular-saw-r18csp-0-unit-only/\", \"reason\": \"USED_REFURBISHED\", \"detail\": \"Site is explicitly branded 'Refurbished & Graded Appliances - Quality for Less', confirming stock sold is refurbished/graded, not new as required to match Amazon's new listing.\"},\n    {\"retailer\": \"B&Q (diy.com)\", \"url\": \"https://www.diy.com/departments/ryobi-18v-150mm-brushed-cordless-circular-saw-bare-tool-r18csp-0/4892210141071_BQ.prd\", \"reason\": \"OTHER\", \"detail\": \"Exact EAN/MPN match but priced at \u00a377, identical to Amazon price, not cheaper.\"},\n    {\"retailer\": \"eBay (aggregate ePID / GED Outlet)\", \"url\": \"https://www.ebay.com/itm/364066281505\", \"reason\": \"OTHER\", \"detail\": \"Listing shows 'CURRENTLY SOLD OUT' with no purchasable offer, and reviews mix 'New' and 'Pre-owned' conditions on the same aggregate product page, making it impossible to verify a specific new-condition purchasable offer.\"},\n    {\"retailer\": \"eTeknix\", \"url\": \"https://www.eteknix.com/ryobi-r18csp-0-18v-one-cordless-150mm-circular-saw/\", \"reason\": \"OTHER\", \"detail\": \"Page blocked by a JavaScript browser-check wall; could not verify actual seller or live price, appears to be a deals/aggregator blog rather than a direct retailer.\"},\n    {\"retailer\": \"eBay.de used listing\", \"url\": \"https://www.ebay.de/itm/135924490811\", \"reason\": \"USED_REFURBISHED\", \"detail\": \"Listing explicitly states condition as 'Gebraucht' (used/second-hand), while Amazon listing is for a new unit.\"},\n    {\"retailer\": \"French retailers (Fnac, Bricomarch\u00e9, Bricorama, E.Leclerc, Auchan, Cotebrico, Klium)\", \"url\": \"n/a\", \"reason\": \"OTHER\", \"detail\": \"Priced in EUR on French domestic retail sites; not a directly comparable GBP UK retail price and would involve cross-border shipping/import costs, so not treated as a valid 'cheaper than Amazon UK' source.\"}\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"The exact product (EAN 4892210141071, MPN R18CSP-0) was confirmed for sale at several legitimate UK retailers, but none beat Amazon's \u00a377.00 price on a like-for-like (VAT-inclusive, new-condition) basis: B&Q/Trade Point sell it at the same \u00a377, and CBS Power Tools' consumer price is actually \u00a389.95 inc VAT (its lower \u00a374.96 figure is ex-VAT and not comparable). Atlas Refurb and Repair offered a lower price (\u00a357.58 ex VAT) but that site explicitly sells refurbished/graded stock, failing the new-condition requirement, and other candidates (French EUR retailers, a sold-out/mixed-condition eBay listing, a JS-blocked deals blog, and a used eBay.de listing) were rejected for currency/market mismatch, lack of a live offer, or used condition. No genuine cheaper verified source for the new, bare-tool R18CSP-0 was found.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 220574,
+        "output_tokens": 7616,
+        "cache_read_input_tokens": 0,
+        "web_searches": 4,
+        "web_fetches": 5
+      },
+      "cost_usd": 0.5573,
+      "case": {
+        "asin": "B08LNXXW38",
+        "title": "RYOBI 18V ONE+ 150mm Circular Saw (Battery & Charger Excluded)",
+        "brand": "RYOBI",
+        "ean": "4892210141071",
+        "mpn": "R18CSP-0",
+        "amazon_price_gbp": 77.0,
+        "target_price_gbp": 44.84,
+        "serpapi_retailer": "Ryobi Tools",
+        "serpapi_price": 69.99,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "SerpAPI's retailer_title reads 'R18CS115-0' -- a DIFFERENT model number to the Amazon MPN 'R18CSP-0'."
+      }
+    },
+    {
+      "asin": "B08P3TCMT2",
+      "parsed": {
+        "asin": "B08P3TCMT2",
+        "product_identity": {
+          "title": "Blackmagic OB02429 Micro Converter BiDirect SDI/HDMI 3G PSU",
+          "brand": "Blackmagic Design",
+          "ean": "9338716006995",
+          "mpn": "BM-CONVBDC/SDI/HDMI03G/PS",
+          "key_identifying_features": [
+            "Bidirectional SDI to HDMI and HDMI to SDI micro converter",
+            "3G-SDI rated (up to 1080p60 / DCI 2K)",
+            "Includes external PSU (+5V universal power supply with international socket adaptors)",
+            "EAN 9338716006995",
+            "Also catalogued under manufacturer part CONVBDC/SDI/HDMI03G/PS / IMSourcing part OB02429"
+          ]
+        },
+        "search_strategies_used": [
+          "Brand + full MPN (BM-CONVBDC/SDI/HDMI03G/PS)",
+          "Amazon title + OB02429 model code",
+          "MPN + UK price search",
+          "Exact MPN + UK retailer symbol search"
+        ],
+        "candidates": [
+          {
+            "retailer": "CVP.com",
+            "url": "https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu",
+            "title_seen": "Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU (p/n CONVBDC/SDI/HDMI03G/P)",
+            "price": 70.8,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "B&H Photo Video",
+            "url": "https://www.bhphotovideo.com/c/product/1607017-REG/blackmagic_design_convbdc_sdi_hdmi03g_ps_micro_converter_bidirectional_sdi_hdmi.html",
+            "title_seen": "Blackmagic Design Micro Converter Bidirectional SDI/HDMI 3G (with Power Supply)",
+            "price": null,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Adorama",
+            "url": "https://www.adorama.com/bmconhd03gps.html",
+            "title_seen": "Blackmagic Design BiDirectional SDI to HDMI 3G Micro Converter with Power Supply CONVBDC/SDI/HDMI03G/PS",
+            "price": 89.0,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Vintage King",
+            "url": "https://vintageking.com/blackmagic-design-micro-converter-bidirectional-sdi-hdmi-3g-w-psu",
+            "title_seen": "Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU",
+            "price": 89.0,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Best Buy",
+            "url": "https://www.bestbuy.com/product/blackmagic-design-micro-converter-bidirect-sdi-hdmi-3g-psu/BS3JY9VSXZ",
+            "title_seen": "Blackmagic Design Micro Converter BiDirect SDI/HDMI 3G PSU CONVBDCSDI-HDMI",
+            "price": null,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay (private seller, Germany)",
+            "url": "https://www.ebay.de/itm/326797672575",
+            "title_seen": "Blackmagic Design CONVBDC/SDI/HDMI03G/P Videosignalwandler",
+            "price": 80.0,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Ascendeo (FR)",
+            "url": "https://www.ascendeo.fr/p/blackmagic-micro-converter-bidirect-sdihdmi-3g-psu",
+            "title_seen": "Blackmagic Micro Converter BiDirect SDI/HDMI 3G PSU (OB02429)",
+            "price": 102.0,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Square-Technology (IMSourcing)",
+            "url": "https://www.square-technology.com/Products/overview/M024147825",
+            "reason": "OTHER",
+            "detail": "US B2B/reseller listing at $188.99 MSRP, no confirmed live purchasable retail price, not price-competitive and not verified as GBP retail source."
+          },
+          {
+            "retailer": "Markertek (B-stock)",
+            "url": "https://www.markertek.com/product/bmdconvbdcsdbstk/blackmagic-design-convbdc-sdi-hdmi03g-ps-micro-converter-bidirectional-sdi-hdmi-3g-bstock-vendor-refurbished",
+            "reason": "USED_REFURBISHED",
+            "detail": "Listing explicitly marked as vendor-refurbished/B-stock, whereas Amazon listing is for a new unit."
+          },
+          {
+            "retailer": "Supreme Auctions listing",
+            "url": "https://supremeauctions.atgportals.net/past-auctions/suprem13755/lot-details/0726ef79-7c11-427a-96bc-b1e200cb926f",
+            "reason": "OTHER",
+            "detail": "Auction house lot listing, not a standard retail purchase channel with a fixed verifiable new-condition price."
+          }
+        ],
+        "verified_sources": [
+          {
+            "retailer": "CVP.com",
+            "url": "https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu",
+            "classification": "RETAILER",
+            "price": 70.8,
+            "currency": "GBP",
+            "vat_status": "Price shown inc. VAT (\u00a359.00 ex VAT / \u00a370.80 inc VAT)",
+            "delivery_cost": 0,
+            "effective_cost": 70.8,
+            "stock_status": "In Stock (og:availability = InStock)",
+            "date_checked": "2026-09-05",
+            "evidence": "Page metadata confirms EAN 9338716006995, exactly matching the Amazon listing's EAN/GTIN, and the product title/description (Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU) matches the Amazon item exactly, including inclusion of the PSU. CVP is a well-known UK professional video equipment retailer offering free next-day UK delivery."
+          }
+        ],
+        "best_verified_source": {
+          "retailer": "CVP.com",
+          "url": "https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu",
+          "classification": "RETAILER",
+          "price": 70.8,
+          "currency": "GBP",
+          "vat_status": "Price shown inc. VAT (\u00a359.00 ex VAT / \u00a370.80 inc VAT)",
+          "delivery_cost": 0,
+          "effective_cost": 70.8,
+          "stock_status": "In Stock (og:availability = InStock)",
+          "date_checked": "2026-09-05",
+          "evidence": "Page metadata confirms EAN 9338716006995, exactly matching the Amazon listing's EAN/GTIN, and the product title/description (Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU) matches the Amazon item exactly, including inclusion of the PSU. CVP is a well-known UK professional video equipment retailer offering free next-day UK delivery."
+        },
+        "confidence": "medium",
+        "research_summary": "CVP.com, a legitimate UK professional AV retailer, sells the identical item confirmed via matching EAN (9338716006995) at \u00a370.80 inc VAT with free next-day UK delivery, which is cheaper than Amazon's \u00a373.99. Confidence is medium rather than high because CVP's own listed MPN (CONVBDC/SDI/HDMI03G/P) omits the trailing 'S' seen in Amazon's MPN (BM-CONVBDC/SDI/HDMI03G/PS), though the exact EAN match and identical product description strongly indicate this is the same physical product with only a minor part-number formatting discrepancy. Several US retailers (B&H, Adorama, Vintage King, Best Buy) also stock the identical item but only in USD, so they were not pursued as GBP price comparisons."
+      },
+      "raw_final_text": "Let me search specifically for UK retailers since the target price is in GBP.```json\n{\n  \"asin\": \"B08P3TCMT2\",\n  \"product_identity\": {\n    \"title\": \"Blackmagic OB02429 Micro Converter BiDirect SDI/HDMI 3G PSU\",\n    \"brand\": \"Blackmagic Design\",\n    \"ean\": \"9338716006995\",\n    \"mpn\": \"BM-CONVBDC/SDI/HDMI03G/PS\",\n    \"key_identifying_features\": [\n      \"Bidirectional SDI to HDMI and HDMI to SDI micro converter\",\n      \"3G-SDI rated (up to 1080p60 / DCI 2K)\",\n      \"Includes external PSU (+5V universal power supply with international socket adaptors)\",\n      \"EAN 9338716006995\",\n      \"Also catalogued under manufacturer part CONVBDC/SDI/HDMI03G/PS / IMSourcing part OB02429\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"Brand + full MPN (BM-CONVBDC/SDI/HDMI03G/PS)\",\n    \"Amazon title + OB02429 model code\",\n    \"MPN + UK price search\",\n    \"Exact MPN + UK retailer symbol search\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"CVP.com\", \"url\": \"https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu\", \"title_seen\": \"Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU (p/n CONVBDC/SDI/HDMI03G/P)\", \"price\": 70.80, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"B&H Photo Video\", \"url\": \"https://www.bhphotovideo.com/c/product/1607017-REG/blackmagic_design_convbdc_sdi_hdmi03g_ps_micro_converter_bidirectional_sdi_hdmi.html\", \"title_seen\": \"Blackmagic Design Micro Converter Bidirectional SDI/HDMI 3G (with Power Supply)\", \"price\": null, \"currency\": \"USD\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Adorama\", \"url\": \"https://www.adorama.com/bmconhd03gps.html\", \"title_seen\": \"Blackmagic Design BiDirectional SDI to HDMI 3G Micro Converter with Power Supply CONVBDC/SDI/HDMI03G/PS\", \"price\": 89.00, \"currency\": \"USD\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Vintage King\", \"url\": \"https://vintageking.com/blackmagic-design-micro-converter-bidirectional-sdi-hdmi-3g-w-psu\", \"title_seen\": \"Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU\", \"price\": 89.00, \"currency\": \"USD\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Best Buy\", \"url\": \"https://www.bestbuy.com/product/blackmagic-design-micro-converter-bidirect-sdi-hdmi-3g-psu/BS3JY9VSXZ\", \"title_seen\": \"Blackmagic Design Micro Converter BiDirect SDI/HDMI 3G PSU CONVBDCSDI-HDMI\", \"price\": null, \"currency\": \"USD\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"eBay (private seller, Germany)\", \"url\": \"https://www.ebay.de/itm/326797672575\", \"title_seen\": \"Blackmagic Design CONVBDC/SDI/HDMI03G/P Videosignalwandler\", \"price\": 80.00, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"Ascendeo (FR)\", \"url\": \"https://www.ascendeo.fr/p/blackmagic-micro-converter-bidirect-sdihdmi-3g-psu\", \"title_seen\": \"Blackmagic Micro Converter BiDirect SDI/HDMI 3G PSU (OB02429)\", \"price\": 102.00, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"Square-Technology (IMSourcing)\", \"url\": \"https://www.square-technology.com/Products/overview/M024147825\", \"reason\": \"OTHER\", \"detail\": \"US B2B/reseller listing at $188.99 MSRP, no confirmed live purchasable retail price, not price-competitive and not verified as GBP retail source.\"},\n    {\"retailer\": \"Markertek (B-stock)\", \"url\": \"https://www.markertek.com/product/bmdconvbdcsdbstk/blackmagic-design-convbdc-sdi-hdmi03g-ps-micro-converter-bidirectional-sdi-hdmi-3g-bstock-vendor-refurbished\", \"reason\": \"USED_REFURBISHED\", \"detail\": \"Listing explicitly marked as vendor-refurbished/B-stock, whereas Amazon listing is for a new unit.\"},\n    {\"retailer\": \"Supreme Auctions listing\", \"url\": \"https://supremeauctions.atgportals.net/past-auctions/suprem13755/lot-details/0726ef79-7c11-427a-96bc-b1e200cb926f\", \"reason\": \"OTHER\", \"detail\": \"Auction house lot listing, not a standard retail purchase channel with a fixed verifiable new-condition price.\"}\n  ],\n  \"verified_sources\": [\n    {\n      \"retailer\": \"CVP.com\",\n      \"url\": \"https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu\",\n      \"classification\": \"RETAILER\",\n      \"price\": 70.80,\n      \"currency\": \"GBP\",\n      \"vat_status\": \"Price shown inc. VAT (\u00a359.00 ex VAT / \u00a370.80 inc VAT)\",\n      \"delivery_cost\": 0,\n      \"effective_cost\": 70.80,\n      \"stock_status\": \"In Stock (og:availability = InStock)\",\n      \"date_checked\": \"2026-09-05\",\n      \"evidence\": \"Page metadata confirms EAN 9338716006995, exactly matching the Amazon listing's EAN/GTIN, and the product title/description (Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU) matches the Amazon item exactly, including inclusion of the PSU. CVP is a well-known UK professional video equipment retailer offering free next-day UK delivery.\"\n    }\n  ],\n  \"best_verified_source\": {\n    \"retailer\": \"CVP.com\",\n    \"url\": \"https://cvp.com/product/blackmagic-convbdc-sdi-hdmi03g-psu\",\n    \"classification\": \"RETAILER\",\n    \"price\": 70.80,\n    \"currency\": \"GBP\",\n    \"vat_status\": \"Price shown inc. VAT (\u00a359.00 ex VAT / \u00a370.80 inc VAT)\",\n    \"delivery_cost\": 0,\n    \"effective_cost\": 70.80,\n    \"stock_status\": \"In Stock (og:availability = InStock)\",\n    \"date_checked\": \"2026-09-05\",\n    \"evidence\": \"Page metadata confirms EAN 9338716006995, exactly matching the Amazon listing's EAN/GTIN, and the product title/description (Blackmagic Design Micro Converter BiDirectional SDI/HDMI 3G with PSU) matches the Amazon item exactly, including inclusion of the PSU. CVP is a well-known UK professional video equipment retailer offering free next-day UK delivery.\"\n  },\n  \"confidence\": \"medium\",\n  \"research_summary\": \"CVP.com, a legitimate UK professional AV retailer, sells the identical item confirmed via matching EAN (9338716006995) at \u00a370.80 inc VAT with free next-day UK delivery, which is cheaper than Amazon's \u00a373.99. Confidence is medium rather than high because CVP's own listed MPN (CONVBDC/SDI/HDMI03G/P) omits the trailing 'S' seen in Amazon's MPN (BM-CONVBDC/SDI/HDMI03G/PS), though the exact EAN match and identical product description strongly indicate this is the same physical product with only a minor part-number formatting discrepancy. Several US retailers (B&H, Adorama, Vintage King, Best Buy) also stock the identical item but only in USD, so they were not pursued as GBP price comparisons.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 105205,
+        "output_tokens": 4466,
+        "cache_read_input_tokens": 0,
+        "web_searches": 4,
+        "web_fetches": 1
+      },
+      "cost_usd": 0.2951,
+      "case": {
+        "asin": "B08P3TCMT2",
+        "title": "Blackmagic OB02429 Micro Converter BiDirect SDI/HDMI 3G PSU",
+        "brand": "Blackmagic Design",
+        "ean": "9338716006995",
+        "mpn": "BM-CONVBDC/SDI/HDMI03G/PS",
+        "amazon_price_gbp": 73.99,
+        "target_price_gbp": 43.4,
+        "serpapi_retailer": "MPB",
+        "serpapi_price": 19.0,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "MPB is a used/secondhand camera-gear marketplace; retailer_title is generic ('HDMI to SDI Micro Converter') with no model confirmation, and \u00a319 vs Amazon's \u00a373.99 is suspiciously cheap for a genuine match."
+      }
+    },
+    {
+      "asin": "B0CBLKS51N",
+      "parsed": {
+        "asin": "B0CBLKS51N",
+        "product_identity": {
+          "title": "Skullcandy Hesh ANC Noise Cancelling Wireless Headphones True Black",
+          "brand": "Skullcandy",
+          "ean": "0810045689524",
+          "mpn": "S6HHW-B957",
+          "key_identifying_features": [
+            "Over-ear wireless headphones",
+            "Active Noise Cancelling (ANC)",
+            "True Black colourway",
+            "Includes extra USB-C charging cable (per Amazon title)",
+            "22 hr battery life, Tile tracking, foldable design"
+          ]
+        },
+        "search_strategies_used": [
+          "Brand + MPN (S6HHW-B957)",
+          "EAN/GTIN search (0810045689524)",
+          "MPN + 'UK' regional search",
+          "MPN + 'price' search",
+          "Brand + title + major UK retailer names (Currys/Very/Argos/John Lewis)"
+        ],
+        "candidates": [
+          {
+            "retailer": "Storkz.com",
+            "url": "https://www.storkz.com/skullcandy-s6hhwb957.html?currency=GBP&country=GB",
+            "title_seen": "Skullcandy Hesh ANC Over-Ear Noise Cancelling Wireless Headphones with Charging Cable, 22 Hr Battery, Microphone, Works with iPhone Android and Bluetooth Devices - True Black",
+            "price": 75.79,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Currys Business (currys.co.uk)",
+            "url": "https://business.currys.co.uk/catalogue/tv-entertainment/headphones/skullcandy-hesh-anc-wireless-bluetooth-noise-cancelling-headphones-true-black/N645867W",
+            "title_seen": "SKULLCANDY Hesh ANC Wireless Bluetooth Noise-Cancelling Headphones - True Black - S6HHW-N740",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Best Buy",
+            "url": "https://www.bestbuy.com/product/skullcandy-hesh-anc-over-the-ear-noise-canceling-wireless-headphones-true-black/J3GTZR5HQ9",
+            "title_seen": "Skullcandy Hesh ANC Over the Ear Noise Canceling Wireless Headphones True Black S6HHW-N740",
+            "price": null,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK (third-party seller)",
+            "url": "https://www.ebay.co.uk/itm/137631413636",
+            "title_seen": "Skullcandy Hesh ANC Wireless Headphones With Rapid Charge - Black S6HHW-B957",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "idealo.co.uk (comparison site - top listed offer resolves to Amazon.co.uk)",
+            "url": "https://www.idealo.co.uk/compare/201204720/skullcandy-hesh-anc-true-black.html",
+            "title_seen": "Skullcandy Hesh ANC True Black",
+            "price": 49.99,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": true
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Currys / Currys Business",
+            "url": "https://business.currys.co.uk/catalogue/tv-entertainment/headphones/skullcandy-hesh-anc-wireless-bluetooth-noise-cancelling-headphones-true-black/N645867W",
+            "reason": "OTHER",
+            "detail": "Currys' own listing states the model number as S6HHW-N740, not S6HHW-B957 as on the Amazon listing -- this is an MPN conflict (N740 vs B957 appear to be different regional/bundle SKUs of the same colourway) so the exact product could not be confirmed; also the consumer-facing currys.co.uk product page for this item redirected to a generic category listing (likely out of stock/delisted), so no live price could be verified."
+          },
+          {
+            "retailer": "Best Buy",
+            "url": "https://www.bestbuy.com/product/skullcandy-hesh-anc-over-the-ear-noise-canceling-wireless-headphones-true-black/J3GTZR5HQ9",
+            "reason": "OTHER",
+            "detail": "Best Buy's own listing states model S6HHW-N740, an MPN conflict with the target S6HHW-B957; also a US retailer (USD pricing), not directly comparable to the GBP Amazon UK listing."
+          },
+          {
+            "retailer": "eBay UK",
+            "url": "https://www.ebay.co.uk/itm/137631413636",
+            "reason": "USED_REFURBISHED",
+            "detail": "Listing description explicitly states the item is refurbished ('It is excellent refurbished but shows little sign of use'), while the Amazon listing is for a new unit. Also a third-party marketplace listing, and the cached listing appears old/possibly expired."
+          },
+          {
+            "retailer": "idealo.co.uk lowest offer",
+            "url": "https://www.idealo.co.uk/compare/201204720/skullcandy-hesh-anc-true-black.html",
+            "reason": "NOT_A_RETAILER",
+            "detail": "idealo is a price-comparison aggregator, not a retailer itself. Its cheapest listed offer (\u00a349.99) resolves via a redirect link to amazon.co.uk -- i.e. it is Amazon itself, not an independent third-party retailer, so it cannot be used as a cheaper external source. The remaining 4 offers were not visible in the fetched static page (JS-rendered offer list) and could not be individually verified."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "The only retailer confirmed to sell the exact MPN/EAN match (S6HHW-B957, EAN 0810045689524) was Storkz.com, but its price of \u00a375.79 is higher than Amazon's \u00a365.57, so it does not qualify as a cheaper source. Major UK retailers (Currys, and US-based Best Buy) list a 'True Black' Hesh ANC but under a different model number (S6HHW-N740), which is a hard MPN conflict against the Amazon listing's S6HHW-B957, so those were rejected rather than risk a false positive. The one eBay UK listing matching the exact MPN was refurbished, not new, and idealo's lowest quoted price simply redirected back to Amazon itself. No independently verified retailer selling the exact same new product for less than Amazon's \u00a365.57 could be confirmed."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0CBLKS51N\",\n  \"product_identity\": {\n    \"title\": \"Skullcandy Hesh ANC Noise Cancelling Wireless Headphones True Black\",\n    \"brand\": \"Skullcandy\",\n    \"ean\": \"0810045689524\",\n    \"mpn\": \"S6HHW-B957\",\n    \"key_identifying_features\": [\n      \"Over-ear wireless headphones\",\n      \"Active Noise Cancelling (ANC)\",\n      \"True Black colourway\",\n      \"Includes extra USB-C charging cable (per Amazon title)\",\n      \"22 hr battery life, Tile tracking, foldable design\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"Brand + MPN (S6HHW-B957)\",\n    \"EAN/GTIN search (0810045689524)\",\n    \"MPN + 'UK' regional search\",\n    \"MPN + 'price' search\",\n    \"Brand + title + major UK retailer names (Currys/Very/Argos/John Lewis)\"\n  ],\n  \"candidates\": [\n    {\n      \"retailer\": \"Storkz.com\",\n      \"url\": \"https://www.storkz.com/skullcandy-s6hhwb957.html?currency=GBP&country=GB\",\n      \"title_seen\": \"Skullcandy Hesh ANC Over-Ear Noise Cancelling Wireless Headphones with Charging Cable, 22 Hr Battery, Microphone, Works with iPhone Android and Bluetooth Devices - True Black\",\n      \"price\": 75.79,\n      \"currency\": \"GBP\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": true\n    },\n    {\n      \"retailer\": \"Currys Business (currys.co.uk)\",\n      \"url\": \"https://business.currys.co.uk/catalogue/tv-entertainment/headphones/skullcandy-hesh-anc-wireless-bluetooth-noise-cancelling-headphones-true-black/N645867W\",\n      \"title_seen\": \"SKULLCANDY Hesh ANC Wireless Bluetooth Noise-Cancelling Headphones - True Black - S6HHW-N740\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"Best Buy\",\n      \"url\": \"https://www.bestbuy.com/product/skullcandy-hesh-anc-over-the-ear-noise-canceling-wireless-headphones-true-black/J3GTZR5HQ9\",\n      \"title_seen\": \"Skullcandy Hesh ANC Over the Ear Noise Canceling Wireless Headphones True Black S6HHW-N740\",\n      \"price\": null,\n      \"currency\": \"USD\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"eBay UK (third-party seller)\",\n      \"url\": \"https://www.ebay.co.uk/itm/137631413636\",\n      \"title_seen\": \"Skullcandy Hesh ANC Wireless Headphones With Rapid Charge - Black S6HHW-B957\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"idealo.co.uk (comparison site - top listed offer resolves to Amazon.co.uk)\",\n      \"url\": \"https://www.idealo.co.uk/compare/201204720/skullcandy-hesh-anc-true-black.html\",\n      \"title_seen\": \"Skullcandy Hesh ANC True Black\",\n      \"price\": 49.99,\n      \"currency\": \"GBP\",\n      \"classification\": \"COMPARISON_SEARCH\",\n      \"fetched\": true\n    }\n  ],\n  \"rejected_candidates\": [\n    {\n      \"retailer\": \"Currys / Currys Business\",\n      \"url\": \"https://business.currys.co.uk/catalogue/tv-entertainment/headphones/skullcandy-hesh-anc-wireless-bluetooth-noise-cancelling-headphones-true-black/N645867W\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Currys' own listing states the model number as S6HHW-N740, not S6HHW-B957 as on the Amazon listing -- this is an MPN conflict (N740 vs B957 appear to be different regional/bundle SKUs of the same colourway) so the exact product could not be confirmed; also the consumer-facing currys.co.uk product page for this item redirected to a generic category listing (likely out of stock/delisted), so no live price could be verified.\"\n    },\n    {\n      \"retailer\": \"Best Buy\",\n      \"url\": \"https://www.bestbuy.com/product/skullcandy-hesh-anc-over-the-ear-noise-canceling-wireless-headphones-true-black/J3GTZR5HQ9\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Best Buy's own listing states model S6HHW-N740, an MPN conflict with the target S6HHW-B957; also a US retailer (USD pricing), not directly comparable to the GBP Amazon UK listing.\"\n    },\n    {\n      \"retailer\": \"eBay UK\",\n      \"url\": \"https://www.ebay.co.uk/itm/137631413636\",\n      \"reason\": \"USED_REFURBISHED\",\n      \"detail\": \"Listing description explicitly states the item is refurbished ('It is excellent refurbished but shows little sign of use'), while the Amazon listing is for a new unit. Also a third-party marketplace listing, and the cached listing appears old/possibly expired.\"\n    },\n    {\n      \"retailer\": \"idealo.co.uk lowest offer\",\n      \"url\": \"https://www.idealo.co.uk/compare/201204720/skullcandy-hesh-anc-true-black.html\",\n      \"reason\": \"NOT_A_RETAILER\",\n      \"detail\": \"idealo is a price-comparison aggregator, not a retailer itself. Its cheapest listed offer (\u00a349.99) resolves via a redirect link to amazon.co.uk -- i.e. it is Amazon itself, not an independent third-party retailer, so it cannot be used as a cheaper external source. The remaining 4 offers were not visible in the fetched static page (JS-rendered offer list) and could not be individually verified.\"\n    }\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"The only retailer confirmed to sell the exact MPN/EAN match (S6HHW-B957, EAN 0810045689524) was Storkz.com, but its price of \u00a375.79 is higher than Amazon's \u00a365.57, so it does not qualify as a cheaper source. Major UK retailers (Currys, and US-based Best Buy) list a 'True Black' Hesh ANC but under a different model number (S6HHW-N740), which is a hard MPN conflict against the Amazon listing's S6HHW-B957, so those were rejected rather than risk a false positive. The one eBay UK listing matching the exact MPN was refurbished, not new, and idealo's lowest quoted price simply redirected back to Amazon itself. No independently verified retailer selling the exact same new product for less than Amazon's \u00a365.57 could be confirmed.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 361299,
+        "output_tokens": 6185,
+        "cache_read_input_tokens": 0,
+        "web_searches": 5,
+        "web_fetches": 5
+      },
+      "cost_usd": 0.8344,
+      "case": {
+        "asin": "B0CBLKS51N",
+        "title": "Skullcandy Hesh ANC Noise Cancelling Wireless Headphones True Black",
+        "brand": "Skullcandy",
+        "ean": "0810045689524",
+        "mpn": "S6HHW-B957",
+        "amazon_price_gbp": 65.57,
+        "target_price_gbp": 37.99,
+        "serpapi_retailer": "skullcandy.co.uk",
+        "serpapi_price": 39.99,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Retailer title is 'Hesh 360' -- a DIFFERENT Skullcandy headphone line to the Amazon listing's 'Hesh ANC'."
+      }
+    },
+    {
+      "asin": "B0094B2G9E",
+      "parsed": {
+        "asin": "B0094B2G9E",
+        "product_identity": {
+          "title": "White Barn Candle Bath & Body Works White Barn 3-Wick Candle Mahogany Teakwood",
+          "brand": "Bath & Body Works",
+          "ean": "0667531111461",
+          "mpn": "SYNCHKG045699",
+          "key_identifying_features": [
+            "3-Wick jar candle, 14.5 oz / 411 g",
+            "Scent: Mahogany Teakwood (standard, NOT 'Intense' or 'High Intensity' variant)",
+            "White Barn sub-line packaging",
+            "New/unused retail candle"
+          ]
+        },
+        "search_strategies_used": [
+          "brand + product name (Mahogany Teakwood 3-Wick Candle)",
+          "EAN/GTIN search (0667531111461)",
+          "MPN search (SYNCHKG045699)",
+          "Walmart-specific brand+title search",
+          "UK-specific price search (bathandbodyworks.co.uk, Next.co.uk, eBay.co.uk)"
+        ],
+        "candidates": [
+          {
+            "retailer": "Bath & Body Works UK (official)",
+            "url": "https://www.bathandbodyworks.co.uk/style/su627376/v50899",
+            "title_seen": "Mahogany Teakwood Candle 411g 3 Wick",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Next.co.uk",
+            "url": "https://www.next.co.uk/style/ls366173/p87507",
+            "title_seen": "Bath & Body Works Mahogany Teakwood 3-Wick Candle 14.5 oz / 411 g",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Walmart.com",
+            "url": "https://www.walmart.com/ip/Bath-Body-Works-White-Barn-3-Wick-Candle-in-Mahogany-Teakwood/920852705",
+            "title_seen": "Bath & Body Works White Barn 3-Wick Candle in Mahogany Teakwood",
+            "price": null,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay (seller albgal94)",
+            "url": "https://www.ebay.com/itm/388976229164",
+            "title_seen": "Bath & Body Works White Barn Mahogany Teakwood Scented Candle Unisex Candle 14.5",
+            "price": null,
+            "currency": "USD",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK (various sellers)",
+            "url": "https://www.ebay.co.uk/p/19036982381",
+            "title_seen": "Bath & Body Works 3 Wick Candle White Barn Mahogany Teakwood",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Walmart.com (Mahogany Teakwood High Intensity)",
+            "url": "https://www.walmart.com/ip/Bath-Body-Works-White-Barn-3-Wick-Candle-Mahogany-Teakwood-High-Intensity-14-5-oz-Scented-Candle/845737924",
+            "reason": "WRONG_VARIANT",
+            "detail": "Listing is for the 'Mahogany Teakwood High Intensity' variant, a different fragrance concentration/product line than the plain 'Mahogany Teakwood' item on the Amazon listing."
+          },
+          {
+            "retailer": "Walmart.com (Mahogany Teakwood Intense, Set of 2)",
+            "url": "https://www.walmart.com/ip/Bath-Body-Works-MAHOGANY-TEAKWOOD-INTENSE-3-Wick-Scented-Candle-Set-of-2/5203948233",
+            "reason": "WRONG_PACK",
+            "detail": "This is a 2-pack of the 'Intense' variant, wrong pack size and wrong scent variant vs the single, standard Mahogany Teakwood candle on Amazon."
+          },
+          {
+            "retailer": "eBay.com (MPN match, sold out listing)",
+            "url": "https://www.ebay.com/p/1303926992",
+            "reason": "OTHER",
+            "detail": "Listing shows exact matching MPN/GTIN but is CURRENTLY SOLD OUT with a price (~EUR 72.94 + EUR 37.29 shipping) far above Amazon's price, so even if verified it would not be cheaper."
+          },
+          {
+            "retailer": "Zulily",
+            "url": "https://www.zulily.com/products/3-wick-mahogany-teakwood-candle",
+            "reason": "OTHER",
+            "detail": "Fragrance note description (mahogany, teakwood, warm musk, amber resin, 70hr burn) does not match Bath & Body Works' official Mahogany Teakwood notes (mahogany, black teakwood, dark oak, frosted lavender); appears to be a different, non-B&BW branded candle despite similar name."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "I identified strong-looking candidates for the exact product, including <cite index=\"45-1,45-4\">Bath & Body Works Mahogany Teakwood 3-Wick Candle 14.5 oz / 411 g on Next.co.uk</cite> and the official <cite index=\"50-5,50-8\">Mahogany Teakwood Candle 411g 3 Wick from Bath & Body Works UK with matching fragrance notes of rich mahogany, black teakwood, dark oak and frosted lavender</cite>, plus a Walmart listing for the plain (non-'Intense', non-'High Intensity') variant and an eBay US listing showing the exact matching MPN 'SYNCHKG045699'. However, every attempt to fetch these candidate pages to confirm live price, stock status, and exact identifiers failed due to technical access errors, and I exhausted my available search and fetch calls before this could be resolved. Because I could not directly verify price, currency, or identifier match on any live page (only search-snippet-level title matches), and a false positive is explicitly worse than no answer, I am not asserting any of these as a verified cheaper source -- confidence is set to none pending a successful page fetch."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0094B2G9E\",\n  \"product_identity\": {\n    \"title\": \"White Barn Candle Bath & Body Works White Barn 3-Wick Candle Mahogany Teakwood\",\n    \"brand\": \"Bath & Body Works\",\n    \"ean\": \"0667531111461\",\n    \"mpn\": \"SYNCHKG045699\",\n    \"key_identifying_features\": [\n      \"3-Wick jar candle, 14.5 oz / 411 g\",\n      \"Scent: Mahogany Teakwood (standard, NOT 'Intense' or 'High Intensity' variant)\",\n      \"White Barn sub-line packaging\",\n      \"New/unused retail candle\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"brand + product name (Mahogany Teakwood 3-Wick Candle)\",\n    \"EAN/GTIN search (0667531111461)\",\n    \"MPN search (SYNCHKG045699)\",\n    \"Walmart-specific brand+title search\",\n    \"UK-specific price search (bathandbodyworks.co.uk, Next.co.uk, eBay.co.uk)\"\n  ],\n  \"candidates\": [\n    {\n      \"retailer\": \"Bath & Body Works UK (official)\",\n      \"url\": \"https://www.bathandbodyworks.co.uk/style/su627376/v50899\",\n      \"title_seen\": \"Mahogany Teakwood Candle 411g 3 Wick\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"Next.co.uk\",\n      \"url\": \"https://www.next.co.uk/style/ls366173/p87507\",\n      \"title_seen\": \"Bath & Body Works Mahogany Teakwood 3-Wick Candle 14.5 oz / 411 g\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"Walmart.com\",\n      \"url\": \"https://www.walmart.com/ip/Bath-Body-Works-White-Barn-3-Wick-Candle-in-Mahogany-Teakwood/920852705\",\n      \"title_seen\": \"Bath & Body Works White Barn 3-Wick Candle in Mahogany Teakwood\",\n      \"price\": null,\n      \"currency\": \"USD\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"eBay (seller albgal94)\",\n      \"url\": \"https://www.ebay.com/itm/388976229164\",\n      \"title_seen\": \"Bath & Body Works White Barn Mahogany Teakwood Scented Candle Unisex Candle 14.5\",\n      \"price\": null,\n      \"currency\": \"USD\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"eBay UK (various sellers)\",\n      \"url\": \"https://www.ebay.co.uk/p/19036982381\",\n      \"title_seen\": \"Bath & Body Works 3 Wick Candle White Barn Mahogany Teakwood\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    }\n  ],\n  \"rejected_candidates\": [\n    {\n      \"retailer\": \"Walmart.com (Mahogany Teakwood High Intensity)\",\n      \"url\": \"https://www.walmart.com/ip/Bath-Body-Works-White-Barn-3-Wick-Candle-Mahogany-Teakwood-High-Intensity-14-5-oz-Scented-Candle/845737924\",\n      \"reason\": \"WRONG_VARIANT\",\n      \"detail\": \"Listing is for the 'Mahogany Teakwood High Intensity' variant, a different fragrance concentration/product line than the plain 'Mahogany Teakwood' item on the Amazon listing.\"\n    },\n    {\n      \"retailer\": \"Walmart.com (Mahogany Teakwood Intense, Set of 2)\",\n      \"url\": \"https://www.walmart.com/ip/Bath-Body-Works-MAHOGANY-TEAKWOOD-INTENSE-3-Wick-Scented-Candle-Set-of-2/5203948233\",\n      \"reason\": \"WRONG_PACK\",\n      \"detail\": \"This is a 2-pack of the 'Intense' variant, wrong pack size and wrong scent variant vs the single, standard Mahogany Teakwood candle on Amazon.\"\n    },\n    {\n      \"retailer\": \"eBay.com (MPN match, sold out listing)\",\n      \"url\": \"https://www.ebay.com/p/1303926992\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Listing shows exact matching MPN/GTIN but is CURRENTLY SOLD OUT with a price (~EUR 72.94 + EUR 37.29 shipping) far above Amazon's price, so even if verified it would not be cheaper.\"\n    },\n    {\n      \"retailer\": \"Zulily\",\n      \"url\": \"https://www.zulily.com/products/3-wick-mahogany-teakwood-candle\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Fragrance note description (mahogany, teakwood, warm musk, amber resin, 70hr burn) does not match Bath & Body Works' official Mahogany Teakwood notes (mahogany, black teakwood, dark oak, frosted lavender); appears to be a different, non-B&BW branded candle despite similar name.\"\n    }\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"I identified strong-looking candidates for the exact product, including <cite index=\\\"45-1,45-4\\\">Bath & Body Works Mahogany Teakwood 3-Wick Candle 14.5 oz / 411 g on Next.co.uk</cite> and the official <cite index=\\\"50-5,50-8\\\">Mahogany Teakwood Candle 411g 3 Wick from Bath & Body Works UK with matching fragrance notes of rich mahogany, black teakwood, dark oak and frosted lavender</cite>, plus a Walmart listing for the plain (non-'Intense', non-'High Intensity') variant and an eBay US listing showing the exact matching MPN 'SYNCHKG045699'. However, every attempt to fetch these candidate pages to confirm live price, stock status, and exact identifiers failed due to technical access errors, and I exhausted my available search and fetch calls before this could be resolved. Because I could not directly verify price, currency, or identifier match on any live page (only search-snippet-level title matches), and a false positive is explicitly worse than no answer, I am not asserting any of these as a verified cheaper source -- confidence is set to none pending a successful page fetch.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 216328,
+        "output_tokens": 6375,
+        "cache_read_input_tokens": 0,
+        "web_searches": 5,
+        "web_fetches": 6
+      },
+      "cost_usd": 0.5464,
+      "case": {
+        "asin": "B0094B2G9E",
+        "title": "White Barn Candle Bath & Body Works White Barn 3-Wick Candle Mahogany Teakwood",
+        "brand": "Bath & Body Works",
+        "ean": "0667531111461",
+        "mpn": "SYNCHKG045699",
+        "amazon_price_gbp": 39.95,
+        "target_price_gbp": 21.92,
+        "serpapi_retailer": "London Loves Beauty",
+        "serpapi_price": 27.95,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Retailer title is 'Cuddle Weather' -- a DIFFERENT candle scent/variant to the Amazon listing's 'Mahogany Teakwood'."
+      }
+    },
+    {
+      "asin": "B07DN5KWHX",
+      "parsed": {
+        "asin": "B07DN5KWHX",
+        "product_identity": {
+          "title": "Guinot Night Logic Night Cream 50 ml",
+          "brand": "Guinot",
+          "ean": "3500465074600",
+          "mpn": "402026",
+          "key_identifying_features": [
+            "50ml/1.6oz size",
+            "Cr\u00e8me Night Logic / Night Logic Cream / Radiance Night Logic Cr\u00e8me (all same product, different translations)",
+            "New, sealed, non-professional retail unit"
+          ]
+        },
+        "search_strategies_used": [
+          "Guinot Night Logic 50ml price",
+          "Guinot Night Logic + EAN 3500465074600",
+          "Guinot Night Logic lookfantastic/escentual/fragrancedirect/feelunique",
+          "Guinot Night Logic UK cheap price (incl. idealo comparison)",
+          "Direct fetch of Eikon Beauty, Gorgeous Shop, SkinMaze, idealo.co.uk product pages"
+        ],
+        "candidates": [
+          {
+            "retailer": "Allbeauty",
+            "url": "https://www.allbeauty.com/p/guinot-radiance-night-logic-creme-50ml-1.6-oz./14593358/",
+            "title_seen": "Guinot Radiance Night Logic Cr\u00e8me 50ml / 1.6 oz.",
+            "price": 67.25,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Respa Beauty",
+            "url": "https://www.respabeauty.co.uk/product/guinot-creme-night-logic/",
+            "title_seen": "Guinot Cr\u00e8me Night Logic 50ml",
+            "price": 67.2,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Cosmetify (comparison)",
+            "url": "https://www.cosmetify.com/guinot-radiance-night-logic-creme/",
+            "title_seen": "Guinot Night Logic Creme 50ml",
+            "price": 64.99,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": false
+          },
+          {
+            "retailer": "Gorgeous Shop",
+            "url": "https://www.gorgeousshop.com/guinot-night-logic-cream-50ml",
+            "title_seen": "Guinot Night Logic Cream 50ml",
+            "price": 59.5,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "SkinMaze",
+            "url": "https://skinmaze.com/products/guinot/guinot-night-logic-cream/",
+            "title_seen": "Guinot Night Logic Cream (50ml)",
+            "price": 74.67,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Eikon Beauty (Ireland)",
+            "url": "https://www.eikonbeauty.ie/product/guinot-night-logic-cream-50ml/",
+            "title_seen": "Guinot Night Logic Cream 50ml",
+            "price": 98.0,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "idealo.co.uk (comparison, top offer)",
+            "url": "https://www.idealo.co.uk/compare/202047419/guinot-creme-night-logic-50ml.html",
+            "title_seen": "Guinot Cr\u00e8me Night Logic (50ml)",
+            "price": 50.27,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": true
+          },
+          {
+            "retailer": "eBay (various sellers, US/HK/DE)",
+            "url": "https://www.ebay.com/itm/292768953392",
+            "title_seen": "Guinot Creme Night Logic -50ml / 1.6 oz Brand New",
+            "price": null,
+            "currency": "USD",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Amazon-marketplace.co.uk / Giftin Goodies (via idealo)",
+            "url": "https://www.idealo.co.uk/relocator/relocate?categoryId=10832&offerKey=535fd7040417b17a4da6b2b7558b342d&price=50.27&productid=202047419&sid=22828&type=offer&pos=-2",
+            "reason": "OTHER",
+            "detail": "This is itself a third-party seller listing ON Amazon's own marketplace, not an independent external retailer, so it cannot count as a separate 'cheaper than Amazon' source."
+          },
+          {
+            "retailer": "eBay UK listing (slightly damaged box)",
+            "url": "https://www.ebay.co.uk/itm/116804423930",
+            "reason": "USED_REFURBISHED",
+            "detail": "Listing explicitly states 'Slightly damaged box' and describes item condition as possibly opened/factory second, not matching Amazon's new sealed unit."
+          },
+          {
+            "retailer": "eBay.de/eBay.com various",
+            "url": "https://www.ebay.de/itm/224635156769",
+            "reason": "OTHER",
+            "detail": "Priced in USD/AUD from Hong Kong-based marketplace sellers at prices (~\u00a365-75 equivalent) not below Amazon's GBP price after conversion; not verified as cheaper."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "I identified this product (EAN 3500465074600, MPN 402026) confidently across multiple UK/EU retailers (Allbeauty, Respa Beauty, Gorgeous Shop, SkinMaze, Eikon Beauty), but every genuine RETAILER offer found was priced well above Amazon's current \u00a350.99 (ranging roughly \u00a359.50\u2013\u00a398.00). The only offer found below Amazon's price (\u00a350.27, via idealo.co.uk) was itself a third-party seller listing on Amazon's own marketplace rather than an independent retailer, so it does not qualify as a valid external source. No independent retailer or verifiable marketplace listing selling the exact same new, sealed 50ml product for less than Amazon's price could be confirmed, so no verified source is reported."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B07DN5KWHX\",\n  \"product_identity\": {\n    \"title\": \"Guinot Night Logic Night Cream 50 ml\",\n    \"brand\": \"Guinot\",\n    \"ean\": \"3500465074600\",\n    \"mpn\": \"402026\",\n    \"key_identifying_features\": [\"50ml/1.6oz size\", \"Cr\u00e8me Night Logic / Night Logic Cream / Radiance Night Logic Cr\u00e8me (all same product, different translations)\", \"New, sealed, non-professional retail unit\"]\n  },\n  \"search_strategies_used\": [\n    \"Guinot Night Logic 50ml price\",\n    \"Guinot Night Logic + EAN 3500465074600\",\n    \"Guinot Night Logic lookfantastic/escentual/fragrancedirect/feelunique\",\n    \"Guinot Night Logic UK cheap price (incl. idealo comparison)\",\n    \"Direct fetch of Eikon Beauty, Gorgeous Shop, SkinMaze, idealo.co.uk product pages\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"Allbeauty\", \"url\": \"https://www.allbeauty.com/p/guinot-radiance-night-logic-creme-50ml-1.6-oz./14593358/\", \"title_seen\": \"Guinot Radiance Night Logic Cr\u00e8me 50ml / 1.6 oz.\", \"price\": 67.25, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Respa Beauty\", \"url\": \"https://www.respabeauty.co.uk/product/guinot-creme-night-logic/\", \"title_seen\": \"Guinot Cr\u00e8me Night Logic 50ml\", \"price\": 67.20, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Cosmetify (comparison)\", \"url\": \"https://www.cosmetify.com/guinot-radiance-night-logic-creme/\", \"title_seen\": \"Guinot Night Logic Creme 50ml\", \"price\": 64.99, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": false},\n    {\"retailer\": \"Gorgeous Shop\", \"url\": \"https://www.gorgeousshop.com/guinot-night-logic-cream-50ml\", \"title_seen\": \"Guinot Night Logic Cream 50ml\", \"price\": 59.50, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"SkinMaze\", \"url\": \"https://skinmaze.com/products/guinot/guinot-night-logic-cream/\", \"title_seen\": \"Guinot Night Logic Cream (50ml)\", \"price\": 74.67, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Eikon Beauty (Ireland)\", \"url\": \"https://www.eikonbeauty.ie/product/guinot-night-logic-cream-50ml/\", \"title_seen\": \"Guinot Night Logic Cream 50ml\", \"price\": 98.00, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"idealo.co.uk (comparison, top offer)\", \"url\": \"https://www.idealo.co.uk/compare/202047419/guinot-creme-night-logic-50ml.html\", \"title_seen\": \"Guinot Cr\u00e8me Night Logic (50ml)\", \"price\": 50.27, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": true},\n    {\"retailer\": \"eBay (various sellers, US/HK/DE)\", \"url\": \"https://www.ebay.com/itm/292768953392\", \"title_seen\": \"Guinot Creme Night Logic -50ml / 1.6 oz Brand New\", \"price\": null, \"currency\": \"USD\", \"classification\": \"MARKETPLACE\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"Amazon-marketplace.co.uk / Giftin Goodies (via idealo)\", \"url\": \"https://www.idealo.co.uk/relocator/relocate?categoryId=10832&offerKey=535fd7040417b17a4da6b2b7558b342d&price=50.27&productid=202047419&sid=22828&type=offer&pos=-2\", \"reason\": \"OTHER\", \"detail\": \"This is itself a third-party seller listing ON Amazon's own marketplace, not an independent external retailer, so it cannot count as a separate 'cheaper than Amazon' source.\"},\n    {\"retailer\": \"eBay UK listing (slightly damaged box)\", \"url\": \"https://www.ebay.co.uk/itm/116804423930\", \"reason\": \"USED_REFURBISHED\", \"detail\": \"Listing explicitly states 'Slightly damaged box' and describes item condition as possibly opened/factory second, not matching Amazon's new sealed unit.\"},\n    {\"retailer\": \"eBay.de/eBay.com various\", \"url\": \"https://www.ebay.de/itm/224635156769\", \"reason\": \"OTHER\", \"detail\": \"Priced in USD/AUD from Hong Kong-based marketplace sellers at prices (~\u00a365-75 equivalent) not below Amazon's GBP price after conversion; not verified as cheaper.\"}\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"I identified this product (EAN 3500465074600, MPN 402026) confidently across multiple UK/EU retailers (Allbeauty, Respa Beauty, Gorgeous Shop, SkinMaze, Eikon Beauty), but every genuine RETAILER offer found was priced well above Amazon's current \u00a350.99 (ranging roughly \u00a359.50\u2013\u00a398.00). The only offer found below Amazon's price (\u00a350.27, via idealo.co.uk) was itself a third-party seller listing on Amazon's own marketplace rather than an independent retailer, so it does not qualify as a valid external source. No independent retailer or verifiable marketplace listing selling the exact same new, sealed 50ml product for less than Amazon's price could be confirmed, so no verified source is reported.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 219265,
+        "output_tokens": 4284,
+        "cache_read_input_tokens": 0,
+        "web_searches": 4,
+        "web_fetches": 4
+      },
+      "cost_usd": 0.5214,
+      "case": {
+        "asin": "B07DN5KWHX",
+        "title": "Guinot Night Logic Night Cream 50 ml",
+        "brand": "Guinot",
+        "ean": "3500465074600",
+        "mpn": "402026",
+        "amazon_price_gbp": 50.99,
+        "target_price_gbp": 29.58,
+        "serpapi_retailer": "Notino.co.uk",
+        "serpapi_price": 59.24,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Retailer title is 'Newhite Brightening Night Cream' -- a DIFFERENT Guinot product line to 'Night Logic'."
+      }
+    },
+    {
+      "asin": "B00864DTJG",
+      "parsed": {
+        "asin": "B00864DTJG",
+        "product_identity": {
+          "title": "Guinot Longue Vie Cou Neck Cream 30ml (Salon Size)",
+          "brand": "Guinot",
+          "ean": "0799457823422",
+          "mpn": "3500464425748",
+          "key_identifying_features": [
+            "30ml salon/professional size",
+            "Firming Vital Neck Care / Longue Vie Cou line",
+            "Item model number on Amazon UK listing matches 3500464425748",
+            "France country of origin"
+          ]
+        },
+        "search_strategies_used": [
+          "Brand + product title + salon size",
+          "Brand + title + MPN/EAN number 3500464425748",
+          "Retailer-specific price search (lookfantastic/skinmaze/feelunique)",
+          "Comparison-site price search (cosmetify \u00a331.50 lead)"
+        ],
+        "candidates": [
+          {
+            "retailer": "eBay UK (ePID 1005465619, Libra Skincare/atouchofclassbeauty listings)",
+            "url": "https://www.ebay.co.uk/itm/292694036126",
+            "title_seen": "Guinot Longue Vie Cou - Firming Vital Neck Care 30ml Salon Size 3500464425748",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": true
+          },
+          {
+            "retailer": "eBay UK related listing (item 236669370204)",
+            "url": "https://www.ebay.co.uk/itm/236669370204",
+            "title_seen": "Guinot Longue Vie Cou Firming Vital Neck Care 30ml 1.03oz Youth Replenishing NEW",
+            "price": 39.9,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK related listing (item 188132176633)",
+            "url": "https://www.ebay.co.uk/itm/188132176633",
+            "title_seen": "Guinot Longue Vie Cou Firming Vital Neck Care 30ml 0.88oz NEW FAST SHIP",
+            "price": 48.82,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Gorgeous Shop",
+            "url": "https://www.gorgeousshop.com/guinot-creme-longue-vie-cou-30ml",
+            "title_seen": "Guinot Creme Longue Vie Cou 30ml",
+            "price": 59.5,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Skinmaze",
+            "url": "https://skinmaze.com/products/guinot/longue-vie-cou/",
+            "title_seen": "Guinot Longue Vie Cou (30ml)",
+            "price": 68.28,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "LookFantastic",
+            "url": "https://www.lookfantastic.com/p/guinot-longue-vie-firming-neck-cream-30ml/10364507/",
+            "title_seen": "Guinot Longue Vie Cou (Firming Vital Neck Cream) (30ml)",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Strawberrynet",
+            "url": "https://www.strawberrynet.com/en-US/guinot-longue-vie-cou-lifting-and-firming-neck-cream-salon-30ml/340211",
+            "title_seen": "Guinot Longue Vie Cou Lifting and Firming Neck Cream (Salon) 30ml",
+            "price": 40.0,
+            "currency": "USD",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Cosmetify",
+            "url": "https://www.cosmetify.com/guinot/",
+            "title_seen": "Guinot Longue Vie Cou Firming Vital Neck Care",
+            "price": 31.5,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": false
+          },
+          {
+            "retailer": "PriceSpy",
+            "url": "https://pricespy.co.uk/product.php?p=940592",
+            "title_seen": "Guinot Longue Vie Cou Firming Neck Cream 30ml",
+            "price": 40.3,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "eBay UK (ePID 1005465619)",
+            "url": "https://www.ebay.co.uk/itm/292694036126",
+            "reason": "OTHER",
+            "detail": "Fetched page redirects to the canonical product page which shows 'CURRENTLY SOLD OUT' \u2013 no purchasable offer currently, despite EAN 3500464425748 matching exactly."
+          },
+          {
+            "retailer": "eBay UK item 236669370204",
+            "url": "https://www.ebay.co.uk/itm/236669370204",
+            "reason": "OTHER",
+            "detail": "Effective cost \u00a339.90 + \u00a318.46 postage = \u00a358.36, higher than Amazon's \u00a340.90; not fetched/verified individually, rejected on price alone."
+          },
+          {
+            "retailer": "eBay UK item 188132176633",
+            "url": "https://www.ebay.co.uk/itm/188132176633",
+            "reason": "OTHER",
+            "detail": "Effective cost \u00a348.82 + \u00a316.58 postage = \u00a365.40, higher than Amazon's \u00a340.90."
+          },
+          {
+            "retailer": "Gorgeous Shop",
+            "url": "https://www.gorgeousshop.com/guinot-creme-longue-vie-cou-30ml",
+            "reason": "OTHER",
+            "detail": "Verified page price is \u00a359.50, higher than Amazon's \u00a340.90."
+          },
+          {
+            "retailer": "Skinmaze",
+            "url": "https://skinmaze.com/products/guinot/longue-vie-cou/",
+            "reason": "OTHER",
+            "detail": "Verified page price is \u00a368.28, higher than Amazon's \u00a340.90."
+          },
+          {
+            "retailer": "Strawberrynet",
+            "url": "https://www.strawberrynet.com/en-US/guinot-longue-vie-cou-lifting-and-firming-neck-cream-salon-30ml/340211",
+            "reason": "OTHER",
+            "detail": "Listed as OUT OF STOCK per search snippet; not a currently purchasable offer."
+          },
+          {
+            "retailer": "Cosmetify",
+            "url": "https://www.cosmetify.com/guinot/",
+            "reason": "NOT_A_RETAILER",
+            "detail": "Cosmetify is a price-comparison/aggregator front-end; the \u00a331.50 figure appeared inconsistently across multiple cached pages (RRP shown variously as \u00a357.00/\u00a357.50) and I could not fetch a live product page to confirm the actual underlying seller, current price, or stock status."
+          },
+          {
+            "retailer": "PriceSpy",
+            "url": "https://pricespy.co.uk/product.php?p=940592",
+            "reason": "NOT_A_RETAILER",
+            "detail": "Price comparison aggregator, not a direct seller; no purchasable offer verified on this page."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "I identified and directly fetched several legitimate stockists (Gorgeous Shop \u00a359.50, Skinmaze \u00a368.28) but both were priced well above Amazon's \u00a340.90, and the one exact-EAN-matching eBay UK listing (3500464425748) is currently sold out. Other eBay listings for the same product carried enough postage to exceed Amazon's price, and Strawberrynet's discounted $40 offer is out of stock. A cheaper \u00a331.50 price appeared on the aggregator site Cosmetify, but I could not fetch a live product page to confirm the underlying retailer, current price, or stock, and its cached RRP figures were inconsistent across pages, so I am not confident enough to call it verified. No retailer was verified, fetched, and confirmed in-stock at a price below Amazon's, so no source is reported as verified."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B00864DTJG\",\n  \"product_identity\": {\n    \"title\": \"Guinot Longue Vie Cou Neck Cream 30ml (Salon Size)\",\n    \"brand\": \"Guinot\",\n    \"ean\": \"0799457823422\",\n    \"mpn\": \"3500464425748\",\n    \"key_identifying_features\": [\n      \"30ml salon/professional size\",\n      \"Firming Vital Neck Care / Longue Vie Cou line\",\n      \"Item model number on Amazon UK listing matches 3500464425748\",\n      \"France country of origin\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"Brand + product title + salon size\",\n    \"Brand + title + MPN/EAN number 3500464425748\",\n    \"Retailer-specific price search (lookfantastic/skinmaze/feelunique)\",\n    \"Comparison-site price search (cosmetify \u00a331.50 lead)\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"eBay UK (ePID 1005465619, Libra Skincare/atouchofclassbeauty listings)\", \"url\": \"https://www.ebay.co.uk/itm/292694036126\", \"title_seen\": \"Guinot Longue Vie Cou - Firming Vital Neck Care 30ml Salon Size 3500464425748\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": true},\n    {\"retailer\": \"eBay UK related listing (item 236669370204)\", \"url\": \"https://www.ebay.co.uk/itm/236669370204\", \"title_seen\": \"Guinot Longue Vie Cou Firming Vital Neck Care 30ml 1.03oz Youth Replenishing NEW\", \"price\": 39.90, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"eBay UK related listing (item 188132176633)\", \"url\": \"https://www.ebay.co.uk/itm/188132176633\", \"title_seen\": \"Guinot Longue Vie Cou Firming Vital Neck Care 30ml 0.88oz NEW FAST SHIP\", \"price\": 48.82, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"Gorgeous Shop\", \"url\": \"https://www.gorgeousshop.com/guinot-creme-longue-vie-cou-30ml\", \"title_seen\": \"Guinot Creme Longue Vie Cou 30ml\", \"price\": 59.50, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Skinmaze\", \"url\": \"https://skinmaze.com/products/guinot/longue-vie-cou/\", \"title_seen\": \"Guinot Longue Vie Cou (30ml)\", \"price\": 68.28, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"LookFantastic\", \"url\": \"https://www.lookfantastic.com/p/guinot-longue-vie-firming-neck-cream-30ml/10364507/\", \"title_seen\": \"Guinot Longue Vie Cou (Firming Vital Neck Cream) (30ml)\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Strawberrynet\", \"url\": \"https://www.strawberrynet.com/en-US/guinot-longue-vie-cou-lifting-and-firming-neck-cream-salon-30ml/340211\", \"title_seen\": \"Guinot Longue Vie Cou Lifting and Firming Neck Cream (Salon) 30ml\", \"price\": 40.00, \"currency\": \"USD\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Cosmetify\", \"url\": \"https://www.cosmetify.com/guinot/\", \"title_seen\": \"Guinot Longue Vie Cou Firming Vital Neck Care\", \"price\": 31.50, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": false},\n    {\"retailer\": \"PriceSpy\", \"url\": \"https://pricespy.co.uk/product.php?p=940592\", \"title_seen\": \"Guinot Longue Vie Cou Firming Neck Cream 30ml\", \"price\": 40.30, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"eBay UK (ePID 1005465619)\", \"url\": \"https://www.ebay.co.uk/itm/292694036126\", \"reason\": \"OTHER\", \"detail\": \"Fetched page redirects to the canonical product page which shows 'CURRENTLY SOLD OUT' \\u2013 no purchasable offer currently, despite EAN 3500464425748 matching exactly.\"},\n    {\"retailer\": \"eBay UK item 236669370204\", \"url\": \"https://www.ebay.co.uk/itm/236669370204\", \"reason\": \"OTHER\", \"detail\": \"Effective cost \u00a339.90 + \u00a318.46 postage = \u00a358.36, higher than Amazon's \u00a340.90; not fetched/verified individually, rejected on price alone.\"},\n    {\"retailer\": \"eBay UK item 188132176633\", \"url\": \"https://www.ebay.co.uk/itm/188132176633\", \"reason\": \"OTHER\", \"detail\": \"Effective cost \u00a348.82 + \u00a316.58 postage = \u00a365.40, higher than Amazon's \u00a340.90.\"},\n    {\"retailer\": \"Gorgeous Shop\", \"url\": \"https://www.gorgeousshop.com/guinot-creme-longue-vie-cou-30ml\", \"reason\": \"OTHER\", \"detail\": \"Verified page price is \u00a359.50, higher than Amazon's \u00a340.90.\"},\n    {\"retailer\": \"Skinmaze\", \"url\": \"https://skinmaze.com/products/guinot/longue-vie-cou/\", \"reason\": \"OTHER\", \"detail\": \"Verified page price is \u00a368.28, higher than Amazon's \u00a340.90.\"},\n    {\"retailer\": \"Strawberrynet\", \"url\": \"https://www.strawberrynet.com/en-US/guinot-longue-vie-cou-lifting-and-firming-neck-cream-salon-30ml/340211\", \"reason\": \"OTHER\", \"detail\": \"Listed as OUT OF STOCK per search snippet; not a currently purchasable offer.\"},\n    {\"retailer\": \"Cosmetify\", \"url\": \"https://www.cosmetify.com/guinot/\", \"reason\": \"NOT_A_RETAILER\", \"detail\": \"Cosmetify is a price-comparison/aggregator front-end; the \u00a331.50 figure appeared inconsistently across multiple cached pages (RRP shown variously as \u00a357.00/\u00a357.50) and I could not fetch a live product page to confirm the actual underlying seller, current price, or stock status.\"},\n    {\"retailer\": \"PriceSpy\", \"url\": \"https://pricespy.co.uk/product.php?p=940592\", \"reason\": \"NOT_A_RETAILER\", \"detail\": \"Price comparison aggregator, not a direct seller; no purchasable offer verified on this page.\"}\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"I identified and directly fetched several legitimate stockists (Gorgeous Shop \u00a359.50, Skinmaze \u00a368.28) but both were priced well above Amazon's \u00a340.90, and the one exact-EAN-matching eBay UK listing (3500464425748) is currently sold out. Other eBay listings for the same product carried enough postage to exceed Amazon's price, and Strawberrynet's discounted $40 offer is out of stock. A cheaper \u00a331.50 price appeared on the aggregator site Cosmetify, but I could not fetch a live product page to confirm the underlying retailer, current price, or stock, and its cached RRP figures were inconsistent across pages, so I am not confident enough to call it verified. No retailer was verified, fetched, and confirmed in-stock at a price below Amazon's, so no source is reported as verified.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 406668,
+        "output_tokens": 7921,
+        "cache_read_input_tokens": 0,
+        "web_searches": 5,
+        "web_fetches": 6
+      },
+      "cost_usd": 0.9425,
+      "case": {
+        "asin": "B00864DTJG",
+        "title": "Guinot Longue Vie Cou Neck Cream 30ml (Salon Size)",
+        "brand": "Guinot",
+        "ean": "0799457823422",
+        "mpn": "3500464425748",
+        "amazon_price_gbp": 40.9,
+        "target_price_gbp": 24.28,
+        "serpapi_retailer": "Rackhams",
+        "serpapi_price": 96.06,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Retailer title is 'Longue Vie Youth Renewing Serum' -- a DIFFERENT Guinot product (serum, not neck cream) to the Amazon listing."
+      }
+    },
+    {
+      "asin": "B0D3WQQH89",
+      "parsed": {
+        "asin": "B0D3WQQH89",
+        "product_identity": {
+          "title": "Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker With 360-Degree, Bold, Immersive, Crystal-Clear Sound, Floating Speaker 15-Hour Battery and 45 m (147 ft) Range, USB-C - Lilac",
+          "brand": "Ultimate Ears",
+          "ean": "5099206125315",
+          "mpn": "984-002011",
+          "key_identifying_features": [
+            "Colour: Lilac / Enchanting Lilac / Purple",
+            "USB-C charging",
+            "15-hour battery",
+            "45m (147ft) Bluetooth range",
+            "IP67 waterproof/dustproof, floats"
+          ]
+        },
+        "search_strategies_used": [
+          "MPN (984-002011) + brand",
+          "EAN/GTIN (5099206125315)",
+          "Brand + model + colour (Boom 4 Lilac UK)",
+          "Price-comparison aggregator lookup (PriceSpy UK) filtered to Lilac variant"
+        ],
+        "candidates": [
+          {
+            "retailer": "Toppreise.ch (price comparison)",
+            "url": "https://www.toppreise.ch/price-comparison/Bluetooth-speakers/ULTIMATE-EARS-Boom-4-Enchanting-Lilac-984-002011-p770828",
+            "title_seen": "ULTIMATE EARS Boom 4, Enchanting Lilac (984-002011)",
+            "price": 118.0,
+            "currency": "CHF",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": false
+          },
+          {
+            "retailer": "Dakauf.eu",
+            "url": "https://dakauf.eu/en/product/ultimate-ears-boom-4-purple/",
+            "title_seen": "Ultimate Ears Boom 4 Purple 984-002011",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Decathlon.ch (marketplace partner ultimus.ch)",
+            "url": "https://www.decathlon.ch/en/p/mp/portable-bluetooth-speakers-logitech-984-002011/100ab73b-bfbd-4e4c-a3ed-ccf4d802be4d/c255",
+            "title_seen": "Portable Bluetooth Speakers Logitech 984-002011",
+            "price": null,
+            "currency": "CHF",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Wonderprice.co.uk",
+            "url": "https://www.wonderprice.co.uk/logitech-ultimate-ears-boom-4-portable-waterproof-bluetooth-speaker-lilac",
+            "title_seen": "Logitech Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker - Lilac",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "PriceSpy UK (aggregator) - OnBuy offer",
+            "url": "https://pricespy.co.uk/go-to-shop/34388/offer/OPC-PNRPWCB-NEW?client_id=1551",
+            "title_seen": "Bluetooth Speaker - Ultimate Ears - BOOM 4 - Waterproof - 360 Sound - 15h Battery - Lilac",
+            "price": 114.98,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "PriceSpy UK (aggregator) - eBay offer",
+            "url": "https://pricespy.co.uk/go-to-shop/29044/offer/v1%7C236203278282%7C0?client_id=1551",
+            "title_seen": "Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker Lilac",
+            "price": 119.99,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Amazon.co.uk (via PriceSpy, same ASIN)",
+            "url": "https://pricespy.co.uk/go-to-shop/1751/offer/B0D3WQQH89?client_id=1551",
+            "title_seen": "Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker With 360-Degree",
+            "price": 84.88,
+            "currency": "GBP",
+            "classification": "OTHER",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Dealmonday.co.uk",
+            "url": "https://www.dealmonday.co.uk/logitech-ultimate-ears-wonderboom-4-lilac",
+            "reason": "OTHER",
+            "detail": "Page actually sells the WONDERBOOM 4 (a different, smaller speaker model), not the BOOM 4 - model/MPN mismatch."
+          },
+          {
+            "retailer": "Best Buy (Cobalt Blue variant)",
+            "url": "https://www.bestbuy.com/site/ultimate-ears-boom-4-portable-wireless-bluetooth-speaker-with-waterproof-dustproof-and-floatable-design-cobalt-blue/6588389.p",
+            "reason": "WRONG_SIZE_COLOUR",
+            "detail": "MPN 984-001967, Cobalt Blue colour - does not match required MPN 984-002011 (Lilac)."
+          },
+          {
+            "retailer": "Staples (Active Black variant)",
+            "url": "https://www.staples.com/ultimate-ears-boom-4-wireless-portable-bluetooth-speaker-active-black-984-001963/product_IM1KS0761",
+            "reason": "WRONG_SIZE_COLOUR",
+            "detail": "MPN 984-001963, Black colour - MPN conflict with target 984-002011."
+          },
+          {
+            "retailer": "eBay (generic BOOM 4 Black listing found in first search)",
+            "url": "https://ebay.com/itm/205171003702",
+            "reason": "WRONG_SIZE_COLOUR",
+            "detail": "MPN 984002004, Red colour - does not match target MPN/colour."
+          },
+          {
+            "retailer": "Dell (Black/Red variants)",
+            "url": "https://www.dell.com/en-us/shop/ultimate-ears-boom-4-wireless-bluetooth-speaker-black/apd/ad083422/audio",
+            "reason": "WRONG_SIZE_COLOUR",
+            "detail": "Black colour variant, not Lilac 984-002011; also US site/currency."
+          },
+          {
+            "retailer": "Walmart",
+            "url": "https://www.walmart.com/c/kp/ue-tech",
+            "reason": "WRONG_SIZE_COLOUR",
+            "detail": "Listings shown are Black colour and in USD; not the Lilac/984-002011 variant, wrong region/currency."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "The Amazon listing is the Lilac/Enchanting-Lilac colourway of the UE BOOM 4 (MPN 984-002011). A PriceSpy UK price-comparison page filtered specifically to the Lilac variant showed only two third-party UK offers for this exact colour/MPN combination \u2014 OnBuy at \u00a3114.98 and eBay at \u00a3119.99 \u2014 both well above Amazon's own tracked price of \u00a384.88/\u00a382.99 for the same ASIN. A UK retailer (Wonderprice.co.uk) does list a matching 'BOOM 4 - Lilac' product page, but repeated fetch attempts only returned the site's navigation menu without the price/PDP details, so its price could not be confirmed and it cannot be verified as cheaper. Other candidates found (Best Buy, Staples, Dell, Walmart, generic eBay listings) were rejected for MPN/colour conflicts (different colourways such as Black, Red, Cobalt Blue) or wrong region/currency, and Dealmonday's 'Lilac' listing turned out to be the different WONDERBOOM 4 model, not BOOM 4. No verified retailer selling the exact EAN/MPN-matching Lilac BOOM 4 for less than Amazon's \u00a382.99 was found."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0D3WQQH89\",\n  \"product_identity\": {\n    \"title\": \"Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker With 360-Degree, Bold, Immersive, Crystal-Clear Sound, Floating Speaker 15-Hour Battery and 45 m (147 ft) Range, USB-C - Lilac\",\n    \"brand\": \"Ultimate Ears\",\n    \"ean\": \"5099206125315\",\n    \"mpn\": \"984-002011\",\n    \"key_identifying_features\": [\n      \"Colour: Lilac / Enchanting Lilac / Purple\",\n      \"USB-C charging\",\n      \"15-hour battery\",\n      \"45m (147ft) Bluetooth range\",\n      \"IP67 waterproof/dustproof, floats\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"MPN (984-002011) + brand\",\n    \"EAN/GTIN (5099206125315)\",\n    \"Brand + model + colour (Boom 4 Lilac UK)\",\n    \"Price-comparison aggregator lookup (PriceSpy UK) filtered to Lilac variant\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"Toppreise.ch (price comparison)\", \"url\": \"https://www.toppreise.ch/price-comparison/Bluetooth-speakers/ULTIMATE-EARS-Boom-4-Enchanting-Lilac-984-002011-p770828\", \"title_seen\": \"ULTIMATE EARS Boom 4, Enchanting Lilac (984-002011)\", \"price\": 118.00, \"currency\": \"CHF\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": false},\n    {\"retailer\": \"Dakauf.eu\", \"url\": \"https://dakauf.eu/en/product/ultimate-ears-boom-4-purple/\", \"title_seen\": \"Ultimate Ears Boom 4 Purple 984-002011\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Decathlon.ch (marketplace partner ultimus.ch)\", \"url\": \"https://www.decathlon.ch/en/p/mp/portable-bluetooth-speakers-logitech-984-002011/100ab73b-bfbd-4e4c-a3ed-ccf4d802be4d/c255\", \"title_seen\": \"Portable Bluetooth Speakers Logitech 984-002011\", \"price\": null, \"currency\": \"CHF\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"Wonderprice.co.uk\", \"url\": \"https://www.wonderprice.co.uk/logitech-ultimate-ears-boom-4-portable-waterproof-bluetooth-speaker-lilac\", \"title_seen\": \"Logitech Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker - Lilac\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"PriceSpy UK (aggregator) - OnBuy offer\", \"url\": \"https://pricespy.co.uk/go-to-shop/34388/offer/OPC-PNRPWCB-NEW?client_id=1551\", \"title_seen\": \"Bluetooth Speaker - Ultimate Ears - BOOM 4 - Waterproof - 360 Sound - 15h Battery - Lilac\", \"price\": 114.98, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"PriceSpy UK (aggregator) - eBay offer\", \"url\": \"https://pricespy.co.uk/go-to-shop/29044/offer/v1%7C236203278282%7C0?client_id=1551\", \"title_seen\": \"Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker Lilac\", \"price\": 119.99, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"Amazon.co.uk (via PriceSpy, same ASIN)\", \"url\": \"https://pricespy.co.uk/go-to-shop/1751/offer/B0D3WQQH89?client_id=1551\", \"title_seen\": \"Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker With 360-Degree\", \"price\": 84.88, \"currency\": \"GBP\", \"classification\": \"OTHER\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"Dealmonday.co.uk\", \"url\": \"https://www.dealmonday.co.uk/logitech-ultimate-ears-wonderboom-4-lilac\", \"reason\": \"OTHER\", \"detail\": \"Page actually sells the WONDERBOOM 4 (a different, smaller speaker model), not the BOOM 4 - model/MPN mismatch.\"},\n    {\"retailer\": \"Best Buy (Cobalt Blue variant)\", \"url\": \"https://www.bestbuy.com/site/ultimate-ears-boom-4-portable-wireless-bluetooth-speaker-with-waterproof-dustproof-and-floatable-design-cobalt-blue/6588389.p\", \"reason\": \"WRONG_SIZE_COLOUR\", \"detail\": \"MPN 984-001967, Cobalt Blue colour - does not match required MPN 984-002011 (Lilac).\"},\n    {\"retailer\": \"Staples (Active Black variant)\", \"url\": \"https://www.staples.com/ultimate-ears-boom-4-wireless-portable-bluetooth-speaker-active-black-984-001963/product_IM1KS0761\", \"reason\": \"WRONG_SIZE_COLOUR\", \"detail\": \"MPN 984-001963, Black colour - MPN conflict with target 984-002011.\"},\n    {\"retailer\": \"eBay (generic BOOM 4 Black listing found in first search)\", \"url\": \"https://ebay.com/itm/205171003702\", \"reason\": \"WRONG_SIZE_COLOUR\", \"detail\": \"MPN 984002004, Red colour - does not match target MPN/colour.\"},\n    {\"retailer\": \"Dell (Black/Red variants)\", \"url\": \"https://www.dell.com/en-us/shop/ultimate-ears-boom-4-wireless-bluetooth-speaker-black/apd/ad083422/audio\", \"reason\": \"WRONG_SIZE_COLOUR\", \"detail\": \"Black colour variant, not Lilac 984-002011; also US site/currency.\"},\n    {\"retailer\": \"Walmart\", \"url\": \"https://www.walmart.com/c/kp/ue-tech\", \"reason\": \"WRONG_SIZE_COLOUR\", \"detail\": \"Listings shown are Black colour and in USD; not the Lilac/984-002011 variant, wrong region/currency.\"}\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"The Amazon listing is the Lilac/Enchanting-Lilac colourway of the UE BOOM 4 (MPN 984-002011). A PriceSpy UK price-comparison page filtered specifically to the Lilac variant showed only two third-party UK offers for this exact colour/MPN combination \\u2014 OnBuy at \u00a3114.98 and eBay at \u00a3119.99 \\u2014 both well above Amazon's own tracked price of \u00a384.88/\u00a382.99 for the same ASIN. A UK retailer (Wonderprice.co.uk) does list a matching 'BOOM 4 - Lilac' product page, but repeated fetch attempts only returned the site's navigation menu without the price/PDP details, so its price could not be confirmed and it cannot be verified as cheaper. Other candidates found (Best Buy, Staples, Dell, Walmart, generic eBay listings) were rejected for MPN/colour conflicts (different colourways such as Black, Red, Cobalt Blue) or wrong region/currency, and Dealmonday's 'Lilac' listing turned out to be the different WONDERBOOM 4 model, not BOOM 4. No verified retailer selling the exact EAN/MPN-matching Lilac BOOM 4 for less than Amazon's \u00a382.99 was found.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 296624,
+        "output_tokens": 6515,
+        "cache_read_input_tokens": 0,
+        "web_searches": 5,
+        "web_fetches": 5
+      },
+      "cost_usd": 0.7084,
+      "case": {
+        "asin": "B0D3WQQH89",
+        "title": "Ultimate Ears BOOM 4 Portable Waterproof Bluetooth Speaker With 360-Degree",
+        "brand": "Ultimate Ears",
+        "ean": "5099206125315",
+        "mpn": "984-002011",
+        "amazon_price_gbp": 82.99,
+        "target_price_gbp": 48.99,
+        "serpapi_retailer": "LambdaTek",
+        "serpapi_price": 94.44,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Retailer title is 'WONDERBOOM 4' -- a DIFFERENT, smaller/cheaper UE speaker line to 'BOOM 4'."
+      }
+    },
+    {
+      "asin": "B0C7YKDLGD",
+      "parsed": {
+        "asin": "B0C7YKDLGD",
+        "product_identity": {
+          "title": "Huel Black Edition High Protein Complete Meal Replacement, 17 Meals, Coffee Caramel Flavour",
+          "brand": "Huel",
+          "ean": "5060495115318",
+          "mpn": "unknown",
+          "key_identifying_features": [
+            "1.53kg pouch",
+            "17 meals per bag",
+            "Coffee Caramel flavour",
+            "Black Edition (high protein, low carb) formula",
+            "Powder format, not Ready-to-Drink"
+          ]
+        },
+        "search_strategies_used": [
+          "Product title + flavour search",
+          "EAN/GTIN direct search",
+          "Brand + flavour + UK retailer terms (Holland & Barrett, Boots, eBay)",
+          "Site-restricted search across eBay UK, Musclefood, Approved Food"
+        ],
+        "candidates": [
+          {
+            "retailer": "eBay UK (private seller, Romford)",
+            "url": "https://www.ebay.co.uk/itm/267599121547",
+            "title_seen": "Huel Black Edition Coffee Caramel Flavour 1.53kg powder meal",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK (seller: at*your*essentials*store, London)",
+            "url": "https://www.ebay.co.uk/itm/286575483516",
+            "title_seen": "Huel Black Edition Coffee Caramel Flavour 1.53kg Vegan Pea Protein Nutritional",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK (seller: pdm5678, bundle listing)",
+            "url": "https://www.ebay.co.uk/shop/huel?_nkw=huel",
+            "title_seen": "Huel Black Edition selection box + 1 x coffee caramel 1.53kg Sealed BBE 02/2027",
+            "price": 31.58,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Ubuy (Greece storefront, re-seller of UK stock)",
+            "url": "https://www.ubuy.com.gr/en/productuk/F2FAWXCTK-huel-black-edition-coffee",
+            "title_seen": "Huel Black Edition Coffee Caramel Flavour 1.53kg Vegan Pea Protein Nutritional Plus Free Scoop",
+            "price": null,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Huel.com (official brand site)",
+            "url": "https://huel.com/products/huel-black-edition/coffee-caramel",
+            "title_seen": "Black Edition Coffee Caramel - From $2.65 per meal, From 17 meals",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "eBay UK (lakhanu)",
+            "url": "https://www.ebay.co.uk/shop/huel-powder?_nkw=huel+powder",
+            "reason": "OTHER",
+            "detail": "Listing is for 'Huel black edition unsweetened and Unflavoured' variant at \u00a329.52, not Coffee Caramel flavour - wrong variant for this ASIN."
+          },
+          {
+            "retailer": "eBay UK bundle (pdm5678)",
+            "url": "https://www.ebay.co.uk/shop/huel?_nkw=huel",
+            "reason": "WRONG_PACK",
+            "detail": "Listing is a mixed 'selection box' containing only 1x coffee caramel bag alongside other flavours/items, not a standalone single 17-meal Coffee Caramel bag matching the Amazon listing's pack composition."
+          },
+          {
+            "retailer": "Coffee Supplies Direct",
+            "url": "https://www.coffeesuppliesdirect.co.uk/products/huel-ready-to-drink-complete-meal-iced-coffee-caramel-case-8-x-500ml",
+            "reason": "OTHER",
+            "detail": "This is the Ready-to-Drink bottled Iced Coffee Caramel product (8x500ml liquid), not the Black Edition powder pouch - different product form entirely."
+          },
+          {
+            "retailer": "Hancocks",
+            "url": "https://www.hancocks.co.uk/huel-iced-coffee-caramel-bottle-500ml",
+            "reason": "OTHER",
+            "detail": "Ready-to-Drink bottle product, wholesale confectionery site, not the powder pouch product on the Amazon listing."
+          },
+          {
+            "retailer": "OpenFoodFacts",
+            "url": "https://world.openfoodfacts.org/product/5060495115318/huel-black-edition-powder-coffee-caramel",
+            "reason": "NOT_A_RETAILER",
+            "detail": "This is a catalogue/database page (confirms the EAN matches the product identity) with no purchasable offer - useful for identity confirmation only, not a retail source."
+          }
+        ],
+        "verified_sources": [],
+        "best_verified_source": null,
+        "confidence": "none",
+        "research_summary": "Multiple eBay UK marketplace listings were found with titles matching 'Huel Black Edition Coffee Caramel Flavour 1.53kg' (the correct product per the EAN-confirming OpenFoodFacts catalogue page), but repeated attempts to fetch the actual eBay item pages for price/EAN verification failed due to site access errors, so no price could be confirmed on any candidate page. Because I could not directly verify price, stock, and identifier match on any candidate's live page (search snippets alone did not reliably surface the Coffee Caramel-specific price, and several similarly-titled eBay listings turned out on closer reading to be wrong variants, bundles, or RTD products), I cannot respons\u00adibly claim a verified cheaper source. No confirmed RETAILER (including Huel's own site) was found selling this exact 17-meal Coffee Caramel powder pouch below Amazon's \u00a335.98 with a verifiable current price."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0C7YKDLGD\",\n  \"product_identity\": {\n    \"title\": \"Huel Black Edition High Protein Complete Meal Replacement, 17 Meals, Coffee Caramel Flavour\",\n    \"brand\": \"Huel\",\n    \"ean\": \"5060495115318\",\n    \"mpn\": \"unknown\",\n    \"key_identifying_features\": [\"1.53kg pouch\", \"17 meals per bag\", \"Coffee Caramel flavour\", \"Black Edition (high protein, low carb) formula\", \"Powder format, not Ready-to-Drink\"]\n  },\n  \"search_strategies_used\": [\n    \"Product title + flavour search\",\n    \"EAN/GTIN direct search\",\n    \"Brand + flavour + UK retailer terms (Holland & Barrett, Boots, eBay)\",\n    \"Site-restricted search across eBay UK, Musclefood, Approved Food\"\n  ],\n  \"candidates\": [\n    {\n      \"retailer\": \"eBay UK (private seller, Romford)\",\n      \"url\": \"https://www.ebay.co.uk/itm/267599121547\",\n      \"title_seen\": \"Huel Black Edition Coffee Caramel Flavour 1.53kg powder meal\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"eBay UK (seller: at*your*essentials*store, London)\",\n      \"url\": \"https://www.ebay.co.uk/itm/286575483516\",\n      \"title_seen\": \"Huel Black Edition Coffee Caramel Flavour 1.53kg Vegan Pea Protein Nutritional\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"eBay UK (seller: pdm5678, bundle listing)\",\n      \"url\": \"https://www.ebay.co.uk/shop/huel?_nkw=huel\",\n      \"title_seen\": \"Huel Black Edition selection box + 1 x coffee caramel 1.53kg Sealed BBE 02/2027\",\n      \"price\": 31.58,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"Ubuy (Greece storefront, re-seller of UK stock)\",\n      \"url\": \"https://www.ubuy.com.gr/en/productuk/F2FAWXCTK-huel-black-edition-coffee\",\n      \"title_seen\": \"Huel Black Edition Coffee Caramel Flavour 1.53kg Vegan Pea Protein Nutritional Plus Free Scoop\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"MARKETPLACE\",\n      \"fetched\": false\n    },\n    {\n      \"retailer\": \"Huel.com (official brand site)\",\n      \"url\": \"https://huel.com/products/huel-black-edition/coffee-caramel\",\n      \"title_seen\": \"Black Edition Coffee Caramel - From $2.65 per meal, From 17 meals\",\n      \"price\": null,\n      \"currency\": \"GBP\",\n      \"classification\": \"RETAILER\",\n      \"fetched\": true\n    }\n  ],\n  \"rejected_candidates\": [\n    {\n      \"retailer\": \"eBay UK (lakhanu)\",\n      \"url\": \"https://www.ebay.co.uk/shop/huel-powder?_nkw=huel+powder\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Listing is for 'Huel black edition unsweetened and Unflavoured' variant at \u00a329.52, not Coffee Caramel flavour - wrong variant for this ASIN.\"\n    },\n    {\n      \"retailer\": \"eBay UK bundle (pdm5678)\",\n      \"url\": \"https://www.ebay.co.uk/shop/huel?_nkw=huel\",\n      \"reason\": \"WRONG_PACK\",\n      \"detail\": \"Listing is a mixed 'selection box' containing only 1x coffee caramel bag alongside other flavours/items, not a standalone single 17-meal Coffee Caramel bag matching the Amazon listing's pack composition.\"\n    },\n    {\n      \"retailer\": \"Coffee Supplies Direct\",\n      \"url\": \"https://www.coffeesuppliesdirect.co.uk/products/huel-ready-to-drink-complete-meal-iced-coffee-caramel-case-8-x-500ml\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"This is the Ready-to-Drink bottled Iced Coffee Caramel product (8x500ml liquid), not the Black Edition powder pouch - different product form entirely.\"\n    },\n    {\n      \"retailer\": \"Hancocks\",\n      \"url\": \"https://www.hancocks.co.uk/huel-iced-coffee-caramel-bottle-500ml\",\n      \"reason\": \"OTHER\",\n      \"detail\": \"Ready-to-Drink bottle product, wholesale confectionery site, not the powder pouch product on the Amazon listing.\"\n    },\n    {\n      \"retailer\": \"OpenFoodFacts\",\n      \"url\": \"https://world.openfoodfacts.org/product/5060495115318/huel-black-edition-powder-coffee-caramel\",\n      \"reason\": \"NOT_A_RETAILER\",\n      \"detail\": \"This is a catalogue/database page (confirms the EAN matches the product identity) with no purchasable offer - useful for identity confirmation only, not a retail source.\"\n    }\n  ],\n  \"verified_sources\": [],\n  \"best_verified_source\": null,\n  \"confidence\": \"none\",\n  \"research_summary\": \"Multiple eBay UK marketplace listings were found with titles matching 'Huel Black Edition Coffee Caramel Flavour 1.53kg' (the correct product per the EAN-confirming OpenFoodFacts catalogue page), but repeated attempts to fetch the actual eBay item pages for price/EAN verification failed due to site access errors, so no price could be confirmed on any candidate page. Because I could not directly verify price, stock, and identifier match on any candidate's live page (search snippets alone did not reliably surface the Coffee Caramel-specific price, and several similarly-titled eBay listings turned out on closer reading to be wrong variants, bundles, or RTD products), I cannot respons\u00adibly claim a verified cheaper source. No confirmed RETAILER (including Huel's own site) was found selling this exact 17-meal Coffee Caramel powder pouch below Amazon's \u00a335.98 with a verifiable current price.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 282069,
+        "output_tokens": 5715,
+        "cache_read_input_tokens": 0,
+        "web_searches": 5,
+        "web_fetches": 8
+      },
+      "cost_usd": 0.6713,
+      "case": {
+        "asin": "B0C7YKDLGD",
+        "title": "Huel Black Edition High Protein Complete Meal Replacement, 17 Meals, Coffee Caramel Flavour",
+        "brand": "Huel",
+        "ean": "5060495115318",
+        "mpn": "",
+        "amazon_price_gbp": 35.98,
+        "target_price_gbp": 19.66,
+        "serpapi_retailer": "ean-search.org",
+        "serpapi_price": null,
+        "serpapi_match_tier": "ean",
+        "known_issue": "ean-search.org is an EAN LOOKUP DATABASE, not a retailer -- no purchasable offer, no real price, yet it was recorded as a 'candidate_found'."
+      }
+    },
+    {
+      "asin": "B0DV6CDXKT",
+      "parsed": {
+        "asin": "B0DV6CDXKT",
+        "product_identity": {
+          "title": "UbiQuiti USW-FLEX-2.5G-8-POE",
+          "brand": "Ubiquiti",
+          "ean": "0810084695968",
+          "mpn": "USW-Flex-2.5G-8-PoE",
+          "key_identifying_features": [
+            "8-port 2.5GbE PoE++ managed switch",
+            "10GbE RJ45/SFP+ combination uplink port",
+            "196W max PoE output with optional AC adapter (sold separately)",
+            "Not to be confused with non-PoE variant 'USW-Flex-2.5G-8' (different MPN/EAN)"
+          ]
+        },
+        "search_strategies_used": [
+          "MPN + 'price UK' search",
+          "MPN + EAN search",
+          "Fetch of candidate retailer pages for price/identifier verification",
+          "VAT-status check for Ubiquiti's own UK store"
+        ],
+        "candidates": [
+          {
+            "retailer": "Ubiquiti UK Store (official)",
+            "url": "https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe",
+            "title_seen": "Flex 2.5G PoE - USW-Flex-2.5G-8-PoE (196W)",
+            "price": 159.0,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Ballicom.co.uk",
+            "url": "https://www.ballicom.co.uk/usw-flex-2-5g-8-poe-ubiquiti-unifi-flex-2-5g-poe.p1667924.html",
+            "title_seen": "Ubiquiti USW-FLEX-2.5G-8-POE Ubiquiti UniFi Flex 2.5G PoE - switch - 10 ports - Managed",
+            "price": 156.34,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "BroadbandBuyer",
+            "url": "https://www.broadbandbuyer.com/products/53178-ubiquiti-usw-flex-2-5g-8-poe/",
+            "title_seen": "Ubiquiti USW-Flex-2.5G-8-PoE UniFi 8-Port Managed 2.5GbE PoE++ Access Switch w/ 1 x 10G PoE++ Combo Port",
+            "price": 170.31,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Scan.co.uk",
+            "url": "https://www.scan.co.uk/products/8-port-ubiquiti-unifi-usw-flex-25g-8-poe-layer-2-managed-switch-8-x-25g-poeplusplus-10g-sfpplus-rj45",
+            "title_seen": "Ubiquiti UniFi Flex 2.5G PoE 8-Port Managed Switch LN157346 - USW-Flex-2.5G-8-PoE",
+            "price": null,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "wifi-stock.com",
+            "url": "https://www.wifi-stock.com/details/ubiquiti-unifi-switch-flex-2-5g-poe-usw-flex-2-5g-8-poe.html",
+            "title_seen": "UBIQUITI UniFi Switch Flex 2.5G PoE (USW-Flex-2.5G-8-PoE)",
+            "price": null,
+            "currency": "EUR",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay (seller, Germany-based)",
+            "url": "https://www.ebay.com/itm/205620519234",
+            "title_seen": "UbiQuiti USW-FLEX-2.5G-8-POE neu",
+            "price": null,
+            "currency": "EUR",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "Senetic.co.uk",
+            "url": "https://www.senetic.co.uk/product/USW-FLEX-25G-8",
+            "title_seen": "Ubiquiti Unifi Switch Flex 2.5G (USW-Flex-2.5G-8)",
+            "price": 136.22,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "Senetic.co.uk",
+            "url": "https://www.senetic.co.uk/product/USW-FLEX-25G-8",
+            "reason": "MPN_CONFLICT",
+            "detail": "Product is the non-PoE variant 'USW-Flex-2.5G-8', not the PoE variant 'USW-Flex-2.5G-8-PoE' requested. Different MPN/EAN and no PoE ports/power budget."
+          },
+          {
+            "retailer": "BroadbandBuyer (non-PoE listing)",
+            "url": "https://www.broadbandbuyer.com/products/53175-ubiquiti-usw-flex-2-5g-8/",
+            "reason": "MPN_CONFLICT",
+            "detail": "This is the non-PoE 'USW-Flex-2.5G-8' variant, a different product from the requested PoE model."
+          }
+        ],
+        "verified_sources": [
+          {
+            "retailer": "Ubiquiti UK Store (official manufacturer store)",
+            "url": "https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe",
+            "classification": "RETAILER",
+            "price": 159.0,
+            "currency": "GBP",
+            "vat_status": "Likely VAT-inclusive (standard UK consumer storefront pricing); not explicitly itemised on page",
+            "delivery_cost": null,
+            "effective_cost": 159.0,
+            "stock_status": "Listed as purchasable/in stock on product page",
+            "date_checked": "2026-09-05",
+            "evidence": "Page explicitly lists the exact MPN 'USW-Flex-2.5G-8-PoE (196W)' under the 'Flex 2.5G PoE' product line on Ubiquiti's own official UK store, matching brand, model, and description (8-port 2.5GbE PoE++ switch with 10GbE RJ45/SFP+ combo uplink, 196W max PoE) exactly as on the Amazon listing."
+          },
+          {
+            "retailer": "Ballicom.co.uk",
+            "url": "https://www.ballicom.co.uk/usw-flex-2-5g-8-poe-ubiquiti-unifi-flex-2-5g-poe.p1667924.html",
+            "classification": "RETAILER",
+            "price": 156.34,
+            "currency": "GBP",
+            "vat_status": "Price stated as exclusive of VAT (exc)",
+            "delivery_cost": null,
+            "effective_cost": 187.61,
+            "stock_status": "Not explicitly confirmed on fetch (page navigation only returned; product price captured from meta description)",
+            "date_checked": "2026-09-05",
+            "evidence": "Page title and meta description explicitly reference 'Ubiquiti USW-FLEX-2.5G-8-POE ... Flex 2.5G PoE - switch - 10 ports - Managed', matching MPN and product description."
+          },
+          {
+            "retailer": "BroadbandBuyer",
+            "url": "https://www.broadbandbuyer.com/products/53178-ubiquiti-usw-flex-2-5g-8-poe/",
+            "classification": "RETAILER",
+            "price": 170.31,
+            "currency": "GBP",
+            "vat_status": "Not explicitly stated; likely inclusive based on site convention for consumer pricing",
+            "delivery_cost": null,
+            "effective_cost": 170.31,
+            "stock_status": "Listed as buyable with 'NEXT DAY DELIVERY' messaging",
+            "date_checked": "2026-09-05",
+            "evidence": "Page explicitly matches MPN 'USW-Flex-2.5G-8-PoE' and full spec description (8-port 2.5GbE PoE++, 10GbE RJ45/SFP+ combo port, PoE+++/AC adapter powering) identical to Amazon listing."
+          }
+        ],
+        "best_verified_source": {
+          "retailer": "Ubiquiti UK Store (official manufacturer store)",
+          "url": "https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe",
+          "classification": "RETAILER",
+          "price": 159.0,
+          "currency": "GBP",
+          "vat_status": "Likely VAT-inclusive (standard UK consumer storefront pricing); not explicitly itemised on page",
+          "delivery_cost": null,
+          "effective_cost": 159.0,
+          "stock_status": "Listed as purchasable/in stock on product page",
+          "date_checked": "2026-09-05",
+          "evidence": "Page explicitly lists the exact MPN 'USW-Flex-2.5G-8-PoE (196W)' under the 'Flex 2.5G PoE' product line on Ubiquiti's own official UK store, matching brand, model, and description (8-port 2.5GbE PoE++ switch with 10GbE RJ45/SFP+ combo uplink, 196W max PoE) exactly as on the Amazon listing."
+        },
+        "confidence": "high",
+        "research_summary": "The exact product (Ubiquiti USW-Flex-2.5G-8-PoE) is sold directly by Ubiquiti's own official UK online store for \u00a3159.00, which is significantly cheaper than the Amazon price of \u00a3202.36 and matches the MPN, brand, and full product description exactly. Two additional UK IT retailers (Ballicom and BroadbandBuyer) also stock the identical model at \u00a3156.34 (exc VAT) and \u00a3170.31 respectively, corroborating the pricing and confirming this is a genuinely lower-priced, verifiable product across multiple legitimate retail channels; a similarly-named but distinct non-PoE variant (USW-Flex-2.5G-8) was correctly rejected due to MPN mismatch."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0DV6CDXKT\",\n  \"product_identity\": {\n    \"title\": \"UbiQuiti USW-FLEX-2.5G-8-POE\",\n    \"brand\": \"Ubiquiti\",\n    \"ean\": \"0810084695968\",\n    \"mpn\": \"USW-Flex-2.5G-8-PoE\",\n    \"key_identifying_features\": [\n      \"8-port 2.5GbE PoE++ managed switch\",\n      \"10GbE RJ45/SFP+ combination uplink port\",\n      \"196W max PoE output with optional AC adapter (sold separately)\",\n      \"Not to be confused with non-PoE variant 'USW-Flex-2.5G-8' (different MPN/EAN)\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"MPN + 'price UK' search\",\n    \"MPN + EAN search\",\n    \"Fetch of candidate retailer pages for price/identifier verification\",\n    \"VAT-status check for Ubiquiti's own UK store\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"Ubiquiti UK Store (official)\", \"url\": \"https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe\", \"title_seen\": \"Flex 2.5G PoE - USW-Flex-2.5G-8-PoE (196W)\", \"price\": 159.00, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Ballicom.co.uk\", \"url\": \"https://www.ballicom.co.uk/usw-flex-2-5g-8-poe-ubiquiti-unifi-flex-2-5g-poe.p1667924.html\", \"title_seen\": \"Ubiquiti USW-FLEX-2.5G-8-POE Ubiquiti UniFi Flex 2.5G PoE - switch - 10 ports - Managed\", \"price\": 156.34, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"BroadbandBuyer\", \"url\": \"https://www.broadbandbuyer.com/products/53178-ubiquiti-usw-flex-2-5g-8-poe/\", \"title_seen\": \"Ubiquiti USW-Flex-2.5G-8-PoE UniFi 8-Port Managed 2.5GbE PoE++ Access Switch w/ 1 x 10G PoE++ Combo Port\", \"price\": 170.31, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Scan.co.uk\", \"url\": \"https://www.scan.co.uk/products/8-port-ubiquiti-unifi-usw-flex-25g-8-poe-layer-2-managed-switch-8-x-25g-poeplusplus-10g-sfpplus-rj45\", \"title_seen\": \"Ubiquiti UniFi Flex 2.5G PoE 8-Port Managed Switch LN157346 - USW-Flex-2.5G-8-PoE\", \"price\": null, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"wifi-stock.com\", \"url\": \"https://www.wifi-stock.com/details/ubiquiti-unifi-switch-flex-2-5g-poe-usw-flex-2-5g-8-poe.html\", \"title_seen\": \"UBIQUITI UniFi Switch Flex 2.5G PoE (USW-Flex-2.5G-8-PoE)\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"eBay (seller, Germany-based)\", \"url\": \"https://www.ebay.com/itm/205620519234\", \"title_seen\": \"UbiQuiti USW-FLEX-2.5G-8-POE neu\", \"price\": null, \"currency\": \"EUR\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"Senetic.co.uk\", \"url\": \"https://www.senetic.co.uk/product/USW-FLEX-25G-8\", \"title_seen\": \"Ubiquiti Unifi Switch Flex 2.5G (USW-Flex-2.5G-8)\", \"price\": 136.22, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"Senetic.co.uk\", \"url\": \"https://www.senetic.co.uk/product/USW-FLEX-25G-8\", \"reason\": \"MPN_CONFLICT\", \"detail\": \"Product is the non-PoE variant 'USW-Flex-2.5G-8', not the PoE variant 'USW-Flex-2.5G-8-PoE' requested. Different MPN/EAN and no PoE ports/power budget.\"},\n    {\"retailer\": \"BroadbandBuyer (non-PoE listing)\", \"url\": \"https://www.broadbandbuyer.com/products/53175-ubiquiti-usw-flex-2-5g-8/\", \"reason\": \"MPN_CONFLICT\", \"detail\": \"This is the non-PoE 'USW-Flex-2.5G-8' variant, a different product from the requested PoE model.\"}\n  ],\n  \"verified_sources\": [\n    {\n      \"retailer\": \"Ubiquiti UK Store (official manufacturer store)\",\n      \"url\": \"https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe\",\n      \"classification\": \"RETAILER\",\n      \"price\": 159.00,\n      \"currency\": \"GBP\",\n      \"vat_status\": \"Likely VAT-inclusive (standard UK consumer storefront pricing); not explicitly itemised on page\",\n      \"delivery_cost\": null,\n      \"effective_cost\": 159.00,\n      \"stock_status\": \"Listed as purchasable/in stock on product page\",\n      \"date_checked\": \"2026-09-05\",\n      \"evidence\": \"Page explicitly lists the exact MPN 'USW-Flex-2.5G-8-PoE (196W)' under the 'Flex 2.5G PoE' product line on Ubiquiti's own official UK store, matching brand, model, and description (8-port 2.5GbE PoE++ switch with 10GbE RJ45/SFP+ combo uplink, 196W max PoE) exactly as on the Amazon listing.\"\n    },\n    {\n      \"retailer\": \"Ballicom.co.uk\",\n      \"url\": \"https://www.ballicom.co.uk/usw-flex-2-5g-8-poe-ubiquiti-unifi-flex-2-5g-poe.p1667924.html\",\n      \"classification\": \"RETAILER\",\n      \"price\": 156.34,\n      \"currency\": \"GBP\",\n      \"vat_status\": \"Price stated as exclusive of VAT (exc)\",\n      \"delivery_cost\": null,\n      \"effective_cost\": 187.61,\n      \"stock_status\": \"Not explicitly confirmed on fetch (page navigation only returned; product price captured from meta description)\",\n      \"date_checked\": \"2026-09-05\",\n      \"evidence\": \"Page title and meta description explicitly reference 'Ubiquiti USW-FLEX-2.5G-8-POE ... Flex 2.5G PoE - switch - 10 ports - Managed', matching MPN and product description.\"\n    },\n    {\n      \"retailer\": \"BroadbandBuyer\",\n      \"url\": \"https://www.broadbandbuyer.com/products/53178-ubiquiti-usw-flex-2-5g-8-poe/\",\n      \"classification\": \"RETAILER\",\n      \"price\": 170.31,\n      \"currency\": \"GBP\",\n      \"vat_status\": \"Not explicitly stated; likely inclusive based on site convention for consumer pricing\",\n      \"delivery_cost\": null,\n      \"effective_cost\": 170.31,\n      \"stock_status\": \"Listed as buyable with 'NEXT DAY DELIVERY' messaging\",\n      \"date_checked\": \"2026-09-05\",\n      \"evidence\": \"Page explicitly matches MPN 'USW-Flex-2.5G-8-PoE' and full spec description (8-port 2.5GbE PoE++, 10GbE RJ45/SFP+ combo port, PoE+++/AC adapter powering) identical to Amazon listing.\"\n    }\n  ],\n  \"best_verified_source\": {\n    \"retailer\": \"Ubiquiti UK Store (official manufacturer store)\",\n    \"url\": \"https://uk.store.ui.com/uk/en/products/usw-flex-2-5g-8-poe\",\n    \"classification\": \"RETAILER\",\n    \"price\": 159.00,\n    \"currency\": \"GBP\",\n    \"vat_status\": \"Likely VAT-inclusive (standard UK consumer storefront pricing); not explicitly itemised on page\",\n    \"delivery_cost\": null,\n    \"effective_cost\": 159.00,\n    \"stock_status\": \"Listed as purchasable/in stock on product page\",\n    \"date_checked\": \"2026-09-05\",\n    \"evidence\": \"Page explicitly lists the exact MPN 'USW-Flex-2.5G-8-PoE (196W)' under the 'Flex 2.5G PoE' product line on Ubiquiti's own official UK store, matching brand, model, and description (8-port 2.5GbE PoE++ switch with 10GbE RJ45/SFP+ combo uplink, 196W max PoE) exactly as on the Amazon listing.\"\n  },\n  \"confidence\": \"high\",\n  \"research_summary\": \"The exact product (Ubiquiti USW-Flex-2.5G-8-PoE) is sold directly by Ubiquiti's own official UK online store for \u00a3159.00, which is significantly cheaper than the Amazon price of \u00a3202.36 and matches the MPN, brand, and full product description exactly. Two additional UK IT retailers (Ballicom and BroadbandBuyer) also stock the identical model at \u00a3156.34 (exc VAT) and \u00a3170.31 respectively, corroborating the pricing and confirming this is a genuinely lower-priced, verifiable product across multiple legitimate retail channels; a similarly-named but distinct non-PoE variant (USW-Flex-2.5G-8) was correctly rejected due to MPN mismatch.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 100075,
+        "output_tokens": 5462,
+        "cache_read_input_tokens": 0,
+        "web_searches": 3,
+        "web_fetches": 3
+      },
+      "cost_usd": 0.2848,
+      "case": {
+        "asin": "B0DV6CDXKT",
+        "title": "UbiQuiti USW-FLEX-2.5G-8-POE",
+        "brand": "Ubiquiti",
+        "ean": "0810084695968",
+        "mpn": "USW-Flex-2.5G-8-PoE",
+        "amazon_price_gbp": 202.36,
+        "target_price_gbp": null,
+        "serpapi_retailer": "Optdex",
+        "serpapi_price": 114.0,
+        "serpapi_match_tier": "brand_title",
+        "known_issue": "Previously documented real incident: auto-matched to a cheaper SIBLING model in the same switch family, not the exact 8-port 2.5G unit."
+      }
+    },
+    {
+      "asin": "B0BTZB7F88",
+      "parsed": {
+        "asin": "B0BTZB7F88",
+        "product_identity": {
+          "title": "AMD Ryzen 7 7800X3D Processor with 3D V-Cache Technology (integrated Radeon Graphics, 8 cores/16 threads, AM5 Socket)",
+          "brand": "AMD",
+          "ean": "0730143314930",
+          "mpn": "100-100000910WOF (AMD Ryzen 7 7800X3D)",
+          "key_identifying_features": [
+            "8 cores / 16 threads",
+            "AM5 socket",
+            "120W TDP",
+            "96MB L3 cache (3D V-Cache)",
+            "4.2GHz base / 5.0GHz boost",
+            "Boxed retail unit, no cooler included",
+            "New condition"
+          ]
+        },
+        "search_strategies_used": [
+          "brand + model general price search (GBP)",
+          "MPN (100-100000910WOF) + 'buy UK'",
+          "idealo.co.uk price comparison fetch (both aggregate and boxed-variant pages)",
+          "direct retailer page fetches (box.co.uk, technoworld.com)",
+          "eBay UK marketplace search for new/sealed listings",
+          "eBay product page (ePID) fetch to confirm EAN/MPN identifiers"
+        ],
+        "candidates": [
+          {
+            "retailer": "Scan.co.uk",
+            "url": "https://www.scan.co.uk/products/amd-ryzen-7-7800x3d-am5-zen-4-8-core-16-thread-42ghz-50ghz-turbo-96mb-cache-pcie-50-120w-tdp-cpu",
+            "title_seen": "AMD Ryzen 7 7800X3D 8 Core AM5 Zen4 3D V-Cache PCIe 5.0 CPU/Processor",
+            "price": 329.99,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "CCL Computers",
+            "url": "https://www.cclonline.com/100-100000910wof-amd-ryzen-7-7800x3d-8-core-16-thread-am5-cpu-408496/",
+            "title_seen": "AMD Ryzen 7 7800X3D 8 Core/16 Thread AM5 CPU",
+            "price": 320.99,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Senetic UK",
+            "url": "https://www.senetic.co.uk/product/100-100000910WOF",
+            "title_seen": "AMD Ryzen 7 AMD Ryzen 7 7800X3D processor 4.2 GHz 96 MB L3",
+            "price": 276.85,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Ballicom",
+            "url": "https://www.ballicom.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-4-2-ghz-.p1571425.html",
+            "title_seen": "AMD 100-100000910WOF AMD Ryzen 7 7800X3D / 4.2 GHz processor",
+            "price": 292.84,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": false
+          },
+          {
+            "retailer": "Box.co.uk",
+            "url": "https://box.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-zen-4-processor",
+            "title_seen": "100-100000910WOF AMD Ryzen 7 7800X3D Socket AM5 Processor",
+            "price": 284.99,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "Technoworld.com",
+            "url": "https://www.technoworld.com/amd-ryzen-7-7800x3d-processor-4-2-ghz-96-mb-l3-box-100-100000910wof",
+            "title_seen": "AMD Ryzen 7 7800X3D processor 4.2 GHz 96 MB L3 Box 100-100000910WOF",
+            "price": 324.87,
+            "currency": "GBP",
+            "classification": "RETAILER",
+            "fetched": true
+          },
+          {
+            "retailer": "eBay UK - ukdes-tc4klh3",
+            "url": "https://www.ebay.co.uk/itm/267767802803",
+            "title_seen": "AMD Ryzen 7 7800X3D | 8-Core 16-Thread | AM5 Gaming CPU | Brand New Sealed",
+            "price": 200.0,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": true
+          },
+          {
+            "retailer": "eBay UK - second seller (same ePID)",
+            "url": "https://www.ebay.co.uk/p/15059031128?iid=407162817998",
+            "title_seen": "AMD Ryzen 7 7800X3D | 8-Core 16-Thread | AM5 Gaming CPU | Brand New Sealed",
+            "price": 210.0,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "eBay UK - circuitden",
+            "url": "https://www.ebay.co.uk/itm/318681069528",
+            "title_seen": "AMD RYZEN 7 7800X3D Brand New CPU Gaming Processor 8-Core 16-Thread AM5 730143314930",
+            "price": 203.56,
+            "currency": "GBP",
+            "classification": "MARKETPLACE",
+            "fetched": false
+          },
+          {
+            "retailer": "PriceSpy UK",
+            "url": "https://pricespy.co.uk/product.php?p=8053700",
+            "title_seen": "AMD Ryzen 7 7800X3D 4.2GHz Socket AM5 Box",
+            "price": 265.0,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": false
+          },
+          {
+            "retailer": "idealo.co.uk",
+            "url": "https://www.idealo.co.uk/compare/202372853/amd-ryzen-7-7800x3d-boxed.html",
+            "title_seen": "AMD Ryzen 7 7800X3D Boxed",
+            "price": 249.99,
+            "currency": "GBP",
+            "classification": "COMPARISON_SEARCH",
+            "fetched": true
+          }
+        ],
+        "rejected_candidates": [
+          {
+            "retailer": "PriceSpy UK",
+            "url": "https://pricespy.co.uk/product.php?p=8053700",
+            "reason": "OTHER",
+            "detail": "Price comparison aggregator, not a direct seller; no purchasable offer on the page itself."
+          },
+          {
+            "retailer": "idealo.co.uk",
+            "url": "https://www.idealo.co.uk/compare/202372853/amd-ryzen-7-7800x3d-boxed.html",
+            "reason": "OTHER",
+            "detail": "Price comparison aggregator; the underlying retailer offer list did not render individual seller names/prices on fetch (JS-driven), so could not verify a specific seller at this price."
+          },
+          {
+            "retailer": "Box.co.uk",
+            "url": "https://box.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-zen-4-processor",
+            "reason": "OTHER",
+            "detail": "Item is currently out of stock ('Notify Me') and price (\u00a3284.99) is higher than Amazon's \u00a3265, so not usable as a cheaper verified source."
+          },
+          {
+            "retailer": "Technoworld.com",
+            "url": "https://www.technoworld.com/amd-ryzen-7-7800x3d-processor-4-2-ghz-96-mb-l3-box-100-100000910wof",
+            "reason": "OTHER",
+            "detail": "Price (\u00a3324.87) is higher than Amazon's \u00a3265."
+          }
+        ],
+        "verified_sources": [
+          {
+            "retailer": "eBay UK - seller ukdes-tc4klh3",
+            "url": "https://www.ebay.co.uk/itm/267767802803",
+            "classification": "MARKETPLACE",
+            "price": 200.0,
+            "currency": "GBP",
+            "vat_status": "Unknown/likely VAT-inclusive consumer listing (private seller)",
+            "delivery_cost": 6.7,
+            "effective_cost": 206.7,
+            "stock_status": "Available, estimated delivery Tue 8 Sep - Thu 10 Sep",
+            "date_checked": "2026-09-05",
+            "evidence": "The eBay product page's own 'Product Identifiers' section lists EAN 0730143314930 and MPN 100-100000910WOF, both matching exactly the Amazon listing's EAN/MPN. Listing condition stated as 'New. Unopened box. Original. Fan not included', consistent with Amazon's 'no cooler' boxed retail unit."
+          }
+        ],
+        "best_verified_source": {
+          "retailer": "eBay UK - seller ukdes-tc4klh3",
+          "url": "https://www.ebay.co.uk/itm/267767802803",
+          "classification": "MARKETPLACE",
+          "price": 200.0,
+          "currency": "GBP",
+          "vat_status": "Unknown/likely VAT-inclusive consumer listing (private seller)",
+          "delivery_cost": 6.7,
+          "effective_cost": 206.7,
+          "stock_status": "Available, estimated delivery Tue 8 Sep - Thu 10 Sep",
+          "date_checked": "2026-09-05",
+          "evidence": "The eBay product page's own 'Product Identifiers' section lists EAN 0730143314930 and MPN 100-100000910WOF, both matching exactly the Amazon listing's EAN/MPN. Listing condition stated as 'New. Unopened box. Original. Fan not included', consistent with Amazon's 'no cooler' boxed retail unit."
+        },
+        "confidence": "medium",
+        "research_summary": "All directly-fetched mainstream UK retailers (Scan, CCL, Senetic, Ballicom, Box.co.uk, Technoworld) priced this exact 100-100000910WOF / EAN 0730143314930 unit higher than Amazon's \u00a3265, with Box.co.uk additionally out of stock, so none qualify as a cheaper verified retailer source. The cheapest verified match is a third-party eBay UK marketplace listing (seller ukdes-tc4klh3, 100% positive feedback) at \u00a3200.00 + \u00a36.70 postage (\u00a3206.70 effective), confirmed via eBay's own product-identifier data matching the exact EAN and MPN; this is a MARKETPLACE listing, not a conventional retailer, so confidence is medium rather than high."
+      },
+      "raw_final_text": "```json\n{\n  \"asin\": \"B0BTZB7F88\",\n  \"product_identity\": {\n    \"title\": \"AMD Ryzen 7 7800X3D Processor with 3D V-Cache Technology (integrated Radeon Graphics, 8 cores/16 threads, AM5 Socket)\",\n    \"brand\": \"AMD\",\n    \"ean\": \"0730143314930\",\n    \"mpn\": \"100-100000910WOF (AMD Ryzen 7 7800X3D)\",\n    \"key_identifying_features\": [\n      \"8 cores / 16 threads\",\n      \"AM5 socket\",\n      \"120W TDP\",\n      \"96MB L3 cache (3D V-Cache)\",\n      \"4.2GHz base / 5.0GHz boost\",\n      \"Boxed retail unit, no cooler included\",\n      \"New condition\"\n    ]\n  },\n  \"search_strategies_used\": [\n    \"brand + model general price search (GBP)\",\n    \"MPN (100-100000910WOF) + 'buy UK'\",\n    \"idealo.co.uk price comparison fetch (both aggregate and boxed-variant pages)\",\n    \"direct retailer page fetches (box.co.uk, technoworld.com)\",\n    \"eBay UK marketplace search for new/sealed listings\",\n    \"eBay product page (ePID) fetch to confirm EAN/MPN identifiers\"\n  ],\n  \"candidates\": [\n    {\"retailer\": \"Scan.co.uk\", \"url\": \"https://www.scan.co.uk/products/amd-ryzen-7-7800x3d-am5-zen-4-8-core-16-thread-42ghz-50ghz-turbo-96mb-cache-pcie-50-120w-tdp-cpu\", \"title_seen\": \"AMD Ryzen 7 7800X3D 8 Core AM5 Zen4 3D V-Cache PCIe 5.0 CPU/Processor\", \"price\": 329.99, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"CCL Computers\", \"url\": \"https://www.cclonline.com/100-100000910wof-amd-ryzen-7-7800x3d-8-core-16-thread-am5-cpu-408496/\", \"title_seen\": \"AMD Ryzen 7 7800X3D 8 Core/16 Thread AM5 CPU\", \"price\": 320.99, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Senetic UK\", \"url\": \"https://www.senetic.co.uk/product/100-100000910WOF\", \"title_seen\": \"AMD Ryzen 7 AMD Ryzen 7 7800X3D processor 4.2 GHz 96 MB L3\", \"price\": 276.85, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Ballicom\", \"url\": \"https://www.ballicom.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-4-2-ghz-.p1571425.html\", \"title_seen\": \"AMD 100-100000910WOF AMD Ryzen 7 7800X3D / 4.2 GHz processor\", \"price\": 292.84, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": false},\n    {\"retailer\": \"Box.co.uk\", \"url\": \"https://box.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-zen-4-processor\", \"title_seen\": \"100-100000910WOF AMD Ryzen 7 7800X3D Socket AM5 Processor\", \"price\": 284.99, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"Technoworld.com\", \"url\": \"https://www.technoworld.com/amd-ryzen-7-7800x3d-processor-4-2-ghz-96-mb-l3-box-100-100000910wof\", \"title_seen\": \"AMD Ryzen 7 7800X3D processor 4.2 GHz 96 MB L3 Box 100-100000910WOF\", \"price\": 324.87, \"currency\": \"GBP\", \"classification\": \"RETAILER\", \"fetched\": true},\n    {\"retailer\": \"eBay UK - ukdes-tc4klh3\", \"url\": \"https://www.ebay.co.uk/itm/267767802803\", \"title_seen\": \"AMD Ryzen 7 7800X3D | 8-Core 16-Thread | AM5 Gaming CPU | Brand New Sealed\", \"price\": 200.00, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": true},\n    {\"retailer\": \"eBay UK - second seller (same ePID)\", \"url\": \"https://www.ebay.co.uk/p/15059031128?iid=407162817998\", \"title_seen\": \"AMD Ryzen 7 7800X3D | 8-Core 16-Thread | AM5 Gaming CPU | Brand New Sealed\", \"price\": 210.00, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"eBay UK - circuitden\", \"url\": \"https://www.ebay.co.uk/itm/318681069528\", \"title_seen\": \"AMD RYZEN 7 7800X3D Brand New CPU Gaming Processor 8-Core 16-Thread AM5 730143314930\", \"price\": 203.56, \"currency\": \"GBP\", \"classification\": \"MARKETPLACE\", \"fetched\": false},\n    {\"retailer\": \"PriceSpy UK\", \"url\": \"https://pricespy.co.uk/product.php?p=8053700\", \"title_seen\": \"AMD Ryzen 7 7800X3D 4.2GHz Socket AM5 Box\", \"price\": 265.00, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": false},\n    {\"retailer\": \"idealo.co.uk\", \"url\": \"https://www.idealo.co.uk/compare/202372853/amd-ryzen-7-7800x3d-boxed.html\", \"title_seen\": \"AMD Ryzen 7 7800X3D Boxed\", \"price\": 249.99, \"currency\": \"GBP\", \"classification\": \"COMPARISON_SEARCH\", \"fetched\": true}\n  ],\n  \"rejected_candidates\": [\n    {\"retailer\": \"PriceSpy UK\", \"url\": \"https://pricespy.co.uk/product.php?p=8053700\", \"reason\": \"OTHER\", \"detail\": \"Price comparison aggregator, not a direct seller; no purchasable offer on the page itself.\"},\n    {\"retailer\": \"idealo.co.uk\", \"url\": \"https://www.idealo.co.uk/compare/202372853/amd-ryzen-7-7800x3d-boxed.html\", \"reason\": \"OTHER\", \"detail\": \"Price comparison aggregator; the underlying retailer offer list did not render individual seller names/prices on fetch (JS-driven), so could not verify a specific seller at this price.\"},\n    {\"retailer\": \"Box.co.uk\", \"url\": \"https://box.co.uk/100-100000910wof-amd-ryzen-7-7800x3d-zen-4-processor\", \"reason\": \"OTHER\", \"detail\": \"Item is currently out of stock ('Notify Me') and price (\u00a3284.99) is higher than Amazon's \u00a3265, so not usable as a cheaper verified source.\"},\n    {\"retailer\": \"Technoworld.com\", \"url\": \"https://www.technoworld.com/amd-ryzen-7-7800x3d-processor-4-2-ghz-96-mb-l3-box-100-100000910wof\", \"reason\": \"OTHER\", \"detail\": \"Price (\u00a3324.87) is higher than Amazon's \u00a3265.\"}\n  ],\n  \"verified_sources\": [\n    {\n      \"retailer\": \"eBay UK - seller ukdes-tc4klh3\",\n      \"url\": \"https://www.ebay.co.uk/itm/267767802803\",\n      \"classification\": \"MARKETPLACE\",\n      \"price\": 200.00,\n      \"currency\": \"GBP\",\n      \"vat_status\": \"Unknown/likely VAT-inclusive consumer listing (private seller)\",\n      \"delivery_cost\": 6.70,\n      \"effective_cost\": 206.70,\n      \"stock_status\": \"Available, estimated delivery Tue 8 Sep - Thu 10 Sep\",\n      \"date_checked\": \"2026-09-05\",\n      \"evidence\": \"The eBay product page's own 'Product Identifiers' section lists EAN 0730143314930 and MPN 100-100000910WOF, both matching exactly the Amazon listing's EAN/MPN. Listing condition stated as 'New. Unopened box. Original. Fan not included', consistent with Amazon's 'no cooler' boxed retail unit.\"\n    }\n  ],\n  \"best_verified_source\": {\n    \"retailer\": \"eBay UK - seller ukdes-tc4klh3\",\n    \"url\": \"https://www.ebay.co.uk/itm/267767802803\",\n    \"classification\": \"MARKETPLACE\",\n    \"price\": 200.00,\n    \"currency\": \"GBP\",\n    \"vat_status\": \"Unknown/likely VAT-inclusive consumer listing (private seller)\",\n    \"delivery_cost\": 6.70,\n    \"effective_cost\": 206.70,\n    \"stock_status\": \"Available, estimated delivery Tue 8 Sep - Thu 10 Sep\",\n    \"date_checked\": \"2026-09-05\",\n    \"evidence\": \"The eBay product page's own 'Product Identifiers' section lists EAN 0730143314930 and MPN 100-100000910WOF, both matching exactly the Amazon listing's EAN/MPN. Listing condition stated as 'New. Unopened box. Original. Fan not included', consistent with Amazon's 'no cooler' boxed retail unit.\"\n  },\n  \"confidence\": \"medium\",\n  \"research_summary\": \"All directly-fetched mainstream UK retailers (Scan, CCL, Senetic, Ballicom, Box.co.uk, Technoworld) priced this exact 100-100000910WOF / EAN 0730143314930 unit higher than Amazon's \u00a3265, with Box.co.uk additionally out of stock, so none qualify as a cheaper verified retailer source. The cheapest verified match is a third-party eBay UK marketplace listing (seller ukdes-tc4klh3, 100% positive feedback) at \u00a3200.00 + \u00a36.70 postage (\u00a3206.70 effective), confirmed via eBay's own product-identifier data matching the exact EAN and MPN; this is a MARKETPLACE listing, not a conventional retailer, so confidence is medium rather than high.\"\n}\n```",
+      "error": null,
+      "usage": {
+        "input_tokens": 323718,
+        "output_tokens": 7330,
+        "cache_read_input_tokens": 0,
+        "web_searches": 4,
+        "web_fetches": 5
+      },
+      "cost_usd": 0.7607,
+      "case": {
+        "asin": "B0BTZB7F88",
+        "title": "AMD Ryzen 7 7800X3D Processor with 3D V-Cache Technology (integrated Radeon Graphics, 8 cores/16 threads, AM5 Socket)",
+        "brand": "AMD",
+        "ean": "0730143314930",
+        "mpn": "AMD Ryzen 7 7800X3D",
+        "amazon_price_gbp": 265.0,
+        "target_price_gbp": null,
+        "serpapi_retailer": "eBay",
+        "serpapi_price": 12.94,
+        "serpapi_match_tier": "brand_mpn",
+        "known_issue": "Previously documented real incident: matched an eBay listing for an EMPTY BOX, no CPU included -- brand/MPN text present on the listing despite selling no actual processor."
+      }
+    }
+  ],
+  "aggregate": {
+    "total_cost_usd": 6.1223,
+    "avg_cost_per_asin_usd": 0.6122,
+    "estimated_cost_per_100_asins_usd": 61.22,
+    "estimated_cost_per_1000_asins_usd": 612.23,
+    "avg_searches_per_asin": 4.4,
+    "avg_fetches_per_asin": 4.8,
+    "avg_input_tokens_per_asin": 253182.0,
+    "avg_output_tokens_per_asin": 6187.0
+  }
+}

@@ -28,6 +28,9 @@ EXCLUDED_DOMAINS = {
     "trustpilot.com", "reddit.com", "youtube.com", "wikipedia.org",
     "which.co.uk", "reviews.io", "facebook.com", "instagram.com",
     "twitter.com", "x.com", "pinterest.com",
+    # EAN/barcode lookup databases -- same reasoning as EXCLUDED_SOURCE_
+    # NAMES' own "ean-search" entry (confirmed real incident, 2026-09-05).
+    "ean-search.org",
 }
 
 # Country-code TLDs that mean "not a UK retail source" (2026-08-28).
@@ -78,6 +81,17 @@ EXCLUDED_SOURCE_NAMES = {
     # reselling imported stock at import-inflated prices, with no real
     # trade terms behind them
     "big apple buddy", "u-buy", "ubuy", "etoren", "greatecno",
+    # EAN/barcode lookup databases -- confirmed real, 2026-09-05: a
+    # Huel ASIN auto-matched to ean-search.org at "ean" tier (the EAN
+    # string trivially appears on a page whose entire purpose is
+    # listing EANs). No purchasable offer, not a retailer at all --
+    # same "not a real source" category as a price-comparison
+    # aggregator, just triggered via the EAN tier instead of title
+    # similarity. Confirmed live: this ASIN wasn't auto-promoted only
+    # because the page had no price to promote WITH -- a different EAN-
+    # database ASIN that happened to show a price would not have been
+    # so lucky.
+    "ean-search",
 }
 
 # The same names, as domains, for the Brave path -- a grey importer on

@@ -89,6 +89,19 @@ class SPAPIClient:
     # run" caution as CATALOG_MIN_REQUEST_INTERVAL_SECONDS above.
     INVENTORY_MIN_REQUEST_INTERVAL_SECONDS = 1.0
 
+    # Overall wall-clock cap on get_inventory_summaries' pagination loop
+    # (2026-09-07) -- each individual request already has its own
+    # timeout=30 and MAX_RETRIES, but a large catalog paginating through
+    # many nextTokens, each hitting a slow retry/backoff cycle, has no
+    # upper bound on TOTAL call duration otherwise. This is exactly the
+    # same "worst case must end" guard REPORT_POLL_TIMEOUT_SECONDS below
+    # already gives the Reports API poll loop. Real observed symptom:
+    # LeadAnalysisService's scheduler tick (which calls this once per
+    # batch) stalled for minutes while every other scheduler kept
+    # ticking fine -- consistent with this call, not the event loop,
+    # being stuck.
+    INVENTORY_FETCH_TIMEOUT_SECONDS = 120
+
     # Reports API pacing (createReport/getReport/getReportDocument) --
     # Amazon's create-report endpoint is the tightest of the three
     # (documented around 0.0167 req/sec, i.e. ~1/minute, refilling);
@@ -380,8 +393,16 @@ class SPAPIClient:
 
         results: dict[str, dict] = {}
         next_token = None
+        deadline = time.monotonic() + self.INVENTORY_FETCH_TIMEOUT_SECONDS
 
         while True:
+            if time.monotonic() > deadline:
+                print(
+                    f"SP-API getInventorySummaries exceeded "
+                    f"{self.INVENTORY_FETCH_TIMEOUT_SECONDS}s for {marketplace}, giving up"
+                )
+                return None
+
             for attempt in range(MAX_RETRIES):
                 try:
                     access_token = self._get_access_token()

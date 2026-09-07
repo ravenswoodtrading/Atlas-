@@ -172,12 +172,27 @@
                         </div>
                     </td>
                     <td>
-                        <form method="post" action="/scan-queue/delete">
-                            <input type="hidden" name="item_id" value="{{ item.id }}">
-                            <button class="btn btn-sm btn-outline-danger" type="submit">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </form>
+                        <div class="d-flex gap-1">
+                            <form method="post" action="/scan-queue/delete">
+                                <input type="hidden" name="item_id" value="{{ item.id }}">
+                                <button class="btn btn-sm btn-outline-danger" type="submit" title="Delete -- just this queue entry, brand can be re-added later">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            <form method="post" action="/exclude/brand/add" class="scan-queue-exclude-form">
+                                <input type="hidden" name="brand" value="{{ item.brand }}">
+                                <input type="hidden" name="return_to" value="/scan-queue">
+                                <input type="hidden" name="reason" class="scan-queue-exclude-reason">
+                                <button class="btn btn-sm btn-outline-dark" type="button" data-brand="{{ item.brand }}" onclick="
+                                    var note = window.prompt('Why exclude &quot;' + this.dataset.brand + '&quot; from scanning? (required)');
+                                    if (!note || !note.trim()) { return; }
+                                    this.closest('form').querySelector('.scan-queue-exclude-reason').value = note.trim();
+                                    this.closest('form').submit();
+                                " title="Exclude -- stop scanning this brand entirely, with a reason (see Exclusions page)">
+                                    <i class="bi bi-slash-circle"></i>
+                                </button>
+                            </form>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}

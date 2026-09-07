@@ -9,8 +9,17 @@ from app.services.review_queue_service import (
     REVIEW_REASON_CATEGORIES, REVIEW_REASON_CATEGORY_LABELS,
     QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW,
     QUEUE_PRIORITY_BORDERLINE, QUEUE_PRIORITY_NEEDS_ATTENTION,
+    QUEUE_PRIORITY_OA_INVESTIGATE, clean_atlas_notes,
 )
 from app.services.product_repository import ProductRepository
+from app.services.oa_source_discovery_service import OaSourceDiscoveryService
+from app.services.seller_watch_service import SellerWatchService, SOURCING_TAG_BY_TAB
+from app.database.database import SessionLocal
+from app.database.models import ProductRecord, Lead
+# Reused, not duplicated (2026-09-05, OA Source Discovery Review Queue
+# view) -- the exact same Google-search-link builders the Opportunities
+# page's own OA tooling already uses (competitors.py).
+from app.routes.competitors import _google_search_url_variants, _oa_search_url_variants
 from app.routes.verdict import highlight_figures
 
 router = APIRouter()
@@ -106,6 +115,9 @@ VIEW_FILTERS = {
     "va_to_review": QUEUE_PRIORITY_VA_TO_REVIEW,
     "borderline": QUEUE_PRIORITY_BORDERLINE,
     "needs_attention": QUEUE_PRIORITY_NEEDS_ATTENTION,
+    # Fifth view, added 2026-09-05 -- see QUEUE_PRIORITY_OA_INVESTIGATE's
+    # own comment in review_queue_service.py.
+    "oa_investigate": QUEUE_PRIORITY_OA_INVESTIGATE,
 }
 VIEW_LABELS = {
     "all": "All",
@@ -113,13 +125,21 @@ VIEW_LABELS = {
     "va_to_review": "VA to Review",
     "borderline": "Borderline",
     "needs_attention": "Needs Attention",
+    "oa_investigate": "OA to Investigate",
 }
 
 # Source-type filter (secondary, per section 20) -- reuses the exact
 # "scan"/"competitor"/"lead" values already on every merged item's
 # `sources` list (ReviewQueueService.merge_by_asin), just labelled with
-# the brief's own source-type names for display.
-SOURCE_TYPE_LABELS = {"scan": "Atlas", "competitor": "Competitor", "lead": "VA"}
+# the brief's own source-type names for display. "oa_investigate" added
+# 2026-09-05 -- ReviewQueueService._oa_investigate_lead_dict's own
+# distinct source value, so an OA item's Source badge/filter reads
+# "OA Source Discovery", never "Competitor" (it has no confirmed
+# source, unlike a real competitor find).
+SOURCE_TYPE_LABELS = {
+    "scan": "Atlas", "competitor": "Competitor", "lead": "VA",
+    "oa_investigate": "OA Source Discovery",
+}
 
 # Source-store (marketplace) filter, added 2026-09-04 -- every merged
 # item already carries best_source_marketplace (review_queue.html's
@@ -313,6 +333,44 @@ def review_queue_item_detail(request: Request, asin: str):
     """
     item = ReviewQueueService.get_queue_item(asin)
 
+    # OA Source Discovery workbench (2026-09-05, redesigned from the
+    # original "just another lead" OA card per Tamara's own review of
+    # the live screenshot -- see save_manual_source's own docstring for
+    # the underlying persistence). Computed only when this item
+    # actually has an OA source (oa_price_guide is None otherwise),
+    # since none of this is relevant for an item with a confirmed
+    # source already. EAN read straight off ProductRecord -- it's not a
+    # field on the merged Review Queue item (never needed there before
+    # now). MPN only ever comes from a PRIOR automated OA Source
+    # Discovery run (OaSourceCandidate.mpn) -- there is no free way to
+    # get it otherwise (Keepa-only field), so the MPN search button
+    # simply doesn't render rather than spending a token just to
+    # populate a search box (see safety constraints on this build).
+    google_urls = None
+    oa_search_urls = None
+    source_finder_url = None
+    manual_candidate = None
+    ean = ""
+    if item and item.get("oa_price_guide"):
+        db = SessionLocal()
+        try:
+            record = (
+                db.query(ProductRecord)
+                .filter(ProductRecord.asin == asin)
+                .order_by(ProductRecord.scanned_at.desc())
+                .first()
+            )
+            ean = record.ean if record else ""
+        finally:
+            db.close()
+
+        manual_candidate = OaSourceDiscoveryService.get_manual_candidate(asin)
+        mpn = manual_candidate.mpn if manual_candidate else ""
+
+        google_urls = _google_search_url_variants(item.get("title", ""), ean, asin)
+        oa_search_urls = _oa_search_url_variants(item.get("title", ""), item.get("brand", ""), ean, mpn)
+        source_finder_url = f"/competitors?tab=source_finder&asin={asin}"
+
     return templates.TemplateResponse(
         request=request,
         name="_review_queue_item_detail.html",
@@ -320,12 +378,77 @@ def review_queue_item_detail(request: Request, asin: str):
             "request": request,
             "item": item,
             "asin": asin,
+            "oa_search_urls": oa_search_urls,
+            "manual_candidate": manual_candidate,
+            "ean": ean,
+            "mpn": manual_candidate.mpn if manual_candidate else "",
             "source_type_labels": SOURCE_TYPE_LABELS,
             "decision_buttons": DECISION_BUTTONS,
             "review_reason_categories": REVIEW_REASON_CATEGORIES,
             "review_reason_category_labels": REVIEW_REASON_CATEGORY_LABELS,
+            "google_urls": google_urls,
+            "source_finder_url": source_finder_url,
         }
     )
+
+
+@router.post("/review-queue/oa/save-source")
+def review_queue_oa_save_source(
+    asin: str = Form(...),
+    retailer_domain: str = Form(""),
+    retailer_url: str = Form(""),
+    retailer_price_gbp: float = Form(...),
+    delivery_gbp: float = Form(0.0),
+    notes: str = Form(""),
+):
+    """
+    OA workbench "Save Source" (2026-09-05) -- persists a human-found
+    retail source and returns the computed economics, WITHOUT resolving
+    the item or making any Buy/Reject decision (see OaSourceDiscoveryService.
+    save_manual_source's own docstring: Tamara's explicit instruction is
+    that entering a source price must never automatically become a BUY).
+    The detail panel re-fetches itself after this call (same pattern the
+    resolve/undo toast already uses) so the "Source Found" status and the
+    existing Review Actions form both reflect the freshly-saved source.
+    """
+    result = OaSourceDiscoveryService.save_manual_source(
+        asin, retailer_domain, retailer_url, retailer_price_gbp, delivery_gbp, notes,
+    )
+    return JSONResponse({"ok": True, "asin": asin, **result})
+
+
+@router.post("/review-queue/save-note")
+def review_queue_save_note(asin: str = Form(...), atlas_notes: str = Form(...)):
+    """
+    Save an Atlas comment WITHOUT making a Buy/Reject/etc decision yet
+    (2026-09-05) -- Tamara asked for a way to write a note back to the
+    VA independent of deciding the lead. Applies to every still-pending
+    lead for this ASIN regardless of source (same reasoning as Pass 2's
+    reconciliation in pull_and_ingest_va_leads: Lead Sheet is the
+    team's single master sheet), then pushes immediately via
+    push_decision_to_sheet -- which (see its own docstring) writes ONLY
+    the Atlas Notes column here, since no decision was made.
+    """
+    db = SessionLocal()
+    lead_ids = []
+    try:
+        for lead in db.query(Lead).filter(Lead.asin == asin, Lead.decision.is_(None)).all():
+            lead.atlas_notes = clean_atlas_notes(atlas_notes)
+            lead_ids.append(lead.id)
+        db.commit()
+    finally:
+        db.close()
+
+    pushed = 0
+    for lead_id in lead_ids:
+        try:
+            from app.services.google_sheets_lead_sync import push_decision_to_sheet
+            if push_decision_to_sheet(lead_id):
+                pushed += 1
+        except Exception as exc:
+            print(f"push_decision_to_sheet (note-only) failed for lead {lead_id}: {exc}")
+
+    return JSONResponse({"ok": True, "asin": asin, "leads_updated": len(lead_ids), "pushed_to_sheet": pushed})
 
 
 @router.post("/review-queue/resolve")
@@ -334,6 +457,9 @@ def review_queue_resolve(
     decision: str = Form(...),
     reason: str = Form(""),
     reason_category: str = Form(""),
+    purchased_qty: str = Form(""),
+    atlas_notes: str = Form(""),
+    also_exclude: str = Form(""),
 ):
     """
     ONE decision resolves every outstanding source/view for this ASIN
@@ -350,9 +476,81 @@ def review_queue_resolve(
     via fetch(), show a small "Reviewed -- Undo" toast instead of a
     full page reload, and hand the returned `resolved` shape straight
     to /review-queue/undo if the user clicks Undo.
+
+    `already_resolved` (2026-09-04 fix) -- True when every source
+    resolve_item checked was ALREADY reviewed/dismissed before this
+    call (nothing outstanding left to touch): resolve_item itself only
+    ever acts on rows it finds genuinely outstanding right now (see its
+    own docstring), so this click did nothing new. Real, reproduced bug:
+    a row can still be showing in a page the user has had open for a
+    while after something else (another tab, an automated recheck)
+    already resolved the same ASIN -- clicking Buy on it used to come
+    back "ok": true with an empty `resolved` and the UI showed a normal
+    success/Undo toast anyway, implying the click had just bought
+    something it hadn't. The frontend uses this flag to tell the two
+    cases apart honestly instead of always claiming success.
     """
-    resolved = ReviewQueueService.resolve_item(asin, decision, reason=reason or None, reason_category=reason_category or None)
-    return JSONResponse({"ok": True, "asin": asin, "resolved": resolved})
+    # Atlas Notes (2026-09-05, VA Lead Sheet sync) -- written directly
+    # onto any outstanding sheet-sourced lead(s) for this ASIN BEFORE
+    # resolving, so push_decision_to_sheet (called inside resolve_item
+    # for source="sheet" leads) has the note to push out in the same
+    # write as the decision itself.
+    cleaned_atlas_notes = clean_atlas_notes(atlas_notes)
+    if cleaned_atlas_notes:
+        db = SessionLocal()
+        try:
+            for lead in db.query(Lead).filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None)).all():
+                lead.atlas_notes = cleaned_atlas_notes
+            db.commit()
+        finally:
+            db.close()
+
+    qty = None
+    if purchased_qty.strip():
+        try:
+            qty = float(purchased_qty.strip())
+        except ValueError:
+            qty = None
+
+    resolved = ReviewQueueService.resolve_item(
+        asin, decision, reason=reason or None, reason_category=reason_category or None, purchased_qty=qty,
+    )
+
+    # "Also exclude from future scans" (2026-09-07, Tamara) -- an explicit
+    # opt-in checkbox in the detail panel's Review Actions form, offered
+    # alongside Avoid but never automatic: choosing a reason_category like
+    # GATED is only a reporting label (see REVIEW_REASON_CATEGORIES' own
+    # comment) and was never wired to any exclusion logic -- real bug
+    # Tamara caught (a hard-gated Philips product kept resurfacing after
+    # being rejected as "Gated"). This reuses the exact same ExcludedProduct
+    # table/check the Exclusions page's own "Exclude ASIN" form writes to
+    # (see ProductRepository.add_exclusion) -- checked before ANY future
+    # Keepa spend on this ASIN, unlike reason_category.
+    if also_exclude and decision == "rejected":
+        ProductRepository.add_exclusion(
+            asin.strip().upper(),
+            reason=reason.strip() or REVIEW_REASON_CATEGORY_LABELS.get(reason_category, "") or "Excluded from Review Queue",
+        )
+
+    already_resolved = not resolved["scan"] and not resolved["competitor"] and not resolved["lead"]
+    return JSONResponse({"ok": True, "asin": asin, "resolved": resolved, "already_resolved": already_resolved})
+
+
+@router.post("/review-queue/reclassify")
+def review_queue_reclassify(asin: str = Form(...), sourcing_tag: str = Form(...)):
+    """
+    Manual sourcing-tag correction (2026-09-07, Tamara: found a real
+    "OA / unclear" item that was actually EU A2A -- see SellerNewListing.
+    manually_classified's own docstring). Only meant for the OA to
+    Investigate detail panel, where "Atlas got the classification wrong"
+    is exactly the thing being reported -- not exposed as a bulk action
+    anywhere else.
+    """
+    if sourcing_tag not in SOURCING_TAG_BY_TAB.values():
+        return JSONResponse({"ok": False, "error": "Unknown sourcing tag."}, status_code=400)
+
+    updated = SellerWatchService.set_manual_sourcing_tag(asin, sourcing_tag)
+    return JSONResponse({"ok": True, "asin": asin, "sourcing_tag": sourcing_tag, "updated": updated})
 
 
 @router.post("/review-queue/undo")

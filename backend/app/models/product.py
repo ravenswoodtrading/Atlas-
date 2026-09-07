@@ -62,6 +62,41 @@ class Product:
     # there's no EU source to price against at all.
     peak_viable_days_90d: int = 0
 
+    # How many of the last 90 days would have cleared FeeEngine.
+    # OA_TARGET_ROI_PCT (25%, the SAME bar ProductRepository.is_notable
+    # already uses) at today's EU source cost -- and priced_days_90d,
+    # the number of those 90 days that actually had a real price to
+    # check at all (see SourcingClassifier.compute_peak_window_evidence,
+    # 2026-09-04). Distinct from peak_viable_days_90d above, which uses
+    # the looser 17% MIN_VIABLE_ROI floor for a different purpose
+    # (PEAK_WINDOW eligibility) -- this one answers "how often would
+    # THIS have actually looked like a real, notable buy", the
+    # recurrence evidence behind a PRICE_DROP_BUY_NOW risk flag. 0/0 if
+    # there's no EU source to price against.
+    days_at_25pct_roi_90d: int = 0
+    priced_days_90d: int = 0
+
+    # "The last time offers spiked (SourcingClassifier.
+    # compute_competition_spike_evidence, 2026-09-04), what did price
+    # actually do afterward" -- days_since is how long ago that spike
+    # was, price_change_pct is the real % move in buy-box price from
+    # that spike day to the latest priced day (positive = price rose
+    # since, negative = fell). Both None (not 0) when the 90-day window
+    # never saw a genuine spike at all -- "never spiked" is real
+    # information, distinct from "spiked and price didn't move".
+    days_since_last_competition_spike: int | None = None
+    price_change_since_competition_spike_pct: float | None = None
+
+    # The mirror question (SourcingClassifier.
+    # compute_price_drop_offer_context, 2026-09-04): the last time price
+    # genuinely dipped, how far were offers from their own 90-day
+    # average on that same day. Positive = offers were elevated when
+    # the price dropped (suggests competition-driven); negative/near
+    # zero = offers were normal or low then (suggests the drop wasn't
+    # about competition). None when no dip was found in the window.
+    days_since_last_price_dip: int | None = None
+    offers_change_at_last_price_dip_pct: float | None = None
+
     # Keepa's confirmed monthly sales count (their "monthlySold" stat,
     # based on actual Amazon sales data, not an estimate). 0 means
     # Keepa has no confirmed sales data for this product -- not

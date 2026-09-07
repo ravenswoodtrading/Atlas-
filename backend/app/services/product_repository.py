@@ -6,7 +6,7 @@ from sqlalchemy import func
 from app.database.database import SessionLocal
 from app.database.models import (
     ProductRecord, KnownProduct, WatchedProduct, ExcludedProduct, ExcludedCategory,
-    GatedBrand, SignalQuery, SignalMatch, CeilingRejected,
+    GatedBrand, ExcludedBrand, SignalQuery, SignalMatch, CeilingRejected,
 )
 
 
@@ -968,6 +968,71 @@ class ProductRepository:
             rows = db.query(GatedBrand.brand, GatedBrand.category_name).all()
             return {(brand, (category_name or "").lower()) for brand, category_name in rows}
 
+        finally:
+            db.close()
+
+    # ---- Excluded brands (2026-09-05) -- see ExcludedBrand's own
+    # docstring for how this differs from gating: unconditional,
+    # brand-wide, and removes any existing Scan Queue rows immediately
+    # rather than leaving them to go stale in place. ----
+
+    @staticmethod
+    def add_brand_exclusion(brand: str, reason: str = ""):
+        """
+        Excludes the brand AND immediately removes any ScanQueueItem
+        rows for it (deliberately different from gating's "leave it
+        stuck in the queue for a human to notice" behaviour -- see
+        ExcludedBrand's own docstring for why an explicit exclusion
+        means "get it out now"). Import here, not at module level, to
+        avoid a circular import (ScanQueueService already imports
+        DiscoveryIntelligenceService lazily for the same reason).
+        """
+        from app.database.models import ScanQueueItem
+
+        brand = brand.strip().lower()
+        if not brand:
+            return
+
+        db = SessionLocal()
+        try:
+            if not db.query(ExcludedBrand).filter(ExcludedBrand.brand == brand).first():
+                db.add(ExcludedBrand(brand=brand, reason=reason))
+            db.query(ScanQueueItem).filter(ScanQueueItem.brand == brand).delete()
+            db.commit()
+        finally:
+            db.close()
+
+    @staticmethod
+    def remove_brand_exclusion(exclusion_id: int):
+        db = SessionLocal()
+        try:
+            existing = db.get(ExcludedBrand, exclusion_id)
+            if existing:
+                db.delete(existing)
+                db.commit()
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_excluded_brands() -> list:
+        db = SessionLocal()
+        try:
+            return db.query(ExcludedBrand).order_by(ExcludedBrand.excluded_at.desc()).all()
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_excluded_brand_names() -> set:
+        """
+        Used as the SAME kind of pre-token check in BrandScanService.scan
+        Step 1 that get_whole_gated_brand_names already provides for
+        gating -- no Keepa token spent hunting for more of an excluded
+        brand.
+        """
+        db = SessionLocal()
+        try:
+            rows = db.query(ExcludedBrand.brand).all()
+            return {r[0] for r in rows}
         finally:
             db.close()
 

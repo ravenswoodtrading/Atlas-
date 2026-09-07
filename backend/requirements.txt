@@ -9,3 +9,6 @@ pandas
 openpyxl
 python-dateutil
 anthropic
+google-auth-oauthlib
+gspread
+google-genai

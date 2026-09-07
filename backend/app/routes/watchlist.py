@@ -270,6 +270,7 @@ def exclusions_page(request: Request):
     exclusions = ProductRepository.list_exclusions()
     category_exclusions = ProductRepository.list_category_exclusions()
     gated_brands = ProductRepository.list_gated_brands()
+    excluded_brands = ProductRepository.list_excluded_brands()
     catalog_stats = ProductRepository.get_known_products_catalog_stats()
 
     # Computed here rather than in the template -- Jinja has no built-in
@@ -291,9 +292,29 @@ def exclusions_page(request: Request):
             "exclusions": exclusions,
             "category_exclusions": category_exclusions,
             "gated_brands": gated_brands,
+            "excluded_brands": excluded_brands,
             "catalog_stats": catalog_stats,
         }
     )
+
+
+@router.post("/exclude/brand/add")
+def exclude_brand_add(brand: str = Form(...), reason: str = Form(""), return_to: str = Form("/exclusions")):
+    """
+    See ExcludedBrand's own docstring for how this differs from
+    /gate/add: unconditional, brand-wide, no category scoping, and
+    immediately removes any existing Scan Queue rows for the brand
+    (ProductRepository.add_brand_exclusion) rather than leaving them to
+    go stale in place the way a gated brand does.
+    """
+    ProductRepository.add_brand_exclusion(brand=brand, reason=reason)
+    return RedirectResponse(url=return_to, status_code=303)
+
+
+@router.post("/exclude/brand/remove")
+def exclude_brand_remove(exclusion_id: int = Form(...), return_to: str = Form("/exclusions")):
+    ProductRepository.remove_brand_exclusion(exclusion_id)
+    return RedirectResponse(url=return_to, status_code=303)
 
 
 @router.get("/gated-opportunities")

@@ -75,6 +75,10 @@ strong = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 8.42, "eu_buy_rate": 66.7,
         "eu_recent_hit_rate": 67.0, "eu_last_buy_at": "2026-09-01",
         "eu_recent_events": [{"buy": 1, "consider": 0}, {"buy": 1, "consider": 0}, {"buy": 1, "consider": 0}],
+        # Phase 2 (2026-09-04) -- Action-CONFIRMED evidence, recent AND
+        # all-time (this fixture represents a brand with a genuinely
+        # fresh confirmed BUY, matching the old eu_recent_events pattern).
+        "confirmed_buy_count_all_time": 4, "confirmed_buy_count_recent": 4,
     },
     top_categories={"Toys & Games"},
 )
@@ -98,6 +102,7 @@ weak = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 0.0, "eu_buy_rate": 0.0,
         "eu_recent_hit_rate": 0.0, "eu_last_buy_at": None,
         "eu_recent_events": [{"buy": 0, "consider": 0}, {"buy": 0, "consider": 0}, {"buy": 0, "consider": 0}],
+        "confirmed_buy_count_all_time": 0, "confirmed_buy_count_recent": 0,
     },
     top_categories={"Toys & Games"},
 )
@@ -131,6 +136,7 @@ wd_style = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 0.0, "eu_buy_rate": 0.0,
         "eu_recent_hit_rate": 0.0, "eu_last_buy_at": None,
         "eu_recent_events": [{"buy": 0, "consider": 1}, {"buy": 0, "consider": 0}, {"buy": 0, "consider": 0}],
+        "confirmed_buy_count_all_time": 0, "confirmed_buy_count_recent": 0,
     },
     top_categories={"Computers & Accessories"},
 )
@@ -158,6 +164,7 @@ stale_hit_rate_conflict = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 0.0, "eu_buy_rate": 0.0,
         "eu_recent_hit_rate": 33.3, "eu_last_buy_at": None,
         "eu_recent_events": [{"buy": 0, "consider": 0}, {"buy": 0, "consider": 0}, {"buy": 0, "consider": 1}],
+        "confirmed_buy_count_all_time": 0, "confirmed_buy_count_recent": 0,
     },
     top_categories={"Home & Garden"},
 )
@@ -194,11 +201,90 @@ has_one_buy = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 20.0, "eu_buy_rate": 0.1,
         "eu_recent_hit_rate": 0.0, "eu_last_buy_at": "2026-08-20",
         "eu_recent_events": [{"buy": 0, "consider": 0}] * 3,
+        # Phase 2 (2026-09-04) -- this fixture's own recent_events show
+        # NO recent buy (all buy:0), but eu_buy_count=1 means a
+        # confirmed BUY exists somewhere in this brand's history --
+        # exactly the "historical, not recent" pattern the new
+        # confirmed_buy_count_recent=0/all_time=1 split represents.
+        "confirmed_buy_count_all_time": 1, "confirmed_buy_count_recent": 0,
     },
     top_categories={"DIY & Tools"},
 )
 assert has_one_buy["capped"] is False, "even ONE confirmed BUY exempts a brand from the conflict cap -- the cap is about zero confirmation, not a low rate"
+assert any("no longer recent" in r["text"] for r in has_one_buy["reasons"]), "a historical-only confirmed BUY must surface its own distinct reason"
+assert not any("recent EU scans produced" in r["text"] for r in has_one_buy["reasons"]), "must NOT claim a recent confirmed BUY when confirmed_buy_count_recent is 0"
 print(f"synthetic fixture (1 confirmed BUY out of 847 scanned -- exempt from the cap by design): tier={has_one_buy['tier']}, capped={has_one_buy['capped']}: ok")
+
+# ---- Phase 2 (2026-09-04): HIGH VALUE -- LOW CONFIDENCE evidence -- new, distinct from confirmed BUY ----
+# Real pattern from the Grohe example (approved Phase 1 design): heavy
+# scanning, ZERO confirmed BUY, but substantial HIGH_VALUE_LOW_CONFIDENCE
+# volume. Must earn the smaller +1 signal, NEVER the +3 a confirmed BUY
+# earns, and must be capped exactly like any other zero-confirmed-BUY
+# brand -- the point count alone (however large) must never buy its way
+# past the conflict cap.
+high_value_case = DiscoveryIntelligenceService.score_target(
+    "grohetest",
+    competitor=None,
+    own={
+        "scanned": 1416, "buy_count": 0, "consider_count": 0, "avg_profit": 0.0,
+        "recent_hit_rate": 0.0, "last_buy_at": None,
+        "recent_events": [{"buy": 0, "consider": 0}] * 3,
+        "eu_a2a_count": 1416, "eu_buy_count": 0, "eu_consider_count": 0,
+        "eu_avg_buy_profit": 0.0, "eu_buy_rate": 0.0,
+        "eu_recent_hit_rate": 0.0, "eu_last_buy_at": None,
+        "eu_recent_events": [{"buy": 0, "consider": 0}] * 3,
+        "confirmed_buy_count_all_time": 0, "confirmed_buy_count_recent": 0,
+        "high_value_low_confidence_count": 138,
+    },
+    top_categories=set(),
+)
+assert any(f["points"] == 1 and "HIGH VALUE" in f["text"] for f in high_value_case["reasons"]), high_value_case["reasons"]
+assert not any(f["points"] == 3 for f in high_value_case["reasons"]), "HIGH VALUE -- LOW CONFIDENCE evidence must never earn the +3 confirmed-BUY magnitude"
+assert "138 HIGH VALUE — LOW CONFIDENCE opportunities across 1416 EU scans" in [f["text"] for f in high_value_case["reasons"]]
+assert high_value_case["tier"] != "HIGH", "high-value/low-confidence volume alone, with zero confirmed BUY on 1416 scans, must still be capped -- it is meaningful evidence, not confirmed-BUY-equivalent evidence"
+print(f"synthetic fixture (real 'Grohe' pattern: 1416 EU scans, 0 confirmed BUY, 138 HIGH VALUE -- LOW CONFIDENCE): score={high_value_case['score']}, tier={high_value_case['tier']}: ok")
+
+# Below the meaningful-count bar (2, not 3+) -- must NOT earn the bonus
+# at all, confirming this is a real evidence threshold, not "any count".
+below_threshold_case = DiscoveryIntelligenceService.score_target(
+    "smallhvtest", competitor=None,
+    own={
+        "scanned": 50, "buy_count": 0, "consider_count": 0, "avg_profit": 0.0,
+        "recent_hit_rate": 0.0, "last_buy_at": None, "recent_events": [],
+        "eu_a2a_count": 50, "eu_buy_count": 0, "eu_consider_count": 0,
+        "eu_avg_buy_profit": 0.0, "eu_buy_rate": 0.0,
+        "eu_recent_hit_rate": 0.0, "eu_last_buy_at": None, "eu_recent_events": [],
+        "confirmed_buy_count_all_time": 0, "confirmed_buy_count_recent": 0,
+        "high_value_low_confidence_count": 2,
+    },
+    top_categories=set(),
+)
+assert not any("HIGH VALUE" in f["text"] for f in below_threshold_case["reasons"]), "below the meaningful-count bar (3+) must not earn the bonus"
+print(f"synthetic fixture (only 2 HIGH VALUE -- LOW CONFIDENCE opportunities, below the 3+ bar): reasons show no HIGH VALUE bonus: ok")
+
+# A brand with a genuinely RECENT confirmed BUY must still outrank one
+# with only HIGH VALUE -- LOW CONFIDENCE evidence, all else being equal
+# -- confirms the two signals are never treated as equivalent even
+# indirectly via the final score.
+recent_buy_case = DiscoveryIntelligenceService.score_target(
+    "freshbuytest", competitor=None,
+    own={
+        "scanned": 50, "buy_count": 1, "consider_count": 0, "avg_profit": 10.0,
+        "recent_hit_rate": 0.0, "last_buy_at": "2026-09-04", "recent_events": [],
+        "eu_a2a_count": 50, "eu_buy_count": 1, "eu_consider_count": 0,
+        "eu_avg_buy_profit": 10.0, "eu_buy_rate": 2.0,
+        "eu_recent_hit_rate": 0.0, "eu_last_buy_at": "2026-09-04", "eu_recent_events": [],
+        "confirmed_buy_count_all_time": 1, "confirmed_buy_count_recent": 1,
+        "high_value_low_confidence_count": 0,
+    },
+    top_categories=set(),
+)
+assert recent_buy_case["score"] > high_value_case["score"], (
+    "1 fresh confirmed BUY (50 scans) must score higher than 138 HIGH VALUE -- LOW CONFIDENCE "
+    "opportunities (1416 scans) with zero confirmed BUY -- confirmed evidence must never be "
+    "outweighed by volume of unconfirmed evidence"
+)
+print(f"cross-check: 1 recent confirmed BUY (score={recent_buy_case['score']}) outranks 138 HIGH VALUE -- LOW CONFIDENCE opportunities with 0 confirmed BUY (score={high_value_case['score']}): ok")
 
 # ---- Regression test for the GATED override fixed 2026-09-04 ----
 # Direct bug reproduction: the real "Canon" case -- strong evidence
@@ -218,6 +304,7 @@ gated_style = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 15.0, "eu_buy_rate": 30.0,
         "eu_recent_hit_rate": 50.0, "eu_last_buy_at": "2026-09-01",
         "eu_recent_events": [{"buy": 1, "consider": 0}] * 3,
+        "confirmed_buy_count_all_time": 3, "confirmed_buy_count_recent": 3,
     },
     top_categories={"Stationery & Office Supplies"},
     extra_gated_pairs_by_name={("gatedtest", "")},
@@ -242,6 +329,7 @@ ungated_style = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 15.0, "eu_buy_rate": 30.0,
         "eu_recent_hit_rate": 50.0, "eu_last_buy_at": "2026-09-01",
         "eu_recent_events": [{"buy": 1, "consider": 0}] * 3,
+        "confirmed_buy_count_all_time": 3, "confirmed_buy_count_recent": 3,
     },
     top_categories={"Stationery & Office Supplies"},
     extra_gated_pairs_by_name=set(),
@@ -265,6 +353,7 @@ plug_risk_case = DiscoveryIntelligenceService.score_target(
         "eu_avg_buy_profit": 10.0, "eu_buy_rate": 100.0,
         "eu_recent_hit_rate": 50.0, "eu_last_buy_at": "2026-09-01",
         "eu_recent_events": [{"buy": 1, "consider": 0}],
+        "confirmed_buy_count_all_time": 1, "confirmed_buy_count_recent": 1,
     },
     top_categories=set(),
 )
@@ -332,5 +421,40 @@ if targets:
     for r in top["reasons"]:
         sign = "+" if r["points"] >= 0 else ""
         print(f"  [{r['kind']}] {sign}{r['points']}  {r['text']}")
+
+# ---- Phase 2 (2026-09-04): real-data validation for the specific brands requested ----
+print("\n" + "=" * 100)
+print("PHASE 2 REAL-DATA VALIDATION -- named brands")
+print("=" * 100)
+
+targets_by_brand = {t["brand"]: t for t in targets}
+NAMED_BRANDS = [
+    "elgato", "powera", "canon", "tenda", "grohe", "milwaukee", "trend", "worx",
+    "wiha", "melissa & doug", "msi", "makita", "corsair", "western digital",
+]
+
+for brand in NAMED_BRANDS:
+    t = targets_by_brand.get(brand)
+    print(f"\n--- {brand.upper()} ---")
+    if not t:
+        print("  Not in the ranked list -- no competitor or own-scan evidence of any kind.")
+        continue
+    comp = t["competitor_evidence"] or {}
+    own_p = t["own_performance"] or {}
+    own_ev = (t["evidence"] or {}).get("own") or {}
+    print(f"  Priority: {t['tier']}  (raw={t['raw_tier']}, score={t['score']}, capped={t['capped']}, gated={t['gated']})")
+    print(f"  Competitor evidence: distinct_competitors={comp.get('distinct_competitors', 0)}, "
+          f"eu_a2a={comp.get('eu_a2a_count', 0)}, uk_a2a={comp.get('uk_a2a_count', 0)}, recent={comp.get('recent', False)}")
+    print(f"  EU scans: {own_p.get('eu_a2a_count', 0)}")
+    print(f"  Confirmed BUY (Action-aware): all_time={own_ev.get('eu_confirmed_buy_count_all_time', 0)}, "
+          f"recent={own_ev.get('eu_confirmed_buy_count_recent', 0)}  "
+          f"(literal recommendation=='BUY', for comparison: {own_ev.get('eu_literal_buy_count', 0)})")
+    print(f"  HIGH VALUE — LOW CONFIDENCE count: {own_ev.get('eu_high_value_low_confidence_count', 0)}")
+    print(f"  Recent Action breakdown:   {own_ev.get('eu_actions_recent') or {}}")
+    print(f"  All-time Action breakdown: {own_ev.get('eu_actions_all_time') or {}}")
+    print("  Main reasons:")
+    for r in t["reasons"]:
+        sign = "+" if r["points"] >= 0 else ""
+        print(f"    [{r['kind']}] {sign}{r['points']}  {r['text']}")
 
 print("\nALL PASS")

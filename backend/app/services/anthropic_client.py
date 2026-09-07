@@ -6,7 +6,16 @@ import anthropic
 from dotenv import load_dotenv
 
 # -> Atlas/.env, same location app/keepa/client.py loads KEEPA_API_KEY from.
-env_path = Path(__file__).resolve().parents[2] / ".env"
+# Real bug fixed 2026-09-06: this was parents[2] (-> backend/.env, a
+# DIFFERENT, near-empty file), one level too shallow versus keepa/
+# client.py's own (correct) parents[3] -- despite the comment above
+# claiming parity. Silently worked until now purely because keepa/
+# client.py's own load_dotenv(root .env) happens to run first at import
+# time and populates the process environment, which load_dotenv here
+# then found already set (it never overrides existing env vars) --
+# fragile, import-order-dependent, and would have silently broken
+# GOOGLE_API_KEY (added here, not in backend/.env) if left uncorrected.
+env_path = Path(__file__).resolve().parents[3] / ".env"
 load_dotenv(env_path)
 
 # The user's own editable buying-criteria doc (sourcing agent brief
@@ -52,6 +61,30 @@ def get_anthropic_client():
     return _cached_client
 
 
+# Gemini fallback for generate_verdict (2026-09-06) -- see that
+# function's own docstring. Free-tier model; cached singleton, same
+# reasoning as _cached_client above.
+GEMINI_MODEL = "gemini-3.6-flash"
+_cached_gemini_client = None
+
+
+def get_gemini_client():
+    global _cached_gemini_client
+
+    if _cached_gemini_client is not None:
+        return _cached_gemini_client
+
+    api_key = os.getenv("GOOGLE_API_KEY")
+
+    if not api_key:
+        raise RuntimeError("GOOGLE_API_KEY not found -- cannot fall back to Gemini")
+
+    from google import genai
+    _cached_gemini_client = genai.Client(api_key=api_key)
+
+    return _cached_gemini_client
+
+
 def _format_metrics_summary(metrics: dict) -> str:
     """
     Pre-formats VerdictService.compute_metrics' raw dict into a
@@ -83,14 +116,24 @@ def _format_metrics_summary(metrics: dict) -> str:
             f"there, not guaranteed): profit £{profit_peak:.2f}, ROI {roi_peak:.1f}%."
         )
 
+        # Real gap found live, 2026-09-07 (Tamara): the old one-window
+        # (90d), two-bar (25%/17%) pairing made a lead whose margin only
+        # opened up recently read identically to one that was never once
+        # viable -- both "0 of 90". Now two genuinely different windows:
+        # a tighter bar (25%) over a shorter, more-recent window (30
+        # days -- "is this working right now") alongside a lower bar
+        # (20%) over the full 90 days ("has this cleared a real margin
+        # recently at all"). See VerdictService.compute_metrics' own
+        # comment for the full reasoning.
         viable_days = metrics.get("viable_days_90d")
-        if viable_days and viable_days.get("priced_days"):
+        if viable_days and viable_days.get("priced_days_90d"):
             profitability += (
-                f"\nDay-by-day over the actual last 90 days (not the average): "
-                f"{viable_days['days_at_target_roi']} of {viable_days['priced_days']} priced days were at "
-                f"25%+ ROI (strong), {viable_days['days_at_min_roi']} of {viable_days['priced_days']} were "
-                f"at least 17%+ ROI (bare minimum). Use this, not just the average, to judge how often a "
-                f"good buying window actually occurs."
+                f"\nDay-by-day (not the average): in the last 30 days, "
+                f"{viable_days['days_at_25pct_30d']} of {viable_days['priced_days_30d']} priced days were at "
+                f"25%+ ROI (a strong, recent buying window). Over the full last 90 days, "
+                f"{viable_days['days_at_20pct_90d']} of {viable_days['priced_days_90d']} priced days cleared "
+                f"at least 20%+ ROI. Use this, not just the average, to judge how often a good buying window "
+                f"actually occurs -- and whether it's a recent pattern or one that's faded."
             )
 
     amazon_pct = metrics.get("amazon_buy_box_percentage") or 0
@@ -102,6 +145,21 @@ def _format_metrics_summary(metrics: dict) -> str:
         amazon_line = f"Amazon is on this listing AND currently holds {amazon_pct:.0f}% of the buy box."
     else:
         amazon_line = "Amazon is on this listing but is NOT currently winning the buy box."
+
+    # amazon_pct/is_amazon above are a CURRENT-MOMENT snapshot, which
+    # misses a real recent pattern whenever Amazon happens to be between
+    # stock right now (real gap found live, 2026-09-07, Tamara re:
+    # B0CFV7Z7SJ). This reads the actual 30-day buy-box-seller history instead.
+    bbh = metrics.get("buy_box_holder_30d")
+    if bbh and bbh.get("amazon_minutes", 0) > 0:
+        if not bbh.get("third_party_ever_won"):
+            amazon_line += (
+                " Over the real last 30 days of buy-box history, no third-party seller has ever "
+                "won it -- Amazon holds it exclusively whenever in stock. This is a red flag for "
+                "sourcing: hard to compete against Amazon itself on this listing."
+            )
+        else:
+            amazon_line += " Over the real last 30 days, third-party sellers have also won the buy box at times."
 
     review_count = metrics.get("review_count") or 0
     rating = metrics.get("rating")
@@ -330,13 +388,23 @@ def generate_verdict(
     Keepa is never asked to recompute or second-guess those (see Lead's
     docstring in app/database/models.py). Returns (verdict, rationale).
 
-    Raises ValueError if Claude declines (safety refusal) or its response
-    doesn't start with a recognized verdict token -- callers should treat
-    this the same as a Keepa-side analysis failure (see
-    LeadAnalysisService.MAX_ANALYSIS_ATTEMPTS).
-    """
-    client = get_anthropic_client()
+    Raises ValueError if Claude declines (safety refusal), AND the Gemini
+    fallback below also fails/declines, or neither's response starts with
+    a recognized verdict token -- callers should treat this the same as a
+    Keepa-side analysis failure (see LeadAnalysisService.MAX_ANALYSIS_
+    ATTEMPTS).
 
+    Gemini fallback (2026-09-06, Tamara's own request after Atlas's own
+    ANTHROPIC_API_KEY ran out of credits and every lead analysis started
+    failing silently): if the Claude call fails for ANY reason -- out of
+    credits, rate limited, a transient outage -- this falls back to
+    Gemini's free tier (see _call_gemini_for_verdict) using the EXACT
+    SAME prompt, so a lead still gets a real verdict instead of sitting
+    unrated. The rationale is prefixed to say so plainly when this
+    happens -- a Gemini-generated verdict should never look identical to
+    a Claude one, since it's a different model's judgment on the same
+    money-relevant question.
+    """
     financials_block = (
         "VA/SAS-verified figures (ground truth -- treat as fact, do not "
         f"second-guess against the Keepa estimate below if one is present):\n{va_financials}\n"
@@ -446,6 +514,24 @@ def generate_verdict(
         "+ Sales rank drops suggest steady demand"
     )
 
+    try:
+        text = _call_claude_for_verdict(prompt)
+        provider_note = None
+    except Exception as exc:
+        print(f"Claude verdict call failed, falling back to Gemini: {exc}")
+        text = _call_gemini_for_verdict(prompt)
+        provider_note = "[Generated via Gemini fallback -- Claude was unavailable]"
+
+    verdict, rationale = _parse_verdict_response(text)
+
+    if provider_note:
+        rationale = f"{provider_note}\n{rationale}"
+
+    return verdict, rationale
+
+
+def _call_claude_for_verdict(prompt: str) -> str:
+    client = get_anthropic_client()
     response = client.messages.create(
         model=MODEL,
         max_tokens=1024,
@@ -456,7 +542,29 @@ def generate_verdict(
     if response.stop_reason == "refusal":
         raise ValueError("Claude declined to generate a verdict for this lead")
 
-    text = "".join(block.text for block in response.content if block.type == "text").strip()
+    return "".join(block.text for block in response.content if block.type == "text").strip()
+
+
+def _call_gemini_for_verdict(prompt: str) -> str:
+    """
+    Same prompt, Gemini's free tier instead of Claude -- see generate_
+    verdict's own docstring for when/why this is used. Raises on any
+    failure (including Gemini itself being unavailable/out of quota),
+    same as the Claude path -- callers already treat any exception here
+    as "this lead couldn't be analyzed right now", no separate handling
+    needed for a double failure.
+    """
+    client = get_gemini_client()
+    response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+
+    text = (response.text or "").strip()
+    if not text:
+        raise ValueError("Gemini returned an empty response (possibly a safety block)")
+
+    return text
+
+
+def _parse_verdict_response(text: str) -> tuple[str, str]:
     first_line, _, rest = text.partition("\n")
     verdict = first_line.strip().upper()
 
@@ -464,7 +572,7 @@ def generate_verdict(
         verdict = VERDICT_SYNONYMS.get(verdict, verdict)
 
     if verdict not in VERDICT_VALUES:
-        raise ValueError(f"Claude did not return a recognized verdict: {text[:200]!r}")
+        raise ValueError(f"Model did not return a recognized verdict: {text[:200]!r}")
 
     return verdict, _ensure_bulleted(rest.strip())
 

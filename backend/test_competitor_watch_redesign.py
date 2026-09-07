@@ -156,7 +156,17 @@ try:
     # 3 -- OA worth investigating: breakeven > 0 required, not the raw tag count
     # =====================================================================
     asin3 = f"{TEST_ASIN_PREFIX}C"
-    record_id3 = make_record(asin3, recommendation="IGNORE", buy_box_now=150.0, category_name="", fba_fee=6.0)
+    # profit/roi/monthly_sales/sales_drops_30d explicitly zeroed (not
+    # make_record's default "clean BUY" values) -- this scenario's real
+    # intent is "no confirmed economics, OA tag only", which only
+    # actually held under the OLD is_notable()-excludes-IGNORE-by-name
+    # behaviour; Opportunity Engine 2.0's lens reads the real numbers
+    # regardless of recommendation label, so the fixture must express
+    # the scenario numerically now, not just via the label.
+    record_id3 = make_record(
+        asin3, recommendation="IGNORE", buy_box_now=150.0, category_name="", fba_fee=6.0,
+        profit=0.0, roi=0.0, monthly_sales=0, sales_drops_30d=0,
+    )
     make_listing(seller2, asin3, record_id3, "OA / unclear", currently_buyable=False,
                  reasoning_json='{"note": "No recent EU margin or UK dip in the last 30 days"}')
 

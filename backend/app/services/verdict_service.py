@@ -615,48 +615,71 @@ class VerdictService:
             # buy-box price for each of the last 90 days and re-runs
             # the same ROI formula against every one of them, then
             # counts how many days would have cleared a viable ROI.
-            # Answers "how many of the last 90 days was this actually
+            # Answers "how many of the last N days was this actually
             # a good buy", which buy_box_90d's single average can't --
             # a product that's genuinely profitable on most days but
             # dragged under by a handful of low outliers looks
             # identical to one that's marginal every day if all you
             # have is the average (and vice versa for a mostly-bad
             # product with one high spike).
-            daily_prices = parser.daily_buy_box_prices(90)
-            priced_days = 0
-            days_at_min_roi = 0
-            days_at_target_roi = 0
+            #
+            # Real gap found live, 2026-09-07 (Tamara, re: B0FQCB7YS9
+            # showing zero days profitable at either bar): the original
+            # pairing -- 25%+ ROI and a 17%-labelled-as-10% floor, BOTH
+            # over the full 90 days -- meant a lead with a real recent
+            # margin that only opened up in, say, the last 3 weeks read
+            # identically to one that was never once viable in 90 days;
+            # both show "0 of 90". Replaced with two genuinely different
+            # windows/bars instead of one window at two bars: a TIGHTER
+            # ROI floor (25%) over a SHORTER, more-recent window (30
+            # days) -- "is this working RIGHT NOW" -- alongside a LOWER
+            # bar (20%) over the FULL 90 days -- "has this ever cleared
+            # a real margin recently at all". `daily_prices` is oldest-
+            # first (see daily_buy_box_prices' own docstring), so its
+            # last 30 entries are exactly the most recent 30 days.
+            #
+            # Real bug found live, 2026-09-07 follow-up (Tamara: "we are
+            # ... looking at individual days that it passed the criteria
+            # not an average") -- daily_buy_box_prices takes exactly ONE
+            # midnight snapshot per day, so a real intraday price spike
+            # that reverted the same day (confirmed live on B0FQCB7YS9:
+            # 2026-08-27, buy box jumped to £181.54 for ~2 hours then
+            # back down) was invisible to it, undercounting genuinely
+            # viable days. daily_buy_box_peak_prices uses each day's
+            # actual MAX price instead -- see its own docstring for why
+            # this is a separate method, not a change to the original.
+            daily_prices = parser.daily_buy_box_peak_prices(90)
+            RECENT_30D_ROI_PCT = FeeEngine.OA_TARGET_ROI_PCT  # 25% -- same bar as is_notable's own
+            RECENT_90D_ROI_PCT = 20.0
 
-            # 17% mirrors OpportunityEngine.MIN_VIABLE_ROI (the app's
-            # absolute floor before a lead is even CONSIDER-worthy,
-            # raised from 10% 2026-08-23); FeeEngine.OA_TARGET_ROI_PCT
-            # (25%) mirrors is_notable's own ROI bar (what Atlas treats
-            # as a strong lead elsewhere) -- both duplicated as
-            # literals rather than imported, same reasoning as
-            # OpportunityEngine's own PEAK_SALES_DROPS_THRESHOLD: this
-            # module already sits below OpportunityEngine/
-            # ProductRepository in the dependency graph and shouldn't
-            # import back up to them just for one constant.
-            MIN_VIABLE_ROI_PCT = 17.0
+            priced_days_90d = 0
+            days_at_20pct_90d = 0
+            priced_days_30d = 0
+            days_at_25pct_30d = 0
+            first_index_of_last_30 = len(daily_prices) - 30
 
-            for day_price in daily_prices:
+            for i, day_price in enumerate(daily_prices):
                 if not day_price:
                     continue
 
-                priced_days += 1
+                priced_days_90d += 1
                 day_roi = FeeEngine.roi_at_price(
                     day_price, cost_price, category_name, fees.fba_fee, fees.eu_vat_rate_used,
                 )
 
-                if day_roi >= MIN_VIABLE_ROI_PCT:
-                    days_at_min_roi += 1
-                if day_roi >= FeeEngine.OA_TARGET_ROI_PCT:
-                    days_at_target_roi += 1
+                if day_roi >= RECENT_90D_ROI_PCT:
+                    days_at_20pct_90d += 1
+
+                if i >= first_index_of_last_30:
+                    priced_days_30d += 1
+                    if day_roi >= RECENT_30D_ROI_PCT:
+                        days_at_25pct_30d += 1
 
             viable_days_90d = {
-                "priced_days": priced_days,
-                "days_at_min_roi": days_at_min_roi,
-                "days_at_target_roi": days_at_target_roi,
+                "priced_days_90d": priced_days_90d,
+                "days_at_20pct_90d": days_at_20pct_90d,
+                "priced_days_30d": priced_days_30d,
+                "days_at_25pct_30d": days_at_25pct_30d,
             }
 
         # Deliberately last: everything above is already paid for by
@@ -735,6 +758,14 @@ class VerdictService:
             "asin": product.asin,
             "title": product.title,
             "brand": product.brand,
+            # Real gap found live, 2026-09-07: this Keepa fetch already
+            # gives us product.image (see ProductMapper.from_keepa) at
+            # zero extra cost -- it just never made it into the saved
+            # metrics dict, so a VA sheet lead (which has no ProductRecord
+            # of its own) never showed a photo even after analysis. Scan/
+            # competitor items get their image from ProductRecord.image
+            # instead; this closes the same gap for the Lead path.
+            "image": product.image,
             "category_name": category_name,
             "ean": product.ean,
 
@@ -777,6 +808,17 @@ class VerdictService:
             "rating": parser.rating(),
             "review_count": parser.review_count(),
             "is_amazon_on_listing": parser.is_amazon_on_listing(),
+            # Real gap found live, 2026-09-07 (Tamara, re: B0CFV7Z7SJ:
+            # "this only had amazon on the buy box in the past 30 days
+            # which is a red flag I should see") -- amazon_buy_box_
+            # percentage above only reads the CURRENT moment, so it
+            # returns 0 the instant Amazon isn't the buy box holder
+            # RIGHT NOW (e.g. Amazon momentarily between stock), silently
+            # hiding a genuine recent pattern of Amazon totally
+            # dominating the buy box. This reads the real 30-day
+            # seller-ID history instead -- see KeepaParser.buy_box_
+            # holder_breakdown's own docstring.
+            "buy_box_holder_30d": parser.buy_box_holder_breakdown(30),
 
             # Price history / stability
             "buy_box_now": parser.buy_box_now(),

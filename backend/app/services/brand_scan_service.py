@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 from app.keepa.parser import KeepaParser
 from app.services.product_finder import ProductFinder
-from app.services.product_service import ProductService
+from app.services.product_service import ProductService, KeepaTokensExhaustedError
 from app.services.product_mapper import ProductMapper, MARKETPLACE_CURRENCY
 from app.services.currency_service import CurrencyService
 from app.services.fee_engine import FeeEngine
@@ -171,9 +171,25 @@ class BrandScanService:
                     break
 
             tokens_before = self.product_service.api.tokens_left
-            chunk_products = self.product_service.get_products(
-                chunk, marketplace, full=full, usage_category=self.usage_category,
-            )
+            try:
+                chunk_products = self.product_service.get_products(
+                    chunk, marketplace, full=full, usage_category=self.usage_category,
+                )
+            except KeepaTokensExhaustedError:
+                # The pre-checks above are estimates -- on the very
+                # first chunk of a call there's no measured
+                # cost_estimate yet, and even a measured one can be
+                # stale if something else (the live scheduler, another
+                # manual scan) spent tokens between our check and this
+                # request actually going out. Keepa's own server-side
+                # rejection is the ground truth; treat it exactly like
+                # a pre-check failure -- stop here, don't fetch this
+                # chunk, let the caller retry later -- instead of
+                # raising out of scan(), which every caller (Scan
+                # Queue's live scheduler, Review Queue rechecks, one-
+                # off scripts) assumes can never happen.
+                ran_out = True
+                break
             tokens_after = self.product_service.api.tokens_left
 
             products.extend(chunk_products)
@@ -402,6 +418,35 @@ class BrandScanService:
                         f"scanning to avoid spending tokens hunting for more of a brand "
                         f"you can't currently sell. Remove it from Gated Brands on the "
                         f"Exclusions page if that changes."
+                    ),
+                }
+
+            # Excluded-brand pre-token block (2026-09-05) -- same
+            # brand-search-only scoping and zero-token-spend refusal as
+            # the gated check above, but for ExcludedBrand: "we've
+            # decided against this brand", a DIFFERENT reason than
+            # gating (can't get Amazon approval) -- see that model's
+            # own docstring. Unlike a gated brand, an excluded one is
+            # also removed from the Scan Queue immediately when the
+            # exclusion is added (ProductRepository.add_brand_exclusion),
+            # so this branch mainly protects against a manual/Discovery
+            # scan attempt, or a brief window before that removal lands.
+            excluded_brand_names = ProductRepository.get_excluded_brand_names()
+
+            if brand in excluded_brand_names:
+                return {
+                    "brand": brand, "count": 0, "opportunities": [],
+                    "skipped_excluded": 0, "skipped_user_excluded": 0,
+                    "skipped_known_excluded": 0, "skipped_recently_scanned": 0,
+                    "skipped_unprofitable_ceiling": 0, "skipped_dead_listing": 0,
+                    "marketplaces_skipped_low_tokens": [], "marketplaces_partial_low_tokens": {},
+                    "tokens_remaining": tokens_before_search,
+                    "asins_scanned": 0, "raw_page_count": None, "uk_ran_out": False,
+                    "excluded_brand_skip": True,
+                    "error": (
+                        f"'{brand}' is on the excluded brands list -- skipping brand-search "
+                        f"scanning. Remove it from Excluded Brands on the Exclusions page if "
+                        f"that changes."
                     ),
                 }
 
@@ -935,6 +980,25 @@ class BrandScanService:
                 uk_product, product, category_name,
             )
             for field_name, value in peak_evidence.items():
+                setattr(product, field_name, value)
+
+            # "The last time offers spiked, what did price actually do
+            # afterward" (2026-09-04, Opportunity Engine 2.0 -- Tamara's
+            # own ask). Zero extra Keepa cost -- uk_product is the same
+            # already-fetched response peak_evidence above just used.
+            # See SourcingClassifier.compute_competition_spike_evidence's
+            # own docstring; {} (no fields set) when there's no spike in
+            # the window at all, left at Product's own None defaults.
+            spike_evidence = SourcingClassifier.compute_competition_spike_evidence(uk_product)
+            for field_name, value in spike_evidence.items():
+                setattr(product, field_name, value)
+
+            # The mirror question -- "the last time price dropped, were
+            # offers rising then" (2026-09-04, Opportunity Engine 2.0,
+            # Tamara's own follow-up). Same zero-extra-cost reuse of
+            # uk_product.
+            dip_evidence = SourcingClassifier.compute_price_drop_offer_context(uk_product)
+            for field_name, value in dip_evidence.items():
                 setattr(product, field_name, value)
 
             # Local import -- WatchlistService imports BrandScanService

@@ -9,7 +9,7 @@ from app.keepa.client import get_keepa_client
 from app.models.product import Product
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
-from app.services.sourcing_classifier import SourcingClassifier
+from app.services.sourcing_classifier import SourcingClassifier, BRAND_PATTERN_MIN_SAMPLE
 from app.services.activity_log import ActivityLog
 from app.services.token_usage_service import TokenUsageService
 from app.services.fee_engine import FeeEngine
@@ -19,6 +19,16 @@ from app.services.fee_engine import FeeEngine
 # ReplenService.CHECK_BATCH_SIZE, sized so a single low-token stop
 # doesn't waste a huge partially-fetched batch.
 RECLASSIFY_BATCH_SIZE = 15
+
+# Daily cap for the SCHEDULED reclassify tick (2026-09-05) -- passed as
+# reclassify_all's max_asins, not a change to that function's own
+# manual-admin-route default (None -- no cap). Same value as
+# ReviewQueueService.MAX_STALE_RECHECK_PER_RUN, for the same reason:
+# real tokens, no free recompute path (see reclassify_all's own
+# docstring), so a large backlog (1,178 never-reclassified ASINs
+# confirmed live the day this was added) clears gradually rather than
+# in one uncapped daily run.
+RECLASSIFY_DAILY_CAP = 50
 
 # A "hot" lead -- the same ASIN independently listed by 2+ distinct
 # tracked competitors within this many days. Corroboration from
@@ -150,6 +160,51 @@ class SellerWatchService:
         )
 
     @staticmethod
+    def brand_sourcing_pattern(brand: str) -> dict | None:
+        """
+        Historical sourcing_tag distribution for `brand` across EVERY
+        non-dismissed detection Atlas has ever made (any seller, any
+        time) -- 2026-09-07, Tamara's own point: "WORX often comes up
+        via EU A2A [as does] Makita, but ... Philips ... UK retailers
+        often have Philips sales too, so if there is genuinely no EU
+        price drops then more likely to be OA". Feeds SourcingClassifier.
+        assess_certainty's brand-history fact -- deliberately a SEPARATE,
+        broader signal from _brand_repeat_count above (that one asks "has
+        THIS SELLER listed this brand repeatedly", a wholesale signal;
+        this asks "across ALL sellers, how does this brand usually get
+        classified", a sourcing-pattern signal).
+
+        Returns None for an empty/unknown brand or a sample smaller than
+        SourcingClassifier.BRAND_PATTERN_MIN_SAMPLE (assess_certainty
+        applies that same floor again itself, but returning None here
+        lets a caller skip the query's own cost -- N/A -- entirely, and
+        keeps "no real pattern yet" and "0% EU A2A" visibly distinct).
+        """
+        if not brand:
+            return None
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(SellerNewListing.sourcing_tag, func.count(SellerNewListing.id))
+                .join(ProductRecord, SellerNewListing.product_record_id == ProductRecord.id)
+                .filter(func.lower(ProductRecord.brand) == brand.lower())
+                .filter(SellerNewListing.dismissed == False)  # noqa: E712
+                .filter(SellerNewListing.sourcing_tag.isnot(None))
+                .group_by(SellerNewListing.sourcing_tag)
+                .all()
+            )
+        finally:
+            db.close()
+
+        total = sum(count for _, count in rows)
+        if total < BRAND_PATTERN_MIN_SAMPLE:
+            return None
+
+        eu_a2a_count = next((count for tag, count in rows if tag == "EU A2A"), 0)
+        return {"sample_size": total, "eu_a2a_pct": (eu_a2a_count / total) * 100.0}
+
+    @staticmethod
     def _persist_classification(listing: SellerNewListing, classification, recommendation: str | None) -> None:
         """
         Writes a fresh SourcingClassifier result onto a listing --
@@ -194,11 +249,57 @@ class SellerWatchService:
             except Exception:
                 previous_reasoning = None
 
-        listing.sourcing_tag = classification.sourcing_tag
+        # Skip the automated tag once a human has manually corrected it
+        # (2026-09-07, Tamara) -- see SellerNewListing.manually_classified's
+        # own docstring for the real case this fixes: Atlas confidently
+        # re-tagging a manually-corrected listing back to its own (wrong)
+        # answer on the very next scheduled recheck. currently_buyable and
+        # the evidence archive still update either way -- both are
+        # independent of which sourcing_tag is currently displayed.
+        if not listing.manually_classified:
+            listing.sourcing_tag = classification.sourcing_tag
         listing.currently_buyable = recommendation == "BUY"
         listing.sourcing_reasoning_json = json.dumps(
             SourcingClassifier.merge_evidence(previous_reasoning, classification)
         )
+
+    @staticmethod
+    def set_manual_sourcing_tag(asin: str, sourcing_tag: str) -> int:
+        """
+        Human correction of sourcing_tag (Review Queue's OA to Investigate
+        detail panel, 2026-09-07) -- for when Atlas's own classifier got
+        it wrong, e.g. a real EU A2A opportunity tagged "OA / unclear"
+        because SourcingClassifier only found supporting price evidence
+        outside its own recent-window check (see SellerNewListing.
+        manually_classified's own docstring for the real case this fixes).
+
+        Applies to EVERY non-dismissed listing for this ASIN, not just
+        one -- sourcing_tag describes how the PRODUCT is sourced, not
+        anything seller-specific, so a correction should hold regardless
+        of which competitor's detection happens to be showing it. Sets
+        manually_classified=True on each so _persist_classification's
+        next automated pass (run_check/rescan_unscored/reclassify_all)
+        never silently reverts this. Returns how many rows were updated.
+
+        sourcing_tag must be one of SOURCING_TAG_BY_TAB's values (EU A2A/
+        UK A2A/Wholesale (likely)/OA / unclear) -- the caller (the route)
+        validates this before calling in, this method trusts it.
+        """
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(SellerNewListing)
+                .filter(SellerNewListing.asin == asin)
+                .filter(SellerNewListing.dismissed == False)  # noqa: E712
+                .all()
+            )
+            for row in rows:
+                row.sourcing_tag = sourcing_tag
+                row.manually_classified = True
+            db.commit()
+            return len(rows)
+        finally:
+            db.close()
 
     @staticmethod
     def run_check() -> dict:
@@ -429,7 +530,7 @@ class SellerWatchService:
             db.close()
 
     @staticmethod
-    def reclassify_all() -> dict:
+    def reclassify_all(max_asins: int | None = None) -> dict:
         """
         One-off backfill: re-classifies EVERY non-dismissed detection
         against a FRESH Keepa fetch, regardless of its current
@@ -442,15 +543,35 @@ class SellerWatchService:
         costs real tokens, same as any rescan -- there's no free
         recompute path.
 
+        Also the fix for a real, confirmed bug (2026-09-05, Tamara's
+        own report on B09446293Y): a listing classified within days of
+        a genuine EU price dip can see "0 priced days" even though the
+        dip is real and squarely inside RECENT_WINDOW_DAYS -- Keepa's
+        own historical price series for the last few days isn't always
+        fully settled yet at classification time. Without a reclassify
+        path, that listing stays wrongly tagged "OA / unclear" forever.
+        See _weekly_recheck_scheduler in main.py for the daily,
+        max_asins-capped call that now catches this automatically
+        instead of relying on someone noticing and clicking the manual
+        admin button (competitors_reclassify_all) below.
+
         Processes oldest-reclassified-first (NULL -- never done --
         first), one Keepa scan() call per RECLASSIFY_BATCH_SIZE
         distinct ASINs, committing after each batch. Stops as soon as
-        a batch comes back with scan()'s low-token error rather than
-        waiting/blocking, so a single call stays bounded (safe to run
-        from an HTTP request) -- the caller just calls this again
-        (e.g. clicking the button again once tokens refill) to
-        continue from where it left off, same resume pattern as
-        ReplenService._run_check.
+        a batch comes back with scan()'s low-token error, OR once
+        max_asins distinct ASINs have been processed THIS call
+        (checked between batches, never mid-batch) -- whichever comes
+        first. max_asins=None (the manual admin route's own default,
+        unchanged) means "no cap, run until token-exhausted", exactly
+        the existing behaviour; the daily scheduler passes a real cap
+        (see RECLASSIFY_DAILY_CAP) so a large backlog clears
+        gradually, same "capped, resumable, oldest-first" convention
+        as every other daily backstop in this app, rather than one
+        job trying to force the whole backlog through in a single tick
+        (see the 2026-09-05 bulk-recheck incident this convention
+        already exists to avoid). Either way, the caller (or next
+        day's scheduler tick) just picks up again from oldest-
+        reclassified-first where this call left off.
 
         Multiple SellerNewListing rows can share the same ASIN
         (different tracked sellers who both listed it) -- each ASIN is
@@ -485,6 +606,9 @@ class SellerWatchService:
             tokens_remaining = None
 
             for i in range(0, len(distinct_asins), RECLASSIFY_BATCH_SIZE):
+                if max_asins is not None and processed_asins >= max_asins:
+                    break
+
                 batch_asins = distinct_asins[i:i + RECLASSIFY_BATCH_SIZE]
 
                 scan_result = scanner.scan(
@@ -557,6 +681,199 @@ class SellerWatchService:
                 "stopped_early": stopped_early,
                 "tokens_remaining": tokens_remaining,
             }
+        finally:
+            db.close()
+
+    @staticmethod
+    def reclassify_oa_investigate_queue(max_asins: int | None = None, max_age_days: int | None = 14) -> dict:
+        """
+        Bulk re-run of SourcingClassifier against a fresh Keepa fetch,
+        scoped to ONLY the current OA to Investigate population
+        (sourcing_tag=="OA / unclear", not dismissed, not already
+        manually_classified) -- 2026-09-07, Tamara: "I want everything in
+        the OA investigation queues reclassified and details of how many
+        were reclassified."
+
+        Deliberately its OWN method rather than reclassify_all(max_asins=...)
+        with a bigger cap: reclassify_all() walks the ENTIRE non-dismissed
+        backlog oldest-reclassified-first regardless of current tag (it
+        exists to catch classifier RULE changes affecting any listing,
+        e.g. the EU A2A window widening this method's docstring below
+        references) -- that would burn tokens re-checking listings
+        already correctly tagged EU A2A/UK A2A/Wholesale, which is not
+        what "reclassify the OA queue" asked for. This filters to exactly
+        the population feeding that one view.
+
+        max_age_days=14 (Tamara, 2026-09-07: "with our rescan lets keep
+        this to recent opportunities... not older than 14 days") -- of
+        the real 597-row backlog measured the day this was added, 385
+        (nearly two thirds) were already older than 14 days, so this
+        matters: without it, most of a real Keepa run would be spent on
+        stale detections instead of the recent ones actually worth acting
+        on. Filters on detected_at, not sourcing_reclassified_at -- this
+        is about how OLD the underlying competitor sighting is, not when
+        it was last checked. None means no age limit (the pre-2026-09-07
+        behaviour), kept as an explicit opt-out rather than removed.
+
+        Skips manually_classified rows entirely (both from the query and
+        from re-persisting) -- a human already corrected those; a bulk
+        run has no business overwriting that decision.
+
+        Same batching/token-exhaustion handling as reclassify_all (see
+        its own docstring) -- one Keepa scan() call per RECLASSIFY_BATCH_SIZE
+        ASINs, stops as soon as a batch reports the low-token error, or
+        once max_asins ASINs have been processed. max_asins=None runs
+        until the whole (age-filtered) OA queue is done or tokens run out.
+
+        Returns a breakdown by resulting tag, not just a single "flipped"
+        count -- exactly what "details of how many were reclassified"
+        asked for.
+        """
+        db = SessionLocal()
+
+        try:
+            query = (
+                db.query(SellerNewListing)
+                .filter(SellerNewListing.sourcing_tag == "OA / unclear")
+                .filter(SellerNewListing.dismissed == False)  # noqa: E712
+                .filter(SellerNewListing.manually_classified == False)  # noqa: E712
+            )
+            if max_age_days is not None:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+                query = query.filter(SellerNewListing.detected_at >= cutoff)
+            pending = query.all()
+
+            if not pending:
+                return {
+                    "queue_size": 0, "processed": 0, "flipped": 0,
+                    "flipped_to": {}, "stayed_oa": 0, "stopped_early": False,
+                    "tokens_remaining": None,
+                }
+
+            rows_by_asin = {}
+            for listing in pending:
+                rows_by_asin.setdefault(listing.asin, []).append(listing)
+
+            distinct_asins = list(rows_by_asin.keys())
+            queue_size = len(distinct_asins)
+
+            scanner = BrandScanService(usage_category="competitor_watch")
+            processed_asins = 0
+            flipped = 0
+            flipped_to: dict[str, int] = {}
+            stayed_oa = 0
+            stopped_early = False
+            tokens_remaining = None
+
+            for i in range(0, len(distinct_asins), RECLASSIFY_BATCH_SIZE):
+                if max_asins is not None and processed_asins >= max_asins:
+                    break
+
+                batch_asins = distinct_asins[i:i + RECLASSIFY_BATCH_SIZE]
+
+                scan_result = scanner.scan(
+                    brand="oa-queue-reclassify", asins=batch_asins,
+                    limit=len(batch_asins), include_no_eu_source=True,
+                    force_rescan=True,
+                )
+                tokens_remaining = scan_result.get("tokens_remaining", tokens_remaining)
+
+                if scan_result.get("error"):
+                    stopped_early = True
+                    break
+
+                scored_by_asin = {
+                    opp["product"]["asin"]: opp
+                    for opp in scan_result.get("opportunities", [])
+                }
+                record_ids = ProductRepository.get_latest_record_ids(batch_asins)
+                now = datetime.now(timezone.utc)
+
+                for asin in batch_asins:
+                    opp = scored_by_asin.get(asin)
+
+                    for listing in rows_by_asin[asin]:
+                        listing.sourcing_reclassified_at = now
+
+                        if not opp:
+                            continue
+
+                        product = Product(**opp["product"])
+                        brand_repeat = SellerWatchService._brand_repeat_count(
+                            db, listing.tracked_seller_id, product.brand
+                        )
+                        classification = SourcingClassifier.classify(
+                            product, brand_repeat_count=brand_repeat
+                        )
+                        recommendation = (opp.get("report") or {}).get("recommendation")
+
+                        listing.product_record_id = record_ids.get(asin) or listing.product_record_id
+                        SellerWatchService._persist_classification(listing, classification, recommendation)
+
+                        if listing.sourcing_tag != "OA / unclear":
+                            flipped += 1
+                            flipped_to[listing.sourcing_tag] = flipped_to.get(listing.sourcing_tag, 0) + 1
+                        else:
+                            stayed_oa += 1
+
+                    processed_asins += 1
+
+                db.commit()
+
+            return {
+                "queue_size": queue_size,
+                "processed": processed_asins,
+                "flipped": flipped,
+                "flipped_to": flipped_to,
+                "stayed_oa": stayed_oa,
+                "stopped_early": stopped_early,
+                "tokens_remaining": tokens_remaining,
+            }
+        finally:
+            db.close()
+
+    @staticmethod
+    def archive_stale_oa_investigate(max_age_days: int = 14) -> int:
+        """
+        Daily housekeeping (2026-09-07, Tamara: "maybe we should clear
+        out/archive some leads older than say 14 days" -- confirmed
+        scope: OA/unclear only, recurring policy): soft-archives
+        (dismissed=True, same reversible flag Competitor Watch already
+        uses everywhere else -- see SellerNewListing.dismissed's own
+        docstring) any OA-to-Investigate listing that's sat untouched
+        past max_age_days. Of the real 597-row backlog measured the day
+        this was added, 385 were already older than 14 days -- this is
+        what stops that number from only ever growing.
+
+        Scoped identically to list_oa_worth_investigating's own
+        "outstanding" filter (sourcing_tag=="OA / unclear", dismissed==
+        False, review IS NULL) plus manually_classified==False, so this
+        can never archive something a human already resolved (review is
+        no longer None once Buy/Reject/etc. is applied -- see
+        ReviewQueueService.resolve_item) or manually corrected (a human
+        choosing to keep something tagged OA/unclear on purpose is not
+        the same as it sitting neglected). Pure DB write, zero Keepa
+        cost -- safe to run every scheduler tick regardless of token
+        budget, same as WatchlistService.prune_stale_auto_adds.
+
+        Returns how many rows were archived.
+        """
+        db = SessionLocal()
+        try:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+            stale = (
+                db.query(SellerNewListing)
+                .filter(SellerNewListing.sourcing_tag == "OA / unclear")
+                .filter(SellerNewListing.dismissed == False)  # noqa: E712
+                .filter(SellerNewListing.manually_classified == False)  # noqa: E712
+                .filter(SellerNewListing.review.is_(None))
+                .filter(SellerNewListing.detected_at < cutoff)
+                .all()
+            )
+            for listing in stale:
+                listing.dismissed = True
+            db.commit()
+            return len(stale)
         finally:
             db.close()
 
@@ -1040,6 +1357,31 @@ class SellerWatchService:
     # classification logic, no write to any of them. ----
 
     @staticmethod
+    def oa_price_guide_for_record(record) -> dict | None:
+        """
+        The OA price-guide breakeven/target pair for ONE ProductRecord
+        (FeeEngine.max_source_cost against today's Amazon price/fees) --
+        extracted from list_oa_worth_investigating below (2026-09-05,
+        Review Queue OA view) so a single-ASIN lookup (ReviewQueueService.
+        get_queue_item) can reuse the EXACT same computation without
+        re-scanning the whole OA/unclear population just to find one row.
+        None if there's no breakeven at all (Amazon's own price/fees
+        leave no room to source this profitably via OA regardless of
+        buy price) -- same "not worth surfacing" bar list_oa_worth_
+        investigating already applies.
+        """
+        breakeven = FeeEngine.max_source_cost(
+            record.buy_box_now, record.category_name, record.fba_fee, target_roi_pct=0.0,
+        )
+        if breakeven <= 0:
+            return None
+        target = FeeEngine.max_source_cost(
+            record.buy_box_now, record.category_name, record.fba_fee,
+            target_roi_pct=FeeEngine.OA_TARGET_ROI_PCT,
+        )
+        return {"target": target, "breakeven": breakeven}
+
+    @staticmethod
     def list_oa_worth_investigating(limit: int = 200):
         """
         OA/unclear detections where the SAME OA price-guide economics
@@ -1075,18 +1417,12 @@ class SellerWatchService:
 
             result = []
             for listing, seller, record in rows:
-                breakeven = FeeEngine.max_source_cost(
-                    record.buy_box_now, record.category_name, record.fba_fee, target_roi_pct=0.0,
-                )
-                if breakeven <= 0:
+                oa_price_guide = SellerWatchService.oa_price_guide_for_record(record)
+                if oa_price_guide is None:
                     continue
-                target = FeeEngine.max_source_cost(
-                    record.buy_box_now, record.category_name, record.fba_fee,
-                    target_roi_pct=FeeEngine.OA_TARGET_ROI_PCT,
-                )
                 result.append({
                     "listing": listing, "seller": seller, "record": record,
-                    "oa_price_guide": {"target": target, "breakeven": breakeven},
+                    "oa_price_guide": oa_price_guide,
                 })
                 if len(result) >= limit:
                     break

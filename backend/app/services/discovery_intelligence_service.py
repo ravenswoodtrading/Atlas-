@@ -26,12 +26,40 @@ Keepa on every scored row regardless of what triggered the scan, so
 it's the correct, consistent key for both competitor evidence and our
 own scan performance.
 """
+import time as _time
 from datetime import datetime, timedelta, timezone
 
 from app.config.exclusions import is_gated_by_name
 from app.database.database import SessionLocal
 from app.database.models import ProductRecord, SellerNewListing, TrackedSeller
 from app.services.product_repository import ProductRepository
+from app.services.review_queue_service import ReviewQueueService
+from app.services import opportunity_lens_service as lens_service
+
+# Every possible OpportunityLensService Action, in a fixed display
+# order -- used to seed each brand's actions_all_time/actions_recent
+# dict with 0 for every key (not just the ones that happened to occur),
+# so a template/report can iterate a stable key set without a KeyError.
+ALL_ACTIONS = (
+    lens_service.ACTION_BUY_NOW, lens_service.ACTION_PRICE_DROP_BUY_NOW,
+    lens_service.ACTION_BUY_WITH_CAUTION, lens_service.ACTION_HIGH_VALUE_LOW_CONFIDENCE,
+    lens_service.ACTION_INVESTIGATE, lens_service.ACTION_WATCH,
+    lens_service.ACTION_HISTORICAL_RECURRING, lens_service.ACTION_BLOCKED,
+)
+
+# Action states that count as a genuinely confirmed, currently-fresh
+# BUY-tier opportunity (Discovery Intelligence Phase 2, 2026-09-04) --
+# the SAME two states OpportunityLensService itself treats as "act on
+# this now" (see that module's own compute() docstring). Deliberately
+# excludes BUY_WITH_CAUTION -- that's still "notable" but paired with
+# an active risk flag, one step down from a clean confirmed BUY.
+CONFIRMED_BUY_ACTIONS = (lens_service.ACTION_BUY_NOW, lens_service.ACTION_PRICE_DROP_BUY_NOW)
+
+# "Give it the small additional evidence signal" bar (Discovery
+# Intelligence Phase 1 design, approved 2026-09-04) -- same style as
+# distinct_competitors' own >=3 threshold below, not a new kind of
+# number: a real, inspectable count, not a percentage.
+HIGH_VALUE_LOW_CONFIDENCE_MEANINGFUL_COUNT = 3
 
 EU_MARKETPLACES = ("DE", "FR", "ES", "IT")
 
@@ -92,6 +120,22 @@ EU_A2A_PLUG_RISK_CATEGORIES = {
     "Home & Garden",
     "Beauty",
 }
+
+
+# Performance cache for list_discovery_targets (2026-09-04, Phase 5A
+# follow-up) -- measured directly at ~7s per uncapped call against the
+# live database (the DISCOVERY_TARGETS_LIMIT bump in Phase 4D means
+# every caller now effectively computes the FULL ranked list regardless
+# of the `limit` they pass, since scoring happens before the final
+# slice). Discovery evidence moves at the pace of scans, not seconds,
+# so recomputing this on every single page view is pure overhead --
+# same pattern already used for ScanQueueService._brand_tier_map
+# (Phase 4A) and scan_economics_service (Phase 5A). Caches the FULL
+# scored+sorted list (unsliced); list_discovery_targets just slices it,
+# so every caller's own `limit` still behaves identically.
+_TARGETS_CACHE_TTL_SECONDS = 300
+_targets_cache: list = []
+_targets_cache_built_at: float = 0.0
 
 
 def _normalize(value: str) -> str:
@@ -293,6 +337,35 @@ class DiscoveryIntelligenceService:
                 to EU-marketplace records BEFORE grouping, newest
                 first, capped at RECENT_SCAN_EVENTS),
             "eu_recent_hit_rate": float | None (over eu_recent_events),
+
+            ---- Phase 2 (2026-09-04) -- Action-aware evidence via
+            OpportunityLensService.compute(), the SAME lens the Review
+            Queue itself uses. This is what score_target's strongest
+            own-scan signal and conflict cap read now -- see that
+            method's own docstring for why literal recommendation==
+            "BUY" (eu_buy_count above, kept unchanged for display) is no
+            longer trusted as the primary signal: a confirmed BUY that's
+            gone stale reads as HISTORICAL_RECURRING under the lens, not
+            a live BUY_NOW, and a brand can carry real economic signal
+            (HIGH_VALUE_LOW_CONFIDENCE) with zero literal BUY at all: ----
+
+            "actions_all_time": {action: count} for all 8
+                OpportunityLensService actions (ALL_ACTIONS), computed
+                over eu_latest (already latest-per-ASIN, EU-scoped --
+                cannot double-count a brand via superseded historical
+                rows for the same ASIN). Never discarded.
+            "actions_recent": same shape, restricted to eu_latest rows
+                scanned within RECENT_WINDOW_DAYS -- kept VISIBLY
+                SEPARATE from actions_all_time, never merged into one
+                number (Phase 1's own recency requirement).
+            "confirmed_buy_count_all_time" / "_recent": BUY_NOW +
+                PRICE_DROP_BUY_NOW counts (CONFIRMED_BUY_ACTIONS) --
+                deliberately excludes BUY_WITH_CAUTION (notable, but
+                paired with an active risk flag).
+            "high_value_low_confidence_count": actions_all_time's
+                HIGH_VALUE_LOW_CONFIDENCE count -- real economics, still
+                thin evidence; score_target treats this as meaningfully
+                weaker than a confirmed BUY, never equivalent to it.
         }}
         """
         db = SessionLocal()
@@ -354,6 +427,29 @@ class DiscoveryIntelligenceService:
             eu_recent_buy = sum(e["buy"] for e in eu_events)
             eu_recent_products = sum(e["products"] for e in eu_events)
 
+            # ================================================================
+            # Discovery Intelligence Phase 2 (2026-09-04) -- Action-aware
+            # evidence via OpportunityLensService, the SAME lens the Review
+            # Queue itself uses. Runs on eu_latest -- already the latest-
+            # per-ASIN, EU-marketplace-scoped list computed above, so this
+            # cannot double-count a brand's history via old, superseded
+            # ProductRecord rows for the same ASIN. NOT recommendation==
+            # "BUY" -- see this method's own docstring update below for why.
+            actions_all_time = {a: 0 for a in ALL_ACTIONS}
+            actions_recent = {a: 0 for a in ALL_ACTIONS}
+            recent_cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENT_WINDOW_DAYS)).replace(tzinfo=None)
+
+            for r in eu_latest:
+                lead = ReviewQueueService._scan_lead_dict(r)
+                action = lens_service.compute(lead)["action"]
+                actions_all_time[action] += 1
+                if r.scanned_at and r.scanned_at >= recent_cutoff:
+                    actions_recent[action] += 1
+
+            confirmed_buy_count_all_time = sum(actions_all_time[a] for a in CONFIRMED_BUY_ACTIONS)
+            confirmed_buy_count_recent = sum(actions_recent[a] for a in CONFIRMED_BUY_ACTIONS)
+            high_value_low_confidence_count = actions_all_time[lens_service.ACTION_HIGH_VALUE_LOW_CONFIDENCE]
+
             result[brand] = {
                 "category_name": max(category_votes, key=category_votes.get) if category_votes else "",
                 "scanned": scanned,
@@ -374,6 +470,24 @@ class DiscoveryIntelligenceService:
                 "eu_last_buy_at": eu_last_buy_at,
                 "eu_recent_events": eu_events,
                 "eu_recent_hit_rate": round(eu_recent_buy / eu_recent_products * 100, 1) if eu_recent_products else None,
+
+                # ---- Phase 2 Action-aware evidence (2026-09-04) ----
+                # actions_all_time/actions_recent kept VISIBLY SEPARATE
+                # (never merged into one count) -- Discovery Intelligence
+                # Phase 1's own recency requirement: older evidence is
+                # never discarded, just distinguished from current
+                # evidence. Both are EU-marketplace-scoped, latest-per-
+                # ASIN (same eu_latest list eu_buy_count etc above use).
+                "actions_all_time": actions_all_time,
+                "actions_recent": actions_recent,
+                # BUY_NOW + PRICE_DROP_BUY_NOW -- what score_target's
+                # strongest own-scan signal and conflict cap now read,
+                # replacing the old literal recommendation=="BUY" count
+                # (still available above as eu_buy_count, unchanged, for
+                # any caller still relying on that literal count).
+                "confirmed_buy_count_all_time": confirmed_buy_count_all_time,
+                "confirmed_buy_count_recent": confirmed_buy_count_recent,
+                "high_value_low_confidence_count": high_value_low_confidence_count,
             }
 
         return result
@@ -559,14 +673,71 @@ class DiscoveryIntelligenceService:
         # is kept separately, display-only, so the UI can still show
         # "we've scanned this brand N times total" for context.
         scanned = own.get("eu_a2a_count", 0)
-        buy_count = own.get("eu_buy_count", 0)
+        # Discovery Intelligence Phase 2 (2026-09-04) -- buy_count now
+        # means Action-CONFIRMED evidence (BUY_NOW + PRICE_DROP_BUY_NOW,
+        # via OpportunityLensService -- see get_own_scan_performance's
+        # own docstring), not literal recommendation=="BUY". A stale
+        # confirmed BUY no longer counts as fresh evidence here; it's
+        # handled by the separate "historical" branch just below instead.
+        buy_count = own.get("confirmed_buy_count_all_time", 0)
+        buy_count_recent = own.get("confirmed_buy_count_recent", 0)
+        high_value_low_confidence_count = own.get("high_value_low_confidence_count", 0)
         total_scanned = own.get("scanned", 0)
 
         if scanned:
-            if buy_count > 0 and own.get("eu_recent_events") and own["eu_recent_events"][0]["buy"] > 0:
+            if buy_count_recent > 0:
                 score += 3
-                reasons.append({"text": "Our last EU-sourced scan found a genuine EU A2A BUY", "points": 3, "kind": "pos"})
+                plural = "" if buy_count_recent == 1 else "s"
+                reasons.append({
+                    "text": f"Our recent EU scans produced {buy_count_recent} confirmed BUY opportunit{'y' if buy_count_recent == 1 else 'ies'}",
+                    "points": 3, "kind": "pos",
+                })
                 sources.add("OUR_SCANS")
+            elif buy_count > 0:
+                # Historical confirmed BUY evidence (Discovery
+                # Intelligence Phase 1 design) -- real, but no longer
+                # recent (see actions_recent vs actions_all_time's own
+                # docstring: the SAME confirmed-BUY-tier ASIN is now
+                # reading as HISTORICAL_RECURRING under the lens, e.g.
+                # because it hasn't been rechecked recently). Weaker
+                # signal, existing +1 magnitude (not the +3 a fresh
+                # confirmed BUY earns) -- never invented, reused from
+                # the profitability bonus just below.
+                score += 1
+                reasons.append({
+                    "text": "Previous confirmed BUY evidence exists, but it is no longer recent",
+                    "points": 1, "kind": "pos",
+                })
+                sources.add("OUR_SCANS")
+
+            if high_value_low_confidence_count >= HIGH_VALUE_LOW_CONFIDENCE_MEANINGFUL_COUNT:
+                # Real economics, still-thin evidence (Discovery
+                # Intelligence Phase 1 design) -- deliberately the SAME
+                # +1 magnitude as the historical-BUY branch above, and
+                # additive with it (a brand can genuinely have both) --
+                # explicitly NEVER the +3 a confirmed BUY earns, per the
+                # brief's own instruction not to treat these as
+                # equivalent.
+                score += 1
+                reasons.append({
+                    "text": f"{high_value_low_confidence_count} HIGH VALUE — LOW CONFIDENCE opportunities across {scanned} EU scans",
+                    "points": 1, "kind": "pos",
+                })
+                sources.add("OUR_SCANS")
+
+            # Plain factual context (Discovery Intelligence Phase 2) --
+            # shown whenever it's genuinely true, independent of whether
+            # the conflict cap below actually changes the tier, so the
+            # "0 confirmed BUY despite real scanning" fact is always
+            # visible, not only on the (rarer) occasions it's strong
+            # enough to cap a HIGH down to MEDIUM. kind="weak": a
+            # neutral fact, not itself a score penalty (see interpretation
+            # rule: 0 BUY must never be read as "bad brand" on its own).
+            if scanned >= MEANINGFUL_SCAN_THRESHOLD and buy_count == 0:
+                reasons.append({
+                    "text": f"We have scanned this brand {scanned} times with no confirmed BUY",
+                    "points": 0, "kind": "weak",
+                })
 
             recent_hit_rate = own.get("eu_recent_hit_rate")
             if recent_hit_rate is not None and recent_hit_rate >= 20:
@@ -624,12 +795,19 @@ class DiscoveryIntelligenceService:
 
         raw_tier = "HIGH" if score >= 5 else ("MEDIUM" if score >= 2 else "LOW")
 
-        # CONFLICT CAP (approved 2026-09-04) -- meaningfully scanned,
-        # zero confirmed BUYs: competitor/category evidence alone
-        # cannot reach HIGH. A brand we haven't meaningfully tested yet
-        # (scanned < MEANINGFUL_SCAN_THRESHOLD) is explicitly NOT
-        # affected -- see PROMISING_INSUFFICIENT_DATA below, which is
-        # the correct label for THAT case, distinct from a conflict.
+        # CONFLICT CAP (approved 2026-09-04; buy_count recalculated to
+        # Action-confirmed evidence in Phase 2 -- see this method's own
+        # docstring point 6) -- meaningfully scanned, zero CONFIRMED
+        # (BUY_NOW/PRICE_DROP_BUY_NOW, recent or historical) EU A2A
+        # evidence: competitor/category evidence alone cannot reach
+        # HIGH. A brand we haven't meaningfully tested yet (scanned <
+        # MEANINGFUL_SCAN_THRESHOLD) is explicitly NOT affected -- see
+        # PROMISING_INSUFFICIENT_DATA below, which is the correct label
+        # for THAT case, distinct from a conflict. A brand with real
+        # HIGH_VALUE_LOW_CONFIDENCE volume is still capped here too --
+        # that's the brief's own explicit instruction (never equivalent
+        # to a confirmed BUY), the +1 it already earned above stays on
+        # the score, it just isn't enough alone to clear the cap.
         capped = False
         if scanned >= MEANINGFUL_SCAN_THRESHOLD and buy_count == 0 and raw_tier == "HIGH":
             tier = "MEDIUM"
@@ -695,7 +873,20 @@ class DiscoveryIntelligenceService:
                 # EU-marketplace-sourced evidence -- what score_target's
                 # OUR_SCANS bonuses actually read (2026-09-04 fix).
                 "eu_scanned": scanned,
-                "eu_buy_count": buy_count,
+                # Phase 2 (2026-09-04) -- Action-CONFIRMED evidence
+                # (BUY_NOW + PRICE_DROP_BUY_NOW via OpportunityLensService),
+                # kept recent/all-time VISIBLY SEPARATE, plus the full
+                # Action breakdown for a caller/report that wants the
+                # whole picture, not just the confirmed-BUY count.
+                "eu_confirmed_buy_count_all_time": buy_count,
+                "eu_confirmed_buy_count_recent": buy_count_recent,
+                "eu_high_value_low_confidence_count": high_value_low_confidence_count,
+                "eu_actions_all_time": own.get("actions_all_time"),
+                "eu_actions_recent": own.get("actions_recent"),
+                # Literal recommendation=="BUY" count -- kept for
+                # comparison/transparency only, NOT what score_target
+                # reads any more (see this method's own docstring).
+                "eu_literal_buy_count": own.get("eu_buy_count", 0),
                 "eu_buy_rate": own.get("eu_buy_rate"),
                 "eu_avg_buy_profit": own.get("eu_avg_buy_profit", 0.0),
                 "eu_consider_count": own.get("eu_consider_count", 0),
@@ -708,7 +899,7 @@ class DiscoveryIntelligenceService:
                 # at the brand via ANY channel.
                 "total_scanned": total_scanned,
                 "total_buy_count": own.get("buy_count", 0),
-                "non_eu_buy_count": own.get("buy_count", 0) - buy_count,
+                "non_eu_buy_count": own.get("buy_count", 0) - own.get("eu_buy_count", 0),
             } if total_scanned else None,
             "category": {"name": category_name, "is_top": category_name in top_categories} if category_name else None,
         }
@@ -720,7 +911,7 @@ class DiscoveryIntelligenceService:
         }
 
     @staticmethod
-    def list_discovery_targets(limit: int = 200) -> list:
+    def list_discovery_targets(limit: int = 200, use_cache: bool = True) -> list:
         """
         The full ranked list Phase 4's UI will show -- every brand with
         EITHER competitor evidence OR our own scan history, scored and
@@ -728,7 +919,20 @@ class DiscoveryIntelligenceService:
         all can't appear here yet (there's nothing to rank them
         against) -- that's Phase 3's job (DiscoveryTarget persistence),
         not this read-only phase.
+
+        Cached for _TARGETS_CACHE_TTL_SECONDS (see that constant's own
+        comment) -- `limit` only slices the cached, already-scored list,
+        so passing a smaller limit never returns fewer BRANDS considered,
+        only fewer shown. Pass use_cache=False to force a fresh
+        recomputation (e.g. right after a scan you know changed the
+        evidence and want to see reflected immediately).
         """
+        global _targets_cache, _targets_cache_built_at
+
+        now = _time.monotonic()
+        if use_cache and _targets_cache and (now - _targets_cache_built_at) < _TARGETS_CACHE_TTL_SECONDS:
+            return _targets_cache[:limit]
+
         competitor = DiscoveryIntelligenceService.get_competitor_brand_evidence()
         own = DiscoveryIntelligenceService.get_own_scan_performance()
         categories = DiscoveryIntelligenceService.get_category_performance()
@@ -759,4 +963,9 @@ class DiscoveryIntelligenceService:
             results.append(scored)
 
         results.sort(key=lambda r: r["score"], reverse=True)
+
+        if use_cache:
+            _targets_cache = results
+            _targets_cache_built_at = now
+
         return results[:limit]

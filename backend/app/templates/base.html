@@ -9,6 +9,13 @@
 
 <title>{% block title %}Atlas{% endblock %}</title>
 
+<!-- Favicon (2026-09-07, Tamara: "a logo on the tab so we can see
+     atlas") -- a simple "A" mark on the same dark navy (#111827) the
+     sidebar already uses, with the green (#198754) already used for
+     Buy Now/success elsewhere as its one accent, so the tab icon reads
+     as unmistakably "this app" among a row of other browser tabs. -->
+<link rel="icon" type="image/svg+xml" href="/static/images/favicon.svg">
+
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
 
@@ -298,9 +305,29 @@ ATLAS
 
 <div class="sidebar-section-label">Find</div>
 
-<a href="/competitors" title="Opportunities" class="{{ 'active' if nav_path == '/competitors' or nav_path.startswith('/competitors/opportunity/') }}"><i class="bi bi-cart-check-fill"></i> <span class="link-text">Opportunities</span></a>
+<!-- Renamed from "Opportunities" 2026-09-07 (Tamara: "does opportunities
+     just relate to competitors?") -- this page (and all three of its own
+     tabs: Opportunities/Source Finder/Competitors) is scoped entirely to
+     Competitor Watch data (SellerNewListing/TrackedSeller), never scan,
+     OA Source Discovery, or VA-sourced opportunities -- those live in
+     their own separate nav items. "Opportunities" also collides with
+     Review Queue's own generic BUY-eligible-from-any-source concept,
+     which this page has no relation to. "Competitor Watch" (not bare
+     "Competitors") to avoid colliding with the "Competitors" tab that
+     already exists INSIDE this same page. -->
+<a href="/competitors" title="Competitor Watch" class="{{ 'active' if nav_path == '/competitors' or nav_path.startswith('/competitors/opportunity/') }}"><i class="bi bi-cart-check-fill"></i> <span class="link-text">Competitor Watch</span></a>
 
 <a href="/discovery" title="Discovery" class="{{ 'active' if nav_path == '/discovery' }}"><i class="bi bi-search"></i> <span class="link-text">Discovery</span></a>
+
+{# Scan Intelligence (added 2026-09-04, Discovery Intelligence Phase 3)
+   -- deliberately a SEPARATE nav item/URL from Discovery above, not a
+   rename or takeover of it. Discovery = manually search/scan a brand
+   or upload an ASIN list, right now. Scan Intelligence = Atlas's own
+   "what should we scan next" recommendation layer (EU A2A competitor
+   evidence + our own scan history, Action-aware). Keeping them
+   distinct avoids touching Discovery's many existing inbound links
+   (Dashboard/Products/Watchlist/Exclusions/Categories empty-states). #}
+<a href="/scan-intelligence" title="Scan Intelligence" class="{{ 'active' if nav_path == '/scan-intelligence' }}"><i class="bi bi-lightbulb"></i> <span class="link-text">Scan Intelligence</span></a>
 
 <a href="/signals" title="Signals" class="{{ 'active' if nav_path == '/signals' }}"><i class="bi bi-broadcast"></i> <span class="link-text">Signals</span>{% if request and request.state.new_signals_count %} <span class="badge bg-success ms-1" title="New Signals waiting for review">{{ request.state.new_signals_count }}</span>{% endif %}</a>
 
@@ -418,6 +445,49 @@ ATLAS
 })();
 
 (function() {
+    // Real bug, 2026-09-07 (Tamara: "copying the ASIN ... isn't working
+    // well for my husband from his PC ... he never sees the tick") --
+    // navigator.clipboard only exists in a "secure context" (https:, or
+    // http://localhost/127.0.0.1). Her husband reaches Atlas over plain
+    // http:// via the LAN IP (http://192.168.x.x:8000 -- see the LAN-
+    // access setup), where navigator.clipboard is simply undefined, so
+    // .writeText threw immediately and silently -- no tick, no copy, no
+    // visible error. Works fine for Tamara herself if she's on
+    // localhost, which IS a secure context, hence "not for my husband"
+    // specifically. Fixed with a fallback to the older execCommand('copy')
+    // approach (no secure-context restriction) whenever the modern API
+    // is unavailable or fails, plus a distinct failure icon so a genuine
+    // failure is now visible instead of silently doing nothing either way.
+    function fallbackCopy(text, anchorEl) {
+        // Real follow-up bug, 2026-09-07 (Tamara, after a restart: "the
+        // tick happens but it doesn't copy") -- appending this textarea
+        // to document.body puts it OUTSIDE the open offcanvas detail
+        // panel's own focus trap. Bootstrap's Offcanvas (like Modal)
+        // actively pulls focus back inside itself the instant anything
+        // outside it receives focus, so .focus() below was being
+        // overridden before .select() and execCommand('copy') ever ran
+        // -- nothing was actually selected, yet some browsers still
+        // report execCommand('copy') as successful even with an empty
+        // selection, hence a tick with no real copy. Appending inside
+        // the SAME focus-trapped container (the open offcanvas, when
+        // the copy button lives inside one) keeps it inside the trap
+        // boundary so the focus/select actually sticks; falls back to
+        // document.body for a copy button that isn't inside an
+        // offcanvas at all (e.g. a plain row list), unaffected either way.
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        var container = (anchorEl && anchorEl.closest('.offcanvas.show')) || document.body;
+        container.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+        container.removeChild(textarea);
+        return ok;
+    }
+
     document.addEventListener('click', function(e) {
         var btn = e.target.closest('.copy-asin-btn');
         if (!btn) return;
@@ -426,10 +496,19 @@ ATLAS
         var icon = btn.querySelector('i');
         var original = icon.className;
 
-        navigator.clipboard.writeText(asin).then(function() {
-            icon.className = 'bi bi-clipboard-check text-success';
+        function showResult(ok) {
+            icon.className = ok ? 'bi bi-clipboard-check text-success' : 'bi bi-clipboard-x text-danger';
             setTimeout(function() { icon.className = original; }, 1200);
-        });
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(asin).then(
+                function() { showResult(true); },
+                function() { showResult(fallbackCopy(asin, btn)); }
+            );
+        } else {
+            showResult(fallbackCopy(asin, btn));
+        }
     });
 })();
 

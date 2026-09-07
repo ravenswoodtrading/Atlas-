@@ -30,91 +30,315 @@
         <div class="text-muted small">
             {{ item.asin }}
             <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+            {% if item.oa_price_guide and ean %}
+            &middot; EAN {{ ean }}
+            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ ean }}" title="Copy EAN"><i class="bi bi-clipboard"></i></button>
+            {% endif %}
+            {% if item.oa_price_guide and mpn %}
+            &middot; MPN {{ mpn }}
+            {% endif %}
         </div>
+        <!-- Quick links (2026-09-06) -- straight to the Amazon listing
+             and, for a VA lead, the actual source-store page (the real
+             "Source URL" sheet column, distinct from source_detail's
+             free-text retailer NAME) -- Tamara asked for these to be
+             visible without digging through the rest of the panel. -->
         <div class="mt-1">
-            {% for view_name in item.views %}
-                {% if view_name == "BUY_NOW" and item.strong_consider %}
-                    {# Same Strong Consider treatment as the row list / Opportunities
-                       page -- see review_queue.html's own comment on this. #}
-                    <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
+            <a href="https://www.amazon.co.uk/dp/{{ item.asin }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Amazon UK</a>
+            {% if item.va_info and item.va_info.source_url %}
+            <a href="{{ item.va_info.source_url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Source listing</a>
+            {% endif %}
+        </div>
+        {% if item.action and item.freshness_caption %}
+        {# Context for reading the rest of the card, not a claim the
+           listing is good or bad (2026-09-04 UI redesign -- freshness
+           moved out of both What's good and What's risky). #}
+        <div class="text-muted" style="font-size:.72rem;"><i class="bi bi-clock-history"></i> {{ item.freshness_caption }}</div>
+        {% endif %}
+        <div class="mt-1">
+            {% if item.action %}
+                {# Opportunity Engine 2.0 (2026-09-04) -- the Action IS the
+                   header badge now, same treatment as review_queue.html's
+                   row list. #}
+                {% if item.action == "HIGH_VALUE_LOW_CONFIDENCE" %}
+                    <span class="badge" style="background:#6f42c1;color:#fff;"><i class="bi bi-star-fill"></i> {{ item.action_label }}</span>
                 {% else %}
-                <span class="badge {{ 'bg-success' if view_name == 'BUY_NOW' else ('bg-primary' if view_name == 'VA_TO_REVIEW' else ('bg-warning text-dark' if view_name == 'BORDERLINE' else 'bg-danger')) }}">
-                    {{ view_name.replace("_", " ") }}
-                </span>
+                    {% set detail_action_style = {
+                        "BUY_NOW": "bg-success", "PRICE_DROP_BUY_NOW": "bg-info",
+                        "BUY_WITH_CAUTION": "bg-warning text-dark", "INVESTIGATE": "bg-secondary",
+                        "WATCH": "bg-secondary", "HISTORICAL_RECURRING": "bg-dark", "BLOCKED": "bg-dark",
+                    } %}
+                    <span class="badge {{ detail_action_style.get(item.action, 'bg-secondary') }}">{{ item.action_label }}</span>
                 {% endif %}
-            {% endfor %}
-        </div>
-    </div>
-</div>
-
-<!-- CURRENT OPPORTUNITY (section 14) -->
-<div class="mb-3">
-    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-cart-check-fill text-success"></i> Current Opportunity</div>
-    <div class="p-2 rounded border">
-        <div class="row small g-2">
-            <div class="col-6">
-                <div class="text-muted">Source</div>
-                <div>{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }}</div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">Buy price</div>
-                <div>&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">Amazon price</div>
-                <div>&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">Profit</div>
-                <div class="{{ 'text-success' if (item.profit or 0) > 0 else 'text-danger' }}">&pound;{{ "%.2f"|format(item.profit or 0) }}</div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">ROI</div>
-                <div>{{ "%.0f"|format(item.roi or 0) }}%</div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">Recommendation</div>
-                <div>{{ item.strongest_recommendation or "--" }}</div>
-            </div>
-        </div>
-        <div class="mt-2">
-            {% if "BUY_NOW" in item.views %}
-                <span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
-            {% elif "NEEDS_ATTENTION" in item.views and item.historical_sourcing_evidence %}
-                <span class="badge bg-secondary">No current buy</span>
-                <div class="small text-muted mt-1">
-                    Historical evidence remains valid, but today's best opportunity does not currently qualify as BUY.
-                </div>
-            {% elif item.freshness in ("STALE", "UNAVAILABLE") %}
-                <span class="badge bg-danger">{{ item.freshness }}</span>
+                {% if "VA_TO_REVIEW" in item.views %}<span class="badge bg-primary">VA to Review</span>{% endif %}
+                {% if "OA_INVESTIGATE" in item.views %}<span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;"><i class="bi bi-question-diamond-fill"></i> OA to Investigate</span>{% endif %}
+            {% else %}
+                {% for view_name in item.views %}
+                    {% if view_name == "BUY_NOW" and item.strong_consider %}
+                        <span class="badge" style="background:#20c997;color:#fff;"><i class="bi bi-star-fill"></i> Strong Consider</span>
+                    {% elif view_name == "OA_INVESTIGATE" %}
+                        {# OA Source Discovery (2026-09-05) -- own colour,
+                           never the generic bg-danger this ternary would
+                           otherwise fall through to (see review_queue.html's
+                           own comment on the same styling choice). #}
+                        <span class="badge" style="background:#fff8e6;color:#8a6d1f;border:1px solid #f0dca0;"><i class="bi bi-question-diamond-fill"></i> OA to Investigate</span>
+                    {% else %}
+                    <span class="badge {{ 'bg-success' if view_name == 'BUY_NOW' else ('bg-primary' if view_name == 'VA_TO_REVIEW' else ('bg-warning text-dark' if view_name == 'BORDERLINE' else 'bg-danger')) }}">
+                        {{ view_name.replace("_", " ") }}
+                    </span>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+            {# "Ever bought / ever on VA sheet before" (2026-09-07) -- see
+               review_queue.html's own comment on the same badges for the
+               full reasoning and colour choice. #}
+            {% if item.ever_purchased %}
+            <span class="badge" style="background:#0f766e;color:#fff;" title="You've purchased this ASIN before -- see Historical Buying record."><i class="bi bi-bag-check-fill"></i> Bought before</span>
+            {% endif %}
+            {% if item.ever_on_va_sheet %}
+            <span class="badge" style="background:#475569;color:#fff;" title="This ASIN has appeared on the VA Lead Sheet before."><i class="bi bi-clock-history"></i> Seen on VA sheet before</span>
             {% endif %}
         </div>
     </div>
 </div>
 
-<!-- ATLAS FIRST PASS (section 17) -->
+{% if item.action %}
+{# =====================================================================
+   Opportunity Engine 2.0 UI redesign (2026-09-04) -- stat tiles, an
+   optional price-drop recurrence callout, What's good / What's risky,
+   and one verdict banner. Replaces the earlier 4-boxes-plus-Trend-
+   section version: same underlying Value/Evidence/Risk/Action data,
+   fewer, denser boxes -- Tamara's own density concern ("too much data
+   on this tab... hard to pick out the key things"). VA-only items (no
+   lens) keep the old Current Opportunity/Atlas First Pass pair below,
+   unchanged. ===================================================================== #}
+
+<div class="row g-2 mb-3">
+    <div class="col-6">
+        <div class="p-2 rounded" style="background:#f8f9fb;">
+            <div class="text-muted small">Profit today</div>
+            <div class="fw-semibold {{ 'text-success' if item.value.today_profit > 0 else 'text-danger' }}">
+                &pound;{{ "%.2f"|format(item.value.today_profit) }}
+                <span class="text-muted fw-normal small">{{ "%.0f"|format(item.value.today_roi) }}% ROI</span>
+            </div>
+        </div>
+    </div>
+    <div class="col-6">
+        <div class="p-2 rounded" style="background:#f8f9fb;">
+            <div class="text-muted small">90-day typical</div>
+            <div class="fw-semibold">
+                &pound;{{ "%.2f"|format(item.value.typical_profit_90d) }}
+                <span class="text-muted fw-normal small">{{ "%.0f"|format(item.value.typical_roi_90d) }}% ROI</span>
+            </div>
+        </div>
+    </div>
+    {% if item.value.peak_roi %}
+    <div class="col-12">
+        <div class="text-muted small">90-day peak (riskier -- only relevant if this recurs): &pound;{{ "%.2f"|format(item.value.peak_profit) }} ({{ "%.0f"|format(item.value.peak_roi) }}% ROI)</div>
+    </div>
+    {% endif %}
+    {% if item.va_info and item.va_info.va_profit is not none %}
+    <div class="col-12">
+        {# This ASIN is ALSO a VA lead (merged with a real scan record) --
+           the VA's own figure, from whatever Amazon price they saw when
+           sourcing it, shown alongside Atlas's own live "Profit today"
+           above so the two are never confused (2026-09-06, Tamara). #}
+        <span class="badge bg-primary" title="The VA's own figure, not necessarily today's price."><i class="bi bi-person-badge"></i> VA expected: &pound;{{ "%.2f"|format(item.va_info.va_profit) }}{% if item.va_info.va_roi is not none %} ({{ "%.0f"|format(item.va_info.va_roi) }}% ROI){% endif %}</span>
+    </div>
+    {% endif %}
+    <div class="col-6">
+        <div class="text-muted small">Source</div>
+        <div class="small">{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }} &middot; &pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
+    </div>
+    <div class="col-6">
+        <div class="text-muted small">Amazon UK price</div>
+        <div class="small">&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
+    </div>
+</div>
+
+{% if item.risk.days_at_25pct_roi_90d is not none %}
+{# Standalone recurrence callout for a price-drop listing (Tamara's own
+   ask, 2026-09-04) -- deliberately its OWN box, not a sub-line under
+   the price-falling flag below, since it's the single most useful
+   number for judging whether a drop is temporary. #}
+<div class="p-2 rounded mb-3 d-flex align-items-center" style="background:#eef4fb;border:1px solid #cfe0f3;gap:.7rem;">
+    <div class="fw-semibold" style="color:#0b5394;white-space:nowrap;">{{ item.risk.days_at_25pct_roi_90d }} / {{ item.risk.priced_days_90d }} days</div>
+    <div class="small" style="color:#3d6a94;">had 25%+ ROI in the last 90 days</div>
+</div>
+{% endif %}
+
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-check-circle text-success"></i> What's good</div>
+    {% if item.good %}
+    <ul class="list-unstyled mb-0 small">
+        {% for fact in item.good %}
+        <li class="d-flex align-items-start py-1" style="gap:.5rem;">
+            <i class="bi bi-dash text-muted"></i><span>{{ fact }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="small text-muted">Nothing stands out yet.</div>
+    {% endif %}
+</div>
+
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-exclamation-triangle text-warning"></i> What's risky</div>
+    {% if item.risk.flags %}
+    <ul class="list-unstyled mb-0 small">
+        {% for flag in item.risk.flags %}
+        <li class="py-1">
+            <div class="d-flex align-items-start" style="gap:.5rem;">
+                <i class="bi {{ 'bi-exclamation-triangle-fill' if flag.level in ('warn', 'high') else 'bi-info-circle' }}"
+                   style="color:{{ '#c0392b' if flag.level == 'high' else ('#96660a' if flag.level == 'warn' else '#6c757d') }};"></i>
+                <span>{{ flag.label }}</span>
+            </div>
+            {% if flag.detail %}
+            <div class="text-muted" style="font-size:.78rem;margin-left:1.4rem;">{{ flag.detail }}</div>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    {# Opportunity Engine 2.0's own honesty principle: never fabricate
+       what Atlas can't actually know at this scale -- shown plainly,
+       collapsed to one line since there's nothing else to say. #}
+    <div class="small text-muted">No active risk flags. Amazon Buy Box share &amp; FBA stock: unknown.</div>
+    {% endif %}
+</div>
+
+<div class="p-2 rounded mb-3" style="background:#f3effc;border:1px solid #d9cef5;">
+    <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#6f42c1;font-weight:700;">Recommended action</div>
+    <div class="fw-semibold" style="color:#4c2c8f;">{{ item.action_label }}</div>
+    <div class="small mt-1" style="color:#5a4a75;">{{ item.action_description }}</div>
+</div>
+
+{% elif item.va_info %}
+<!-- CURRENT OPPORTUNITY (section 14) -- VA-only fallback, restyled
+     2026-09-07 (Tamara: "too much black and white ... let's make it
+     more interesting and the key info clearer") -- same tinted-tile
+     language the Opportunity Engine 2.0 stat row above already
+     established, applied here so a VA-only item isn't visually flatter
+     than a scan-merged one just because it has less data to show. -->
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-cart-check-fill text-success"></i> Current Opportunity</div>
+    <div class="row g-2">
+        <div class="col-6">
+            <div class="p-2 rounded h-100" style="background:#f8f9fb;">
+                <div class="text-muted small"><i class="bi bi-shop"></i> Source</div>
+                <div class="fw-semibold">{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or "--" }}</div>
+                <div class="small text-muted">&pound;{{ "%.2f"|format(item.best_source_cost_gbp or 0) }}</div>
+            </div>
+        </div>
+        <div class="col-6">
+            <div class="p-2 rounded h-100" style="background:#f8f9fb;">
+                <div class="text-muted small"><i class="bi bi-amazon"></i> Amazon UK price</div>
+                <div class="fw-semibold">&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
+                {# VA's own expected sale price (2026-09-07, Tamara: "we
+                   need to add VA expected sales price on the leads") --
+                   was silently substituted in place of the live price
+                   above whenever set; now its own separate, labelled
+                   line so neither figure is ever mistaken for the other. #}
+                {% if item.va_info and item.va_info.va_expected_sale_price is not none %}
+                <div class="small mt-1"><span class="badge bg-primary" title="The VA's own expected sale price, from when they sourced this -- not necessarily today's Amazon price."><i class="bi bi-person-badge"></i> VA: &pound;{{ "%.2f"|format(item.va_info.va_expected_sale_price) }}</span></div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-6">
+            {# Real bug fixed 2026-09-06 (Tamara): this used to
+               silently show the VA's OWN figure labelled as "Profit"
+               with no "today" qualifier at all -- now always Atlas's
+               own live calculation (None/"--" when analysis hasn't run
+               yet), with the VA's own figure shown as its own separate
+               line so the two are never confused for each other again. #}
+            <div class="p-2 rounded h-100" style="background:{{ '#eaf6ec' if item.profit and item.profit > 0 else ('#fdeceb' if item.profit and item.profit <= 0 else '#f8f9fb') }};">
+                <div class="text-muted small">Profit today</div>
+                {% if item.profit is none %}
+                <div class="text-muted fw-semibold">-- <span class="small fw-normal">not yet analyzed</span></div>
+                {% else %}
+                <div class="fw-semibold {{ 'text-success' if item.profit > 0 else 'text-danger' }}">&pound;{{ "%.2f"|format(item.profit) }}</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-6">
+            <div class="p-2 rounded h-100" style="background:{{ '#eaf6ec' if item.roi and item.roi > 0 else ('#fdeceb' if item.roi and item.roi <= 0 else '#f8f9fb') }};">
+                <div class="text-muted small">ROI today</div>
+                {% if item.roi is none %}
+                <div class="text-muted fw-semibold">--</div>
+                {% else %}
+                <div class="fw-semibold {{ 'text-success' if item.roi > 0 else 'text-danger' }}">{{ "%.0f"|format(item.roi) }}%</div>
+                {% endif %}
+            </div>
+        </div>
+        {% if item.va_info.va_profit is not none %}
+        <div class="col-12">
+            <span class="badge bg-primary" title="The VA's own figure, from whatever Amazon price they saw when sourcing this -- not necessarily today's."><i class="bi bi-person-badge"></i> VA expected: &pound;{{ "%.2f"|format(item.va_info.va_profit) }}{% if item.va_info.va_roi is not none %} / {{ "%.0f"|format(item.va_info.va_roi) }}% ROI{% endif %}</span>
+        </div>
+        {% endif %}
+        <div class="col-12">
+            <div class="p-2 rounded d-flex align-items-center justify-content-between" style="background:#f8f9fb;">
+                <span class="text-muted small">Recommendation</span>
+                <span class="fw-semibold">{{ item.strongest_recommendation or "--" }}</span>
+            </div>
+        </div>
+    </div>
+    <div class="mt-2">
+        {% if "BUY_NOW" in item.views %}
+            <span class="badge bg-success"><i class="bi bi-cart-check-fill"></i> BUY NOW</span>
+        {% elif "NEEDS_ATTENTION" in item.views and item.historical_sourcing_evidence %}
+            <span class="badge bg-secondary">No current buy</span>
+            <div class="small text-muted mt-1">
+                Historical evidence remains valid, but today's best opportunity does not currently qualify as BUY.
+            </div>
+        {% elif item.freshness in ("STALE", "UNAVAILABLE") %}
+            <span class="badge bg-danger">{{ item.freshness }}</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ATLAS FIRST PASS (section 17) -- VA-only fallback, restyled 2026-09-07 -->
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-cpu"></i> Atlas First Pass</div>
-    <div class="p-2 rounded border">
+    {% set analysis_failure = item.va_info.analysis_failure if item.va_info else None %}
+    {% if analysis_failure %}
+    {# Friendly failure notice (2026-09-07, Tamara: "where we have a
+       lack of decision due to AI credits running out lets make this a
+       nicer error message") -- replaces the raw "Could not analyze
+       after N attempts -- Analysis error: 429 RESOURCE_EXHAUSTED..."
+       provider dump (a real one seen live ran to several hundred
+       characters of nested JSON) with a short, honest, human sentence.
+       See analysis_failure_message's own docstring for the exact
+       wording per failure type. Blue/amber "still working on it", not
+       red/danger -- this isn't a rejection or a problem with the
+       lead itself, and the real price/profit figures above (when
+       Keepa succeeded) are unaffected either way. #}
+    <div class="p-2 rounded" style="background:{{ '#eef4fb' if analysis_failure.will_retry else '#fdf3e6' }};border:1px solid {{ '#cfe0f3' if analysis_failure.will_retry else '#f0dca0' }};">
+        <div class="d-flex align-items-start" style="gap:.5rem;">
+            <i class="bi {{ 'bi-arrow-repeat' if analysis_failure.will_retry else 'bi-pause-circle' }}" style="color:{{ '#0b5394' if analysis_failure.will_retry else '#8a6d1f' }};font-size:1.1rem;"></i>
+            <div>
+                <div class="fw-semibold small" style="color:{{ '#0b5394' if analysis_failure.will_retry else '#8a6d1f' }};">
+                    {{ "No AI verdict yet -- will retry automatically" if analysis_failure.will_retry else "No AI verdict reached" }}
+                </div>
+                <div class="small mt-1" style="color:{{ '#3d6a94' if analysis_failure.will_retry else '#6b5518' }};">{{ analysis_failure.message }}</div>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="p-2 rounded" style="background:#f8f9fb;">
         <div class="row small g-2">
             <div class="col-6">
                 <div class="text-muted">Classification</div>
                 {% if item.strong_consider %}
-                {# Was showing "Borderline" here even when the badge above says
-                   BUY_NOW/Strong Consider -- self-contradictory. The raw
-                   recommendation is genuinely still CONSIDER (shown honestly
-                   elsewhere, e.g. Current Opportunity's own Recommendation
-                   field), but THIS label is specifically "what tier is Atlas
-                   treating this as", which is Strong Consider now, not
-                   Borderline. #}
                 <div class="fw-semibold" style="color:#20c997;">Strong Consider</div>
                 {% else %}
-                <div class="fw-semibold">{{ classification_label.get(item.strongest_recommendation, item.strongest_recommendation or "--") }}</div>
+                {% set cls_color = {"BUY": "#1e7a41", "WATCH": "#96660a", "AVOID": "#a12f27"}.get(item.strongest_recommendation) %}
+                <div class="fw-semibold" style="{{ 'color:' + cls_color + ';' if cls_color else '' }}">{{ classification_label.get(item.strongest_recommendation, item.strongest_recommendation or "--") }}</div>
                 {% endif %}
             </div>
             <div class="col-6">
+                {% set conf_label = item.confidence | confidence_label %}
                 <div class="text-muted">Confidence</div>
-                <div>{{ item.confidence | confidence_label or "--" }}</div>
+                <div class="fw-semibold {{ 'text-success' if conf_label == 'High' else ('text-warning' if conf_label == 'Medium' else ('text-danger' if conf_label == 'Low' else 'text-muted')) }}">{{ conf_label or "--" }}</div>
             </div>
         </div>
         {% if item.va_info and item.va_info.rationale %}
@@ -150,6 +374,7 @@
         </div>
         {% endif %}
     </div>
+    {% endif %}
     {% if item.va_info and item.va_info.similar_rejections %}
     <div class="small text-danger mt-2"><i class="bi bi-exclamation-triangle"></i>
         {{ item.va_info.similar_rejections|length }} similar past rejection{{ "s" if item.va_info.similar_rejections|length != 1 }} on this exact ASIN</div>
@@ -158,67 +383,206 @@
     <div class="small text-danger mt-1"><i class="bi bi-x-circle"></i> Buyability issue: {{ item.va_info.buyability_blocker }}</div>
     {% endif %}
 </div>
+{% elif item.oa_price_guide %}
+<!-- Real bug, fixed 2026-09-05 (Tamara's own review of the live
+     screenshot): a pure OA-only item (no action, no va_info) used to
+     fall into the "Current Opportunity" box above, showing Source/Buy
+     price/Profit/Recommendation pulled from the underlying record's
+     OWN weak economics -- misleading, since there IS no confirmed
+     source yet. Replaced with an honest, minimal statement; the real
+     workbench (search buttons, source entry, source-found status)
+     is the ADDITIVE block just below, unaffected by this branch. -->
+<div class="mb-3 p-2 rounded" style="background:#f8f9fb;">
+    <div class="small text-muted">
+        <i class="bi bi-question-diamond-fill"></i> Atlas hasn't found a confirmed retail source for this yet -- that's what makes it an OA investigation. Use the search below to find one.
+    </div>
+</div>
+{% endif %}
 
-<!-- WHY THIS SCORE (scan/competitor items -- same trend/score/confidence
-     breakdown products.html shows, surfaced here too, 2026-09-04) -->
-{% if item.parsed_report and item.parsed_report.trend %}
+<!-- OA SOURCE DISCOVERY (2026-09-05) -- deliberately ADDITIVE, not
+     exclusive with the block above: get_queue_item() live-queries every
+     unreviewed source for this ASIN independently, so an OA/unclear
+     listing's own backing record can ALSO legitimately earn its own
+     (often weak -- WATCH/INVESTIGATE) Atlas action at the same time,
+     same "multi-view membership" principle as everywhere else in this
+     build. Never replaces or hides Atlas's own real assessment above;
+     just adds the "can we find a source" angle alongside it. "OA --
+     Worth Investigating / Source Unknown" is the whole point of this
+     block: never implies a confirmed opportunity or a BUY
+     recommendation, regardless of what's shown above it. -->
+{% if item.oa_price_guide %}
+{% set mc = manual_candidate %}
+{% set has_source = mc and mc.retailer_price_gbp is not none %}
+{% set effective_cost = (mc.retailer_price_gbp + (mc.delivery_gbp or 0)) if has_source else none %}
 <div class="mb-3">
-    <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-graph-up"></i> Trend &amp; Sales Signals</div>
-    <div class="p-2 rounded border">
-        <div class="row small g-2 mb-2">
-            <div class="col-6">
-                <div class="text-muted">Sales evidence</div>
-                <div>
-                    {% if item.monthly_sales %}
-                        {{ item.monthly_sales }}/mo confirmed
-                        {%- if item.sales_drops_30d %} <span class="text-muted">({{ item.sales_drops_30d }} rank drops, 30d)</span>{% endif %}
-                    {% elif item.sales_drops_30d %}
-                        {# No Keepa-confirmed monthly figure -- fall back to sales
-                           rank drops (Keepa's own "a sale probably happened" proxy,
-                           the same evidence the score factors line below already
-                           cites) rather than a bare "no data" message, 2026-09-04. #}
-                        <span class="text-muted">{{ item.sales_drops_30d }} rank drops (30d), no confirmed count</span>
-                    {% else %}
-                        <span class="text-muted">No sales evidence</span>
-                    {% endif %}
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="text-muted">Price vs 90d avg</div>
-                <div>{{ "%+.1f"|format(item.parsed_report.trend.price_change) }}%</div>
+    <div class="p-2 rounded mb-2" style="background:#fff8e6;border:1px solid #f0dca0;">
+        <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;color:#8a6d1f;font-weight:700;">
+            <i class="bi bi-question-diamond-fill"></i> OA -- Worth Investigating / Source Unknown
+        </div>
+        <div class="small mt-1" style="color:#6b5518;">
+            Amazon's own price and fees leave room to source this profitably via OA. Atlas needs you to find the retail source -- this is not yet a confirmed opportunity or a BUY recommendation.
+        </div>
+    </div>
+    <div class="row small g-2 mb-2">
+        <div class="col-6">
+            <div class="text-muted">Amazon UK price</div>
+            <div class="fw-semibold">
+                &pound;{{ "%.2f"|format(item.buy_box_now or 0) }}
+                <a href="https://www.amazon.co.uk/dp/{{ item.asin }}" target="_blank" rel="noopener" class="ms-1" title="View on Amazon"><i class="bi bi-box-arrow-up-right"></i></a>
             </div>
         </div>
-        <div class="small text-muted">
-            Offers {{ "%+.1f"|format(item.parsed_report.trend.offer_change) }}% &middot;
-            Sales rank {{ "%+.1f"|format(item.parsed_report.trend.rank_change) }}% (at scan time)
+        <div class="col-6">
+            <div class="text-muted">Target OA buy price / breakeven</div>
+            <div class="fw-semibold">&le; &pound;{{ "%.2f"|format(item.oa_price_guide.target) }} <span class="text-muted fw-normal">(breakeven &pound;{{ "%.2f"|format(item.oa_price_guide.breakeven) }})</span></div>
         </div>
-        {% if item.parsed_report.score_breakdown %}
-        <div class="mt-2">
-            <div class="text-muted small">Score factors ({{ item.parsed_report.score }}/100)</div>
-            <ul class="list-unstyled mb-0 small">
-                {% for f in item.parsed_report.score_breakdown %}
-                <li class="{{ 'text-success' if f.passed else 'text-muted' }}">
-                    <i class="bi {{ 'bi-check-circle-fill' if f.passed else 'bi-x-circle' }}"></i>
-                    {{ f.label }}{% if f.passed %} <strong>({{ "+" if f.points > 0 else "" }}{{ f.points }})</strong>{% endif %}
-                </li>
+    </div>
+
+    <!-- CLASSIFICATION CORRECTION (2026-09-07, Tamara: "I want an option
+         to classify this if I find the source ... in which case Atlas
+         was wrong with the classifying") -- Atlas's own sourcing_tag can
+         be wrong when its recent-window evidence check (30 days -- see
+         SourcingClassifier.RECENT_WINDOW_DAYS) simply doesn't cover
+         whatever actually explains this listing (a real EU/UK A2A margin
+         further back, or evidence Atlas's price-history check can't see
+         at all). Buttons write straight to SellerNewListing.sourcing_tag
+         via /review-queue/reclassify and mark it manually_classified so
+         the next automated recheck doesn't silently revert it (see that
+         field's own docstring) -- this ASIN then drops out of THIS view
+         on its own next load, since OA to Investigate only ever shows
+         sourcing_tag=="OA / unclear". -->
+    <div class="mb-2">
+        <div class="text-uppercase text-muted small fw-bold mb-1">
+            Atlas classified this as
+            {% if item.oa_investigate_manually_classified %}<span class="badge bg-light text-dark border" title="You've corrected this -- future automated rechecks won't overwrite it"><i class="bi bi-person-check"></i> Manually set</span>{% endif %}
+        </div>
+        <div class="btn-group btn-group-sm qi-reclassify-group" data-asin="{{ item.asin }}" role="group">
+            {% for tag in ["EU A2A", "UK A2A", "Wholesale (likely)", "OA / unclear"] %}
+            <button type="button" class="btn qi-reclassify-btn {{ 'btn-secondary' if item.oa_investigate_sourcing_tag == tag else 'btn-outline-secondary' }}" data-tag="{{ tag }}">{{ tag }}</button>
+            {% endfor %}
+        </div>
+        {# Certainty rating (2026-09-07, Tamara) -- how much to trust the
+           tag above, never a replacement for it (see SourcingClassifier.
+           assess_certainty's own docstring). Colour mirrors the Evidence/
+           Sales convention used elsewhere on this page: green = trust it,
+           amber = real but thin, red = actively suspect the tag. #}
+        {% if item.oa_investigate_certainty %}
+        <div class="mt-1">
+            <span class="badge {{ 'bg-success' if item.oa_investigate_certainty.level == 'HIGH' else ('bg-warning text-dark' if item.oa_investigate_certainty.level == 'MEDIUM' else 'bg-danger') }}">
+                <i class="bi bi-speedometer2"></i> Certainty: {{ item.oa_investigate_certainty.level | title }}
+            </span>
+            {% if item.oa_investigate_certainty.facts %}
+            <ul class="small text-muted mb-0 mt-1 ps-3">
+                {% for fact in item.oa_investigate_certainty.facts %}
+                <li>{{ fact }}</li>
                 {% endfor %}
             </ul>
-        </div>
-        {% endif %}
-        {% if item.parsed_report.confidence_breakdown %}
-        <div class="mt-2">
-            <div class="text-muted small">Confidence factors ({{ item.parsed_report.confidence }}/100)</div>
-            <ul class="list-unstyled mb-0 small">
-                {% for f in item.parsed_report.confidence_breakdown %}
-                <li class="{{ 'text-danger' if f.triggered else 'text-success' }}">
-                    <i class="bi {{ 'bi-exclamation-triangle-fill' if f.triggered else 'bi-check-circle-fill' }}"></i>
-                    {{ f.label }}{% if f.triggered %} <strong>({{ f.points }})</strong>{% endif %}
-                </li>
-                {% endfor %}
-            </ul>
+            {% endif %}
         </div>
         {% endif %}
     </div>
+
+    <!-- SOURCE SEARCH -- prominent buttons, not a dropdown (Tamara's
+         own explicit instruction: "I don't want Google Shopping hidden
+         inside a dropdown"). Each button is only rendered when its
+         underlying field (EAN/MPN/title) is actually known -- never a
+         fabricated search query. Plain Google URLs, same no-API-cost
+         pattern as everywhere else Atlas builds a search link. -->
+    <div class="text-uppercase text-muted small fw-bold mb-1">Source search</div>
+    <div class="d-flex flex-wrap mb-2" style="gap:.4rem;">
+        {% if oa_search_urls and oa_search_urls.shopping_ean %}
+        <a href="{{ oa_search_urls.shopping_ean }}" class="btn btn-sm btn-warning" style="--bs-btn-color:#3d2e00;" target="_blank" rel="noopener"><i class="bi bi-cart3"></i> Shopping: EAN</a>
+        {% endif %}
+        {% if oa_search_urls and oa_search_urls.shopping_mpn %}
+        <a href="{{ oa_search_urls.shopping_mpn }}" class="btn btn-sm btn-warning" style="--bs-btn-color:#3d2e00;" target="_blank" rel="noopener"><i class="bi bi-cart3"></i> Shopping: MPN</a>
+        {% endif %}
+        {% if oa_search_urls and oa_search_urls.shopping_product %}
+        <a href="{{ oa_search_urls.shopping_product }}" class="btn btn-sm btn-warning" style="--bs-btn-color:#3d2e00;" target="_blank" rel="noopener"><i class="bi bi-cart3"></i> Shopping: Product</a>
+        {% endif %}
+        {% if oa_search_urls and oa_search_urls.web_product %}
+        <a href="{{ oa_search_urls.web_product }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener"><i class="bi bi-search"></i> Google Web</a>
+        {% endif %}
+        {% if google_urls and google_urls.asin_title %}
+        <a href="{{ google_urls.asin_title }}" class="btn btn-sm btn-outline-secondary" target="_blank" rel="noopener"><i class="bi bi-search"></i> ASIN + title</a>
+        {% endif %}
+    </div>
+    {% if source_finder_url %}
+    <a href="{{ source_finder_url }}" class="btn btn-sm btn-dark mb-3" target="_blank" rel="noopener">
+        <i class="bi bi-robot"></i> Find source with Atlas
+    </a>
+    {% endif %}
+
+    <!-- SOURCE FOUND status -- only shown once a manual source has
+         actually been saved (has_source above). -->
+    {% if has_source %}
+    <div class="p-2 rounded mb-2" style="background:{{ '#eaf6ec' if effective_cost <= item.oa_price_guide.breakeven else '#fdeceb' }};border:1px solid {{ '#bfe3c6' if effective_cost <= item.oa_price_guide.breakeven else '#f0c4c0' }};">
+        <div class="d-flex justify-content-between align-items-start">
+            <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.03em;font-weight:700;color:{{ '#1e7a41' if effective_cost <= item.oa_price_guide.breakeven else '#a12f27' }};">
+                <i class="bi {{ 'bi-check-circle-fill' if effective_cost <= item.oa_price_guide.breakeven else 'bi-x-circle-fill' }}"></i>
+                {{ "Source found -- clears breakeven" if effective_cost <= item.oa_price_guide.breakeven else "Source found -- below breakeven" }}
+            </div>
+            <span class="badge bg-light text-dark border">{{ "Below target" if effective_cost <= item.oa_price_guide.target else ("Above target, above breakeven" if effective_cost <= item.oa_price_guide.breakeven else "Below breakeven") }}</span>
+        </div>
+        <div class="row small g-2 mt-1">
+            <div class="col-6">
+                <div class="text-muted">Retailer</div>
+                <div class="fw-semibold">{{ mc.retailer_domain or "--" }}{% if mc.retailer_url %} <a href="{{ mc.retailer_url }}" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right"></i></a>{% endif %}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Price + delivery</div>
+                <div>&pound;{{ "%.2f"|format(mc.retailer_price_gbp) }} + &pound;{{ "%.2f"|format(mc.delivery_gbp or 0) }} = <span class="fw-semibold">&pound;{{ "%.2f"|format(effective_cost) }}</span></div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">Profit</div>
+                <div class="{{ 'text-success' if (mc.estimated_profit_gbp or 0) > 0 else 'text-danger' }}">&pound;{{ "%.2f"|format(mc.estimated_profit_gbp or 0) }}</div>
+            </div>
+            <div class="col-6">
+                <div class="text-muted">ROI</div>
+                <div>{{ "%.0f"|format(mc.estimated_roi_pct or 0) }}%</div>
+            </div>
+        </div>
+        {% if mc.notes %}
+        <div class="small text-muted mt-1"><i class="bi bi-sticky"></i> {{ mc.notes }}</div>
+        {% endif %}
+        <div class="small text-muted mt-1">Manually confirmed{% if mc.created_at %} &middot; {{ mc.created_at | ago }}{% endif %}</div>
+    </div>
+    {% endif %}
+
+    <!-- Manual source entry -- Tamara's own spec: Retailer/URL/Price/
+         Delivery/Notes/Save. Saving computes effective cost + profit/
+         ROI via the existing FeeEngine economics and persists it (see
+         OaSourceDiscoveryService.save_manual_source), but does NOT
+         resolve the item or auto-decide BUY -- the Review Actions form
+         below remains the one decision path. -->
+    <div class="text-uppercase text-muted small fw-bold mb-1">{{ "Update source" if has_source else "Found it yourself? Save the source" }}</div>
+    <form class="qi-oa-save-source-form p-2 rounded border">
+        <input type="hidden" name="asin" value="{{ item.asin }}">
+        <div class="row g-2">
+            <div class="col-12">
+                <input type="text" name="retailer_domain" class="form-control form-control-sm" placeholder="Retailer (e.g. argos.co.uk)" value="{{ mc.retailer_domain if mc else '' }}">
+            </div>
+            <div class="col-12">
+                <input type="url" name="retailer_url" class="form-control form-control-sm" placeholder="Product URL" value="{{ mc.retailer_url if mc else '' }}">
+            </div>
+            <div class="col-6">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">&pound;</span>
+                    <input type="number" step="0.01" min="0" name="retailer_price_gbp" class="form-control" placeholder="Price" value="{{ '%.2f'|format(mc.retailer_price_gbp) if has_source else '' }}" required>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">&pound;</span>
+                    <input type="number" step="0.01" min="0" name="delivery_gbp" class="form-control" placeholder="Delivery" value="{{ '%.2f'|format(mc.delivery_gbp or 0) if mc else '0.00' }}">
+                </div>
+            </div>
+            <div class="col-12">
+                <input type="text" name="notes" class="form-control form-control-sm" placeholder="Notes (optional)" value="{{ mc.notes if mc else '' }}">
+            </div>
+            <div class="col-12 d-grid">
+                <button type="submit" class="btn btn-sm btn-dark"><i class="bi bi-save"></i> Save source</button>
+            </div>
+        </div>
+    </form>
 </div>
 {% endif %}
 
@@ -226,15 +590,15 @@
 {% if item.va_info %}
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-people-fill"></i> VA Submission</div>
-    <div class="p-2 rounded border">
+    <div class="p-2 rounded" style="background:#f5f3ff;border:1px solid #e0d9f7;">
         <div class="row small g-2">
             <div class="col-6">
-                <div class="text-muted">VA source</div>
-                <div>{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or item.va_info.lead_subsource or "manual" }}</div>
+                <div class="text-muted"><i class="bi bi-globe"></i> VA source</div>
+                <div class="fw-semibold">{{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace or item.va_info.lead_subsource or "manual" }}</div>
             </div>
             <div class="col-6">
-                <div class="text-muted">Submitted via</div>
-                <div>{{ item.va_info.lead_subsource or "manual" }}</div>
+                <div class="text-muted"><i class="bi bi-send"></i> Submitted via</div>
+                <div class="fw-semibold">{{ item.va_info.lead_subsource or "manual" }}</div>
             </div>
         </div>
         <div class="small mt-2">
@@ -242,6 +606,25 @@
                 {{ item.va_info.verdict or "Pending" }}
             </span>
         </div>
+        {# VA expected profit/ROI is shown once already, right alongside
+           "Profit today"/"ROI today" in the Current Opportunity section
+           above (2026-09-06) -- not repeated here to avoid showing the
+           identical figure twice on one panel. #}
+        {% if item.va_info.va_notes %}
+        <div class="small mt-2">
+            <div class="text-muted">VA notes (read-only -- written by the VA on the sheet)</div>
+            <div class="fst-italic">{{ item.va_info.va_notes }}</div>
+        </div>
+        {% endif %}
+        {# Real confusion found live, 2026-09-07 (Tamara: "there are two
+           notes fields ... we only need one place to leave notes") --
+           this used to ALSO show a second, read-only copy of Atlas
+           Notes right here, duplicating the one editable textarea
+           already further down in Review Actions (which pre-fills with
+           this exact same value). Two boxes with the same label made it
+           unclear which one actually got typed into/saved -- removed
+           this copy so the Review Actions textarea is the only place
+           Atlas notes are shown or edited. #}
     </div>
 </div>
 {% endif %}
@@ -255,43 +638,91 @@
 {% if km and (km.price_drop_count_90d is not none or km.viable_days_90d) %}
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-calendar-range"></i> Price &amp; Demand History</div>
-    <div class="p-2 rounded border">
-        <div class="row small g-2 mb-2">
+    <div class="p-2 rounded" style="background:#f8f9fb;">
+        <div class="row g-2 mb-2">
             <div class="col-6">
-                <div class="text-muted">Price drops (30 / 90 / 180d)</div>
-                <div>{{ km.price_drop_count_30d if km.price_drop_count_30d is not none else "--" }} / {{ km.price_drop_count_90d if km.price_drop_count_90d is not none else "--" }} / {{ km.price_drop_count_180d if km.price_drop_count_180d is not none else "--" }}</div>
+                <div class="p-2 rounded bg-white small h-100">
+                    <div class="text-muted">Price drops (30 / 90 / 180d)</div>
+                    <div class="fw-semibold">{{ km.price_drop_count_30d if km.price_drop_count_30d is not none else "--" }} / {{ km.price_drop_count_90d if km.price_drop_count_90d is not none else "--" }} / {{ km.price_drop_count_180d if km.price_drop_count_180d is not none else "--" }}</div>
+                </div>
             </div>
             <div class="col-6">
-                <div class="text-muted">Sales rank drops (30d)</div>
-                <div>{{ km.sales_drops_30d if km.sales_drops_30d is not none else "--" }}</div>
+                {# Same evidence convention as the row list's own Sales
+                   cell -- any confirmed rank-drop activity is a real
+                   (if weaker than a confirmed sales figure) demand
+                   signal, zero is a visible gap rather than neutral grey. #}
+                <div class="p-2 rounded small h-100" style="background:{{ '#eaf6ec' if km.sales_drops_30d else '#fdeceb' }};">
+                    <div class="text-muted">Sales rank drops (30d)</div>
+                    <div class="fw-semibold {{ 'text-success' if km.sales_drops_30d else 'text-danger' }}">{{ km.sales_drops_30d if km.sales_drops_30d is not none else "--" }}</div>
+                </div>
             </div>
         </div>
-        {% if km.viable_days_90d and km.viable_days_90d.priced_days %}
-        <div class="row small g-2 mb-2">
+        {% if km.viable_days_90d and km.viable_days_90d.priced_days_90d %}
+        {# Colour-coded by the SAME ratio the numbers themselves express
+           (days cleared / days priced) -- 2026-09-07, Tamara: "too much
+           black and white ... making the key info clearer to see". This
+           is one of the single most decision-relevant ratios on the
+           whole panel (was this genuinely, repeatedly viable, or a
+           one-off spike?), previously rendered with zero visual weight
+           at all.
+
+           Two genuinely different windows, not one window at two bars
+           (2026-09-07 follow-up, Tamara re: B0FQCB7YS9 showing "0 of
+           90" at both bars despite a real recent margin) -- a tighter
+           bar (25%) over a SHORTER, more-recent window (30 days -- "is
+           this working right now") alongside a lower bar (20%) over
+           the FULL 90 days ("has this cleared a real margin recently
+           at all"). See VerdictService.compute_metrics' own comment. #}
+        {% set recent_ratio = (km.viable_days_90d.days_at_25pct_30d / km.viable_days_90d.priced_days_30d) if km.viable_days_90d.priced_days_30d else 0 %}
+        {% set wider_ratio = km.viable_days_90d.days_at_20pct_90d / km.viable_days_90d.priced_days_90d %}
+        <div class="row g-2 mb-2">
             <div class="col-6">
-                <div class="text-muted">Days at 25%+ ROI (last 90d)</div>
-                <div>{{ km.viable_days_90d.days_at_target_roi }} / {{ km.viable_days_90d.priced_days }}</div>
+                <div class="p-2 rounded small h-100" style="background:{{ '#eaf6ec' if recent_ratio >= 0.5 else ('#fdf3e6' if recent_ratio > 0 else '#fdeceb') }};">
+                    <div class="text-muted">Days at 25%+ ROI (last 30d)</div>
+                    <div class="fw-semibold" style="color:{{ '#1e7a41' if recent_ratio >= 0.5 else ('#96660a' if recent_ratio > 0 else '#a12f27') }};">{{ km.viable_days_90d.days_at_25pct_30d }} / {{ km.viable_days_90d.priced_days_30d }}</div>
+                </div>
             </div>
             <div class="col-6">
-                <div class="text-muted">Days at 10%+ ROI (last 90d)</div>
-                <div>{{ km.viable_days_90d.days_at_min_roi }} / {{ km.viable_days_90d.priced_days }}</div>
+                <div class="p-2 rounded small h-100" style="background:{{ '#eaf6ec' if wider_ratio >= 0.5 else ('#fdf3e6' if wider_ratio > 0 else '#fdeceb') }};">
+                    <div class="text-muted">Days at 20%+ ROI (last 90d)</div>
+                    <div class="fw-semibold" style="color:{{ '#1e7a41' if wider_ratio >= 0.5 else ('#96660a' if wider_ratio > 0 else '#a12f27') }};">{{ km.viable_days_90d.days_at_20pct_90d }} / {{ km.viable_days_90d.priced_days_90d }}</div>
+                </div>
             </div>
         </div>
         {% endif %}
-        <div class="row small g-2">
+        <div class="row g-2">
             <div class="col-4">
-                <div class="text-muted">30d avg price</div>
-                <div>{% if km.price_avg_30d %}&pound;{{ "%.2f"|format(km.price_avg_30d) }}{% else %}--{% endif %}</div>
+                <div class="p-2 rounded bg-white small h-100">
+                    <div class="text-muted">30d avg price</div>
+                    <div class="fw-semibold">{% if km.price_avg_30d %}&pound;{{ "%.2f"|format(km.price_avg_30d) }}{% else %}--{% endif %}</div>
+                </div>
             </div>
             <div class="col-4">
-                <div class="text-muted">90d avg price</div>
-                <div>{% if km.price_avg_90d %}&pound;{{ "%.2f"|format(km.price_avg_90d) }}{% else %}--{% endif %}</div>
+                <div class="p-2 rounded bg-white small h-100">
+                    <div class="text-muted">90d avg price</div>
+                    <div class="fw-semibold">{% if km.price_avg_90d %}&pound;{{ "%.2f"|format(km.price_avg_90d) }}{% else %}--{% endif %}</div>
+                </div>
             </div>
             <div class="col-4">
-                <div class="text-muted">Offers now (90d avg)</div>
-                <div>{{ km.offers_now if km.offers_now is not none else "--" }} ({{ km.offers_90d_avg if km.offers_90d_avg is not none else "--" }})</div>
+                <div class="p-2 rounded bg-white small h-100">
+                    <div class="text-muted">Offers now (90d avg)</div>
+                    <div class="fw-semibold">{{ km.offers_now if km.offers_now is not none else "--" }} ({{ km.offers_90d_avg if km.offers_90d_avg is not none else "--" }})</div>
+                </div>
             </div>
         </div>
+        {% set bbh = km.buy_box_holder_30d %}
+        {% if bbh and not bbh.third_party_ever_won and bbh.amazon_minutes > 0 %}
+        {# Real gap found live, 2026-09-07 (Tamara, re: B0CFV7Z7SJ: "this
+           only had amazon on the buy box in the past 30 days which is a
+           red flag I should see"). The current-moment buy-box-is-Amazon
+           check misses this whenever Amazon happens to be between stock
+           right when the page loads -- this reads the real 30-day
+           seller-ID history instead, see KeepaParser.buy_box_holder_breakdown. #}
+        <div class="mt-2 p-2 rounded small" style="background:#fdeceb;">
+            <div class="fw-semibold text-danger"><i class="bi bi-exclamation-triangle"></i> No third-party seller has won the buy box in the last 30 days</div>
+            <div class="text-muted">Amazon holds it exclusively whenever in stock -- hard to compete against Amazon itself on this listing.</div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endif %}
@@ -362,15 +793,34 @@
 </div>
 {% endif %}
 
-<!-- SOURCES (section 15) -->
+<!-- SOURCES (section 15) -- icon colours added 2026-09-07 (Tamara:
+     "change the icon colours for competitor, VA and OA source
+     discovery to make these visually better") -- were all flat
+     text-muted grey, indistinguishable from each other at a glance.
+     Each colour reuses an association already established elsewhere on
+     this page rather than inventing new meaning: purple matches the
+     "Recommended action" box (Atlas's own analysis), blue matches every
+     existing VA badge (bg-primary), gold matches every existing OA to
+     Investigate badge (#8a6d1f). Teal is new for Competitor -- no prior
+     colour existed to reuse, chosen to stay visually distinct from the
+     other three. Only coloured when that source actually found
+     something (src_count > 0); a source with nothing to show stays
+     muted, so colour itself signals "there's real data here". -->
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1">Sources</div>
-    {% for src in ["scan", "competitor", "lead"] %}
+    {% set source_style = {
+        "scan": ("bi-radar", "#6f42c1"),
+        "competitor": ("bi-shop", "#0f766e"),
+        "lead": ("bi-person-badge", "#0d6efd"),
+        "oa_investigate": ("bi-question-diamond", "#8a6d1f"),
+    } %}
+    {% for src in ["scan", "competitor", "lead", "oa_investigate"] %}
     {% set src_count = item.source_items | selectattr("source", "equalto", src) | list | length %}
+    {% set icon, color = source_style[src] %}
     <div class="d-flex justify-content-between border-bottom py-1 small">
-        <span><i class="bi {{ 'bi-radar' if src == 'scan' else ('bi-shop' if src == 'competitor' else 'bi-person-badge') }} text-muted"></i> {{ source_type_labels[src] }}</span>
+        <span><i class="bi {{ icon }}" style="color:{{ color if src_count else '#adb5bd' }};"></i> {{ source_type_labels[src] }}</span>
         <span>
-            {% if src_count %}<span class="badge bg-light text-dark border">{{ src_count }}</span>{% else %}<span class="text-muted">--</span>{% endif %}
+            {% if src_count %}<span class="badge" style="background:{{ color }};color:#fff;">{{ src_count }}</span>{% else %}<span class="text-muted">--</span>{% endif %}
         </span>
     </div>
     {% endfor %}
@@ -379,8 +829,9 @@
 <!-- REVIEW ACTIONS (section 19) -->
 <div class="mb-2">
     <div class="text-uppercase text-muted small fw-bold mb-2">Review Actions</div>
-    <form class="qi-detail-actions-form" method="post" action="/review-queue/resolve">
+    <form class="qi-detail-actions-form" method="post" action="/review-queue/resolve" data-lead-subsource="{{ item.va_info.lead_subsource if item.va_info else '' }}">
         <input type="hidden" name="asin" value="{{ item.asin }}">
+        <input type="hidden" name="purchased_qty" value="">
         <!-- Reason category (2026-09-04) -- only ENFORCED for Avoid (see
              review_queue.html's submit handler): a rejection with no
              reason at all was useful information lost for good, since
@@ -394,6 +845,35 @@
             {% endfor %}
         </select>
         <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" placeholder="Add a note (required if reason is Other)"></textarea>
+        {# "Also exclude" (2026-09-07, Tamara: "a way to exclude from the
+           leads more info page ... as an option") -- an opt-in checkbox,
+           unchecked by default, offered alongside Avoid. Deliberately NOT
+           automatic just because a reason (e.g. Gated) is picked -- Tamara
+           was explicit she doesn't want a standing rule triggered by
+           reason alone, only a one-off choice she makes per ASIN. Only
+           takes effect on an Avoid decision (see the JS handler below and
+           review_queue.py's own guard on decision == "rejected"). #}
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="also_exclude" value="1" id="qi-also-exclude">
+            <label class="form-check-label small" for="qi-also-exclude">
+                Also exclude this ASIN from future scans (if Avoid)
+            </label>
+        </div>
+        {# Real bug found live, 2026-09-07 (Tamara: "I wrote content in
+           though did it not save?") -- a handful of leads have the
+           literal STRING "None" sitting in atlas_notes (old data-quality
+           artifact, cause unknown/historical), which this pre-fill
+           used to show as real, editable box content -- not a
+           placeholder -- easy to miss and type alongside/leave in place
+           rather than clearing, and easy to resubmit unchanged. Guarded
+           here so junk like this can never masquerade as real saved
+           content again; a genuinely blank/unset note still renders
+           as an empty box exactly as before. #}
+        <div class="text-muted small mb-1">Atlas notes -- the ONE place to write a comment (syncs to Client Notes on the sheet); shows whatever was last saved</div>
+        <textarea name="atlas_notes" class="form-control form-control-sm mb-2" rows="2" placeholder="Write a comment for the VA/team here">{{ item.va_info.atlas_notes if item.va_info and item.va_info.atlas_notes and item.va_info.atlas_notes.strip().lower() != 'none' else '' }}</textarea>
+        <div class="d-grid mb-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary qi-save-note-btn"><i class="bi bi-chat-left-text"></i> Save note (no decision yet)</button>
+        </div>
         <div class="d-grid gap-2">
             {% for value, label, color, icon in decision_buttons %}
             <button type="submit" name="decision" value="{{ value }}" class="btn btn-{{ color }}">
