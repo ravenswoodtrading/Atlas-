@@ -249,6 +249,15 @@ REVIEW_REASON_CATEGORIES = (
     "OUT_OF_STOCK",
     "PRICE_CHANGED",
     "NO_LONGER_PROFITABLE",
+    # Added 2026-09-08, Tamara -- distinct from PRICE_CHANGED (a plain,
+    # neutral fact) and NO_LONGER_PROFITABLE (the margin is simply
+    # gone): this is "the price dropped, but I don't trust why" -- e.g.
+    # it looks competition-driven or otherwise unstable rather than a
+    # genuine, repeatable buying window (see OpportunityLensService's
+    # own "looks competition-driven" risk flag on the detail panel).
+    # NOT in EXPIRY_REASON_CATEGORIES below -- this is a judgement about
+    # the opportunity's quality, not a timing/staleness issue.
+    "RISKY_PRICE_DROP",
     "ALREADY_BOUGHT",
     "TOO_MUCH_STOCK",
     "TOO_EXPENSIVE",
@@ -282,6 +291,7 @@ REVIEW_REASON_CATEGORY_LABELS = {
     "OUT_OF_STOCK": "Out of stock",
     "PRICE_CHANGED": "Price changed",
     "NO_LONGER_PROFITABLE": "No longer profitable",
+    "RISKY_PRICE_DROP": "Risky price drop",
     "ALREADY_BOUGHT": "Already bought",
     "TOO_MUCH_STOCK": "Too much FBA stock",
     "TOO_EXPENSIVE": "Too expensive",

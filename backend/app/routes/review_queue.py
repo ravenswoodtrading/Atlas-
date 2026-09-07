@@ -194,6 +194,9 @@ QUICK_REJECT_REASONS = [
     ("GATED", "Gated"),
     ("ALREADY_BOUGHT", "Already bought"),
     ("PRICE_CHANGED", "Price changed"),
+    # Added 2026-09-08, Tamara -- see REVIEW_REASON_CATEGORIES' own
+    # comment in review_queue_service.py for the full reasoning.
+    ("RISKY_PRICE_DROP", "Risky price drop"),
     ("INSUFFICIENT_PROFIT", "Margin too low"),
     # Added 2026-09-04, user-requested -- all four map onto EXISTING
     # REVIEW_REASON_CATEGORIES values (OUT_OF_STOCK is the one genuinely
