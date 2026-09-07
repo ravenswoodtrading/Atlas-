@@ -274,6 +274,18 @@ class SourcingClassifier:
         best_roi_date = ""
         best_roi_cost_gbp = 0.0
 
+        # Real gap found live, 2026-09-07 (Tamara, re: B076H61X15: "even
+        # if it has never been profitable this is things I want to see
+        # and I want the cheapest price in the last 30 days and which
+        # country") -- tracked independently of best_roi/viable_days
+        # above, which only ever record a market once it clears
+        # RECENT_VIABLE_ROI_PCT. A real, if unprofitable, EU price is
+        # still useful context (and sometimes a warning that the "OA"
+        # tag is resting on incomplete evidence -- see eu_markets_checked).
+        cheapest_price_gbp = None
+        cheapest_price_marketplace = ""
+        cheapest_price_date = ""
+
         for marketplace, eu_raw in (eu_products or {}).items():
             if not eu_raw:
                 continue
@@ -299,6 +311,11 @@ class SourcingClassifier:
 
                 priced_days += 1
                 eu_cost_gbp = CurrencyService.to_gbp(eu_price_raw, currency)
+
+                if cheapest_price_gbp is None or eu_cost_gbp < cheapest_price_gbp:
+                    cheapest_price_gbp = eu_cost_gbp
+                    cheapest_price_marketplace = marketplace
+                    cheapest_price_date = date_for_index(i)
 
                 roi = FeeEngine.roi_at_price(
                     uk_price, eu_cost_gbp, category_name, product.fba_fee, product.eu_vat_rate_used,
@@ -344,6 +361,9 @@ class SourcingClassifier:
             "eu_source_best_roi_date": best_roi_date,
             "eu_source_best_roi_marketplace": best_marketplace,
             "eu_source_evidence_by_marketplace": eu_source_evidence_by_marketplace,
+            "eu_cheapest_price_recent_gbp": cheapest_price_gbp or 0.0,
+            "eu_cheapest_price_recent_marketplace": cheapest_price_marketplace,
+            "eu_cheapest_price_recent_date": cheapest_price_date,
         }
 
     @staticmethod
@@ -835,6 +855,15 @@ class SourcingClassifier:
                 "wholesale_matched": False,
                 "offer_count": product.offers_now,
                 "brand_repeat_count": brand_repeat_count,
+                # Real cheapest EU price seen in the window, regardless
+                # of viability, plus which of the 4 EU markets were
+                # actually checked (2026-09-07, Tamara -- see Product's
+                # own eu_cheapest_price_recent_gbp/eu_markets_checked
+                # docstrings for the full reasoning).
+                "eu_cheapest_price_recent_gbp": product.eu_cheapest_price_recent_gbp,
+                "eu_cheapest_price_recent_marketplace": product.eu_cheapest_price_recent_marketplace,
+                "eu_cheapest_price_recent_date": product.eu_cheapest_price_recent_date,
+                "eu_markets_checked": sorted(product.eu_markets_checked),
                 "note": "No recent EU margin or UK dip in the last "
                         f"{RECENT_WINDOW_DAYS} days, and no wholesale structural "
                         "signal either -- most likely OA, or a sourcing method "

@@ -770,6 +770,18 @@ class BrandScanService:
         # only stops LOOKING FURTHER once a good-enough source is
         # already in hand, it never drops an ASIN's own data.
         eu_lookups = {}
+        # Which ASINs actually had a Keepa fetch ATTEMPTED per EU
+        # marketplace (2026-09-07, Tamara: real gap found live on
+        # B076H61X15 -- Italy was never checked at all because the scan
+        # ran low on tokens partway through EU_MARKETPLACES, so a
+        # genuinely viable EU A2A opportunity there was silently missed
+        # and the ASIN got tagged "OA / unclear" off incomplete
+        # evidence). Distinct from eu_lookups, which only ever holds a
+        # key for an ASIN Keepa actually returned a product for --
+        # "checked, no listing there" and "never checked" both look
+        # identical in eu_lookups, but need to be told apart below so a
+        # market already covered is never re-fetched for nothing.
+        eu_attempted = {m: set() for m in EU_MARKETPLACES}
         marketplaces_skipped_low_tokens = []
         marketplaces_partial_low_tokens = {}
         remaining_asins = list(included_asins)
@@ -836,6 +848,7 @@ class BrandScanService:
                 eu_lookups.setdefault(marketplace, {}).update(
                     {p.get("asin"): p for p in products}
                 )
+                eu_attempted[marketplace].update(fetched)
 
                 if ran_out:
                     if fetched:
@@ -873,6 +886,7 @@ class BrandScanService:
             # for a different subset of ASINs than `remaining_asins`
             # covers here.
             eu_lookups[marketplace].update({p.get("asin"): p for p in products})
+            eu_attempted[marketplace].update(fetched)
 
             if ran_out:
                 if fetched:
@@ -898,6 +912,43 @@ class BrandScanService:
 
             remaining_asins = still_needed
 
+        # "Always check all 4 EU markets before concluding OA" (2026-
+        # 09-07, Tamara, re: B076H61X15 -- see eu_attempted's own
+        # comment above for the full story, and her follow-up:
+        # "competitors are our biggest source for leads ... prioritise
+        # competitor leads ... especially A2A"). Every ASIN still in
+        # remaining_asins here found no viable source in whatever
+        # markets the loop above actually got to -- before that's
+        # allowed to stand as a real "OA" conclusion, top up any market
+        # that was skipped (never one already attempted -- eu_attempted
+        # tracks exactly which markets got a real Keepa fetch, not just
+        # which found a listing). Bounded by the SAME token-safety
+        # checks _fetch_in_chunks always applies (the MIN_TOKEN_BUFFER
+        # reserve is never spent into) -- if tokens genuinely can't
+        # stretch to it, the gap is simply left recorded in
+        # eu_markets_checked below rather than forced through.
+        if remaining_asins:
+            for marketplace in EU_MARKETPLACES:
+                not_yet_checked = [a for a in remaining_asins if a not in eu_attempted[marketplace]]
+                if not not_yet_checked:
+                    continue
+
+                products, fetched, ran_out, eu_cost_estimate = self._fetch_in_chunks(
+                    not_yet_checked, marketplace, eu_cost_estimate, full=True
+                )
+                eu_lookups[marketplace].update({p.get("asin"): p for p in products})
+                eu_attempted[marketplace].update(fetched)
+
+                if ran_out:
+                    if fetched:
+                        partial = marketplaces_partial_low_tokens.setdefault(
+                            marketplace, {"fetched": 0, "total": 0},
+                        )
+                        partial["fetched"] += len(fetched)
+                        partial["total"] += len(not_yet_checked)
+                    elif marketplace not in marketplaces_skipped_low_tokens:
+                        marketplaces_skipped_low_tokens.append(marketplace)
+
         opportunities = []
 
         # Step 5 - Map, price, and score each remaining ASIN
@@ -911,6 +962,7 @@ class BrandScanService:
 
             product = ProductMapper.from_keepa_multi(uk_product, eu_products)
             product.gated = asin in gated_asins
+            product.eu_markets_checked = [m for m in EU_MARKETPLACES if asin in eu_attempted[m]]
 
             if not product.buy_box_now:
                 if include_no_eu_source:

@@ -54,8 +54,23 @@
 {% set hist = item.historical_sourcing_evidence.get("competitor", {}) %}
 {% set eu_evidence = hist.get("eu_a2a") if hist.get("eu_a2a") is mapping else {} %}
 {% set uk_evidence = hist.get("uk_a2a") %}
+{% set reasoning = competitor_source.reasoning or {} %}
+{% set markets_checked = reasoning.get("eu_markets_checked") %}
+{% set cheapest_mkt = reasoning.get("eu_cheapest_price_recent_marketplace") %}
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-globe-europe-africa"></i> Marketplace Evidence</div>
+    {# Real gap found live, 2026-09-07 (Tamara, re: B076H61X15: "even if
+       it has never been profitable this is things I want to see", and
+       "I can see this is for sale in other EU countries [but] no EU
+       evidence on the more info") -- a tile used to show "--" for
+       BOTH "checked, had a real price, just never a viable one" and
+       "never checked at all" identically, hiding a genuine (if
+       unprofitable) EU price and making an incomplete check
+       indistinguishable from a confirmed absence of one. Green = a
+       VIABLE day was found (unchanged); blue = a real price existed
+       but never cleared the viable-ROI bar; grey "not checked" = this
+       market genuinely wasn't queried this scan (see eu_markets_
+       checked/the "always check all 4" fix this same session). #}
     <div class="d-flex flex-wrap" style="gap:.5rem;">
         <div class="text-center p-2 rounded border {{ 'bg-success bg-opacity-10 border-success' if uk_evidence }}" style="min-width:56px;">
             <div>🇬🇧</div><div class="small">UK</div>
@@ -63,12 +78,33 @@
         </div>
         {% for mkt in ["DE", "FR", "ES", "IT"] %}
         {% set ev = eu_evidence.get(mkt) %}
-        <div class="text-center p-2 rounded border {{ 'bg-success bg-opacity-10 border-success' if ev }}" style="min-width:56px;">
+        {% set was_checked = markets_checked is none or mkt in markets_checked %}
+        <div class="text-center p-2 rounded border {{ 'bg-success bg-opacity-10 border-success' if ev else ('bg-info bg-opacity-10 border-info' if cheapest_mkt == mkt else '') }}" style="min-width:56px;">
             <div>{{ flags[mkt] }}</div><div class="small">{{ mkt }}</div>
-            <div class="small">{{ "£%.2f"|format(ev.best_buy_price) if ev and ev.best_buy_price else "--" }}</div>
+            {% if ev %}
+            <div class="small">{{ "£%.2f"|format(ev.best_buy_price) }}</div>
+            {% elif cheapest_mkt == mkt %}
+            <div class="small" title="Real price, never cleared the viable-ROI bar">{{ "£%.2f"|format(reasoning.eu_cheapest_price_recent_gbp) }}</div>
+            {% elif not was_checked %}
+            <div class="small text-muted fst-italic">not checked</div>
+            {% else %}
+            <div class="small">--</div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
+    {% if reasoning.eu_cheapest_price_recent_gbp %}
+    <div class="small text-muted mt-1">
+        Cheapest EU price in the last 30 days: <strong>£{{ "%.2f"|format(reasoning.eu_cheapest_price_recent_gbp) }}</strong>
+        ({{ flags.get(reasoning.eu_cheapest_price_recent_marketplace, "") }} {{ reasoning.eu_cheapest_price_recent_marketplace }},
+        {{ reasoning.eu_cheapest_price_recent_date | days_ago if reasoning.eu_cheapest_price_recent_date else "" }}) --
+        {% if reasoning.eu_a2a_viable_days_recent %}cleared a viable margin{% else %}never cleared a viable margin against UK{% endif %}.
+    </div>
+    {% endif %}
+    {% if markets_checked is not none and markets_checked|length < 4 %}
+    {% set not_checked = ["DE", "FR", "ES", "IT"] | reject("in", markets_checked) | list %}
+    <div class="small text-warning mt-1"><i class="bi bi-exclamation-triangle"></i> Not checked this scan: {{ not_checked | join(", ") }} -- this classification may be based on incomplete EU coverage.</div>
+    {% endif %}
 </div>
 
 <!-- SOURCE TYPE -->

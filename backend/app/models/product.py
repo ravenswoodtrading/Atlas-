@@ -220,6 +220,31 @@ class Product:
     # strongest one surviving.
     eu_source_evidence_by_marketplace: dict = field(default_factory=dict)
 
+    # Real gap found live, 2026-09-07 (Tamara, re: B076H61X15: "I can
+    # see that this is for sale in other EU countries ... even if it
+    # has never been profitable this is things I want to see and I
+    # want the cheapest price in the last 30 days and which country").
+    # eu_source_evidence_by_marketplace above only records a market
+    # once it clears a VIABLE margin -- a market that was genuinely
+    # checked and had a real price, just never a profitable one,
+    # produces NO entry there at all, which is exactly what made this
+    # ASIN's real (if unprofitable) Italian price invisible. These
+    # three describe the single cheapest EU price seen on ANY day in
+    # the window, on ANY checked marketplace, regardless of viability --
+    # 0.0/""/"" when no EU marketplace had a price at all.
+    eu_cheapest_price_recent_gbp: float = 0.0
+    eu_cheapest_price_recent_marketplace: str = ""
+    eu_cheapest_price_recent_date: str = ""
+
+    # Which of DE/FR/ES/IT actually had a Keepa fetch attempted for
+    # this ASIN this scan (see BrandScanService's top-up pass) --
+    # distinct from eu_source_evidence_by_marketplace's keys, which
+    # only include markets that found something. A market missing from
+    # THIS list was never even checked (e.g. Keepa token budget ran
+    # out) -- surfaced so "OA / unclear" can be told apart from
+    # "OA / unclear, but not every market was actually checked".
+    eu_markets_checked: list = field(default_factory=list)
+
     # How many recent-window days had the UK price down at/near a
     # genuine dip (see SourcingClassifier.DIP_THRESHOLD) relative to
     # the 90-day average.
