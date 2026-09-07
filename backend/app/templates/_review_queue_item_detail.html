@@ -153,6 +153,15 @@
     <div class="col-6">
         <div class="text-muted small">Amazon UK price</div>
         <div class="small">&pound;{{ "%.2f"|format(item.buy_box_now or 0) }}</div>
+        {# VA's own expected sale price (2026-09-07, Tamara: "can we
+           have the VA expected sales price on here as well") -- the
+           VA-only fallback branch below already shows this next to its
+           own Amazon UK price tile; this merged (scan+VA) branch's tile
+           was missing it entirely, showing only VA profit/ROI further
+           down with no separate sale-price figure. #}
+        {% if item.va_info and item.va_info.va_expected_sale_price is not none %}
+        <div class="small mt-1"><span class="badge bg-primary" title="The VA's own expected sale price, from when they sourced this -- not necessarily today's Amazon price."><i class="bi bi-person-badge"></i> VA: &pound;{{ "%.2f"|format(item.va_info.va_expected_sale_price) }}</span></div>
+        {% endif %}
     </div>
 </div>
 
