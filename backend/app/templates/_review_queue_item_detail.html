@@ -844,7 +844,14 @@
             <option value="{{ value }}">{{ review_reason_category_labels.get(value, value) }}</option>
             {% endfor %}
         </select>
-        <textarea name="reason" class="form-control form-control-sm mb-2" rows="2" placeholder="Add a note (required if reason is Other)"></textarea>
+        {# Only shown when reason_category is "Other" (2026-09-07, Tamara:
+           "can we have the other note field only come up if the buy
+           reason is other") -- with the reason label already spelling
+           out every other category, a free-text box was one more thing
+           on screen with no obvious use case for a non-Other reason.
+           See review_queue.html's own delegated 'change' listener on
+           reason_category, which toggles this hidden attribute. #}
+        <textarea name="reason" class="form-control form-control-sm mb-2 qi-reason-other" rows="2" placeholder="Add a note (required for Other)" hidden></textarea>
         {# "Also exclude" (2026-09-07, Tamara: "a way to exclude from the
            leads more info page ... as an option") -- an opt-in checkbox,
            unchecked by default, offered alongside Avoid. Deliberately NOT

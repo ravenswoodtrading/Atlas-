@@ -592,6 +592,27 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
+    // Reason free-text box only shown for "Other" (2026-09-07, Tamara)
+    // -- delegated 'change' since the detail panel is injected after
+    // this listener is already attached (same reasoning as the submit
+    // listener just below). Clears any leftover text when hiding, so a
+    // note typed for "Other" can never survive un-noticed once a
+    // different category is picked.
+    document.addEventListener('change', function (e) {
+        var select = e.target.closest('[name="reason_category"]');
+        if (!select) return;
+        var form = select.closest('.qi-detail-actions-form');
+        if (!form) return;
+        var reasonField = form.querySelector('.qi-reason-other');
+        if (!reasonField) return;
+        if (select.value === 'OTHER') {
+            reasonField.hidden = false;
+        } else {
+            reasonField.hidden = true;
+            reasonField.value = '';
+        }
+    });
+
     // Detail panel's own Review Actions form (see
     // _review_queue_item_detail.html) -- delegated here since that
     // partial is injected after this listener is already attached.
