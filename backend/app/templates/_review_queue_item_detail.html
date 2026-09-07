@@ -552,6 +552,13 @@
         {% if mc.notes %}
         <div class="small text-muted mt-1"><i class="bi bi-sticky"></i> {{ mc.notes }}</div>
         {% endif %}
+        {% if mc.source_confidence %}
+        <div class="small mt-1">
+            <span class="badge {{ 'bg-success' if mc.source_confidence == 'High' else ('bg-warning text-dark' if mc.source_confidence == 'Medium' else 'bg-secondary') }}">
+                <i class="bi bi-speedometer2"></i> {{ mc.source_confidence }} confidence
+            </span>
+        </div>
+        {% endif %}
         <div class="small text-muted mt-1">Manually confirmed{% if mc.created_at %} &middot; {{ mc.created_at | ago }}{% endif %}</div>
     </div>
     {% endif %}
@@ -587,11 +594,65 @@
             <div class="col-12">
                 <input type="text" name="notes" class="form-control form-control-sm" placeholder="Notes (optional)" value="{{ mc.notes if mc else '' }}">
             </div>
+            {# Confidence factor (2026-09-07, Tamara: "manually adding the
+               source store with confidence factor so we can get a
+               picture of where competitors are sourcing") -- reuses the
+               same High/Medium/Low scale the automated OA path already
+               populates on OaSourceCandidate.source_confidence, see
+               save_manual_source's own docstring for why this is a
+               separate question from product-match confidence. #}
+            <div class="col-12">
+                <select name="source_confidence" class="form-select form-select-sm" title="How sure are you this is really where they bought it?">
+                    <option value="" {{ 'selected' if not (mc.source_confidence if mc else '') }}>Confidence this is the real source...</option>
+                    <option value="High" {{ 'selected' if mc and mc.source_confidence == 'High' }}>High -- confirmed (order history, screenshot, etc.)</option>
+                    <option value="Medium" {{ 'selected' if mc and mc.source_confidence == 'Medium' }}>Medium -- likely match, not fully confirmed</option>
+                    <option value="Low" {{ 'selected' if mc and mc.source_confidence == 'Low' }}>Low -- a plausible guess</option>
+                </select>
+            </div>
             <div class="col-12 d-grid">
                 <button type="submit" class="btn btn-sm btn-dark"><i class="bi bi-save"></i> Save source</button>
             </div>
         </div>
     </form>
+</div>
+{% endif %}
+
+<!-- CLASSIFICATION CORRECTION -- any competitor-sourced item, not just
+     OA to Investigate (2026-09-07, Tamara: "manually be able to change
+     the sourcing type ... on leads where I disagree"). The block
+     inside OA SOURCE DISCOVERY above already covers this exact same
+     capability for an OA/unclear item that clears a breakeven (has
+     item.oa_price_guide) -- this one fills the gap for everything
+     else a competitor listing can already be tagged (EU A2A, UK A2A,
+     Wholesale (likely)), or an OA/unclear one that never cleared
+     breakeven so has no oa_price_guide at all. Same /review-queue/
+     reclassify route and .qi-reclassify-btn JS as the other copy --
+     one correction mechanism, two entry points. -->
+{% if item.competitor_sourcing_tag and not item.oa_price_guide %}
+<div class="mb-3">
+    <div class="text-uppercase text-muted small fw-bold mb-1">
+        Atlas classified this as
+        {% if item.competitor_manually_classified %}<span class="badge bg-light text-dark border" title="You've corrected this -- future automated rechecks won't overwrite it"><i class="bi bi-person-check"></i> Manually set</span>{% endif %}
+    </div>
+    <div class="btn-group btn-group-sm qi-reclassify-group" data-asin="{{ item.asin }}" role="group">
+        {% for tag in ["EU A2A", "UK A2A", "Wholesale (likely)", "OA / unclear"] %}
+        <button type="button" class="btn qi-reclassify-btn {{ 'btn-secondary' if item.competitor_sourcing_tag == tag else 'btn-outline-secondary' }}" data-tag="{{ tag }}">{{ tag }}</button>
+        {% endfor %}
+    </div>
+    {% if item.competitor_certainty %}
+    <div class="mt-1">
+        <span class="badge {{ 'bg-success' if item.competitor_certainty.level == 'HIGH' else ('bg-warning text-dark' if item.competitor_certainty.level == 'MEDIUM' else 'bg-danger') }}">
+            <i class="bi bi-speedometer2"></i> Certainty: {{ item.competitor_certainty.level | title }}
+        </span>
+        {% if item.competitor_certainty.facts %}
+        <ul class="small text-muted mb-0 mt-1 ps-3">
+            {% for fact in item.competitor_certainty.facts %}
+            <li>{{ fact }}</li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+    {% endif %}
 </div>
 {% endif %}
 

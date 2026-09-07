@@ -421,6 +421,7 @@ def review_queue_oa_save_source(
     retailer_price_gbp: float = Form(...),
     delivery_gbp: float = Form(0.0),
     notes: str = Form(""),
+    source_confidence: str = Form(""),
 ):
     """
     OA workbench "Save Source" (2026-09-05) -- persists a human-found
@@ -431,9 +432,12 @@ def review_queue_oa_save_source(
     The detail panel re-fetches itself after this call (same pattern the
     resolve/undo toast already uses) so the "Source Found" status and the
     existing Review Actions form both reflect the freshly-saved source.
+
+    source_confidence: "High"/"Medium"/"Low"/"" (2026-09-07, Tamara --
+    see save_manual_source's own docstring for the full reasoning).
     """
     result = OaSourceDiscoveryService.save_manual_source(
-        asin, retailer_domain, retailer_url, retailer_price_gbp, delivery_gbp, notes,
+        asin, retailer_domain, retailer_url, retailer_price_gbp, delivery_gbp, notes, source_confidence,
     )
     return JSONResponse({"ok": True, "asin": asin, **result})
 

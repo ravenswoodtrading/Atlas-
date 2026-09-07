@@ -1462,6 +1462,26 @@ class ReviewQueueService:
             "oa_investigate_certainty": next(
                 (item.get("certainty") for item in source_items if item["source"] == "oa_investigate"), None,
             ),
+            # Same "read directly off the specific source_item" pattern
+            # as the three oa_investigate_* fields above, but for the
+            # PLAIN "competitor" source_item -- i.e. one already tagged
+            # EU A2A / UK A2A / Wholesale (likely), not just an OA/
+            # unclear one (2026-09-07, Tamara: "manually be able to
+            # change the sourcing type ... on leads where I disagree").
+            # The oa_investigate_* trio above only ever gets the OA
+            # detail panel's own correction UI showing, which means
+            # "Atlas got a confirmed EU A2A tag wrong" had no correction
+            # path at all before this -- these three give any
+            # competitor-sourced item that same capability.
+            "competitor_sourcing_tag": next(
+                (item.get("sourcing_tag") for item in source_items if item["source"] == "competitor"), None,
+            ),
+            "competitor_manually_classified": next(
+                (item.get("manually_classified") for item in source_items if item["source"] == "competitor"), False,
+            ),
+            "competitor_certainty": next(
+                (item.get("certainty") for item in source_items if item["source"] == "competitor"), None,
+            ),
             # Scan/competitor-side "why this score" breakdown (2026-09-04)
             # -- OpportunityEngine's trend/score_breakdown/confidence_
             # breakdown, already computed and stored on ProductRecord.

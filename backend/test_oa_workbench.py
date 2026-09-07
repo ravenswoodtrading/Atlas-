@@ -281,6 +281,65 @@ try:
     assert "Recommended action" in r_detail4.text  # real action content still present too
     print("test 8: dual-membership item shows BOTH its real action content and the OA workbench: ok")
 
+    # =====================================================================
+    # 9 -- source_confidence (2026-09-07, Tamara: "manually adding the
+    # source store with confidence factor so we can get a picture of
+    # where competitors are sourcing") -- persists via the service call,
+    # shows on the detail panel, and is pre-selected in the form on reload.
+    # =====================================================================
+    asin5 = f"{TEST_ASIN_PREFIX}E"
+    record5 = make_record(asin5, buy_box_now=139.0, fba_fee=6.0, ean="4444444444444")
+    make_listing(seller, asin5, record5)
+
+    OaSourceDiscoveryService.save_manual_source(
+        asin5, "currys.co.uk", "https://currys.co.uk/p", 139.0, 0.0, "", "Medium",
+    )
+    candidate5 = OaSourceDiscoveryService.get_manual_candidate(asin5)
+    assert candidate5.source_confidence == "Medium"
+    print("test 9: source_confidence persists via save_manual_source: ok")
+
+    r_detail5 = client.get(f"/review-queue/item/{asin5}")
+    assert r_detail5.status_code == 200
+    assert "Medium confidence" in r_detail5.text
+    assert 'value="Medium" selected' in r_detail5.text
+    print("test 9b: detail panel shows the confidence badge and pre-selects it in the update form: ok")
+
+    # Re-saving WITHOUT a confidence value must not blank out what was
+    # already recorded (source_confidence="" means "unset", not "clear").
+    OaSourceDiscoveryService.save_manual_source(
+        asin5, "currys.co.uk", "https://currys.co.uk/p", 135.0, 0.0, "price dropped",
+    )
+    candidate5b = OaSourceDiscoveryService.get_manual_candidate(asin5)
+    assert candidate5b.source_confidence == "Medium", "re-saving without a confidence value must not clear the existing one"
+    print("test 9c: re-saving without a confidence value preserves the existing one: ok")
+
+    # =====================================================================
+    # 10 -- classification correction is now available on a PLAIN
+    # competitor item (e.g. tagged EU A2A), not just an OA/unclear one
+    # with an oa_price_guide (2026-09-07, Tamara: "manually be able to
+    # change the sourcing type ... on leads where I disagree").
+    # =====================================================================
+    asin6 = f"{TEST_ASIN_PREFIX}F"
+    record6 = make_record(asin6, buy_box_now=50.0, fba_fee=4.0, ean="5555555555555")
+    db = SessionLocal()
+    try:
+        listing6 = SellerNewListing(
+            tracked_seller_id=seller, asin=asin6, product_record_id=record6,
+            sourcing_tag="EU A2A", currently_buyable=True, detected_at=utcnow(),
+        )
+        db.add(listing6)
+        db.commit()
+        created_asins.add(asin6)
+    finally:
+        db.close()
+
+    r_detail6 = client.get(f"/review-queue/item/{asin6}")
+    assert r_detail6.status_code == 200
+    assert "Atlas classified this as" in r_detail6.text
+    assert "qi-reclassify-group" in r_detail6.text
+    assert "OA -- Worth Investigating" not in r_detail6.text  # not an OA/unclear item, no oa_price_guide
+    print("test 10: a plain EU A2A item (no oa_price_guide) now shows its own classification-correction UI: ok")
+
 finally:
     cleanup(created_asins)
 

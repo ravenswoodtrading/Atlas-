@@ -60,6 +60,18 @@
     {% endif %}
 </div>
 
+{% if view == "oa_investigate" %}
+{# Real confusion found live, 2026-09-07 (Tamara: "these queues look
+   to have different items are they both the same?") -- see the
+   matching note on the OA Source Discovery page's own header for the
+   full reasoning; labelled on both sides so whichever one is opened
+   first, the difference is explained. #}
+<div class="text-muted small mb-3">
+    <i class="bi bi-info-circle"></i> This tab is always live -- every current "OA / unclear" listing with room to profit, no run needed.
+    <a href="/oa-discovery">OA Source Discovery</a> is a separate, on-demand batch tool that searches for a retail source; its results can look different from this list.
+</div>
+{% endif %}
+
 <!-- Primary filter: workflow views (section 20) -->
 <ul class="nav nav-pills mb-2 flex-wrap" style="gap:.35rem;">
     {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention", "oa_investigate"] %}

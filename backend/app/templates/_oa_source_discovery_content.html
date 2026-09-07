@@ -2,13 +2,27 @@
 
 {% macro oa_source_discovery_content(runs, selected_run, candidates, preview_candidates, excluded_asins, serpapi_configured, serpapi_searches_left, preview_window_matched, preview_pool_total, since_days, window_options) %}
 
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-1">
     <h4 class="mb-0">OA Source Discovery {{ help_button("oa-source-discovery") }}</h4>
     {% if serpapi_searches_left is not none %}
     <span class="badge bg-light text-dark border" title="Google Shopping searches left this month on your SerpApi plan">
         <i class="bi bi-search"></i> {{ serpapi_searches_left }} SerpApi searches left
     </span>
     {% endif %}
+</div>
+{# Real confusion found live, 2026-09-07 (Tamara: "these queues look
+   to have different items are they both the same?") -- this page and
+   Review Queue's "OA to Investigate" tab both draw from the same "OA /
+   unclear" pool but are genuinely different tools: this one is an
+   on-demand BATCH search (a snapshot from whenever you last clicked
+   "Run batch", capped at that run's own ASIN limit, gated brands
+   dropped entirely), Review Queue's tab is a LIVE query recomputed on
+   every page load with no batch step needed at all. Labelled here so
+   the difference is obvious up front rather than discovered by
+   comparing two lists that don't match. #}
+<div class="text-muted small mb-3">
+    <i class="bi bi-info-circle"></i> An on-demand batch tool (results are a snapshot from your last "Run batch" click) --
+    not the same as the <a href="/review-queue?view=oa_investigate">Review Queue's "OA to Investigate" tab</a>, which is always live and needs no run at all.
 </div>
 
 {% if not serpapi_configured %}

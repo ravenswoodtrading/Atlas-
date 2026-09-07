@@ -1681,7 +1681,7 @@ class OaSourceDiscoveryService:
     @staticmethod
     def save_manual_source(asin: str, retailer_domain: str, retailer_url: str,
                             retailer_price_gbp: float, delivery_gbp: float = 0.0,
-                            notes: str = "") -> dict:
+                            notes: str = "", source_confidence: str = "") -> dict:
         """
         Review Queue OA workbench (2026-09-05) -- persists a human-found
         retail source for an OA-investigate ASIN. Deliberately narrower
@@ -1705,6 +1705,22 @@ class OaSourceDiscoveryService:
         convention update_candidate's own fallback branch already uses,
         so this produces identical profit/ROI math to the rest of Atlas,
         just without the auto-promote step.
+
+        source_confidence (2026-09-07, Tamara: "manually adding the
+        source store with confidence factor so we can get a picture of
+        where competitors are sourcing") -- reuses the existing
+        OaSourceCandidate.source_confidence column ("High"/"Medium"/
+        "Low", already populated by the automated Google-Shopping path
+        via classify_match) rather than adding a second, parallel
+        field. How sure Tamara is THIS is really where the competitor
+        bought it (e.g. HIGH for "saw it in their order history/a
+        screenshot", LOW for "a plausible guess based on price alone")
+        -- distinct from match_tier/match_confidence_pct, which are
+        about product-identity confidence (right ASIN?), not sourcing
+        confidence (right store?). "" (unset) leaves whatever was
+        already recorded untouched, so re-saving just the price/notes
+        on an existing entry never silently blanks out a confidence
+        rating that was set earlier.
         """
         db = SessionLocal()
         try:
@@ -1752,6 +1768,7 @@ class OaSourceDiscoveryService:
             candidate.retailer_price_gbp = retailer_price_gbp
             candidate.delivery_gbp = delivery_gbp or 0.0
             candidate.notes = notes or ""
+            candidate.source_confidence = source_confidence or candidate.source_confidence
             candidate.price_source = "manual"
             candidate.outcome = "candidate_found"
 
