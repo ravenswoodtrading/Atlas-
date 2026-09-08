@@ -1374,6 +1374,30 @@ class ReviewQueueService:
         va_item = next((item for item in source_items if item["source"] == "lead"), None)
         competitor_item = next((item for item in source_items if item["source"] == "competitor"), None)
 
+        # Real gap found live, 2026-09-08 (Tamara, re: B00HXE4BYW: "the
+        # source price on the more info sheet is different than that
+        # which the VA listed ... in terms of a conflict the most
+        # recent price is the one we should see here") -- `display`
+        # above ALWAYS prefers the scan/competitor record's own source
+        # price over the VA's, even when that ProductRecord is months
+        # older than the VA's own submission (here: a scan from 27 Jul
+        # vs a lead analyzed today). That's fine for scoring/action
+        # (display's own job), but showing a source price that's
+        # unconditionally the OLDER of the two, mislabelled as current,
+        # is exactly the confusion she hit. Scoped to just the source
+        # marketplace/cost fields -- title/score/action/etc. still come
+        # from `display` unchanged -- and only kicks in when the two
+        # sides actually disagree (is_conflict) and the VA's own figure
+        # is demonstrably the more recent of the two.
+        source_marketplace = display.get("best_source_marketplace")
+        source_cost_gbp = display.get("best_source_cost_gbp")
+        if is_conflict and va_item and display is not va_item:
+            display_when = display.get("when")
+            va_when = va_item.get("when")
+            if va_when and (not display_when or va_when > display_when):
+                source_marketplace = va_item.get("best_source_marketplace")
+                source_cost_gbp = va_item.get("best_source_cost_gbp")
+
         return {
             "asin": asin,
             "category": ATTENTION_CATEGORY_SOURCING,
@@ -1432,8 +1456,8 @@ class ReviewQueueService:
             "sourcing_tag": display.get("sourcing_tag") or primary.get("sourcing_tag"),
             "sourcing_tag_source": display.get("sourcing_tag_source") or primary.get("sourcing_tag_source"),
             "manually_classified": bool(display.get("manually_classified") or primary.get("manually_classified")),
-            "best_source_marketplace": display.get("best_source_marketplace"),
-            "best_source_cost_gbp": display.get("best_source_cost_gbp"),
+            "best_source_marketplace": source_marketplace,
+            "best_source_cost_gbp": source_cost_gbp,
             "buy_box_now": display.get("buy_box_now"),
             "profit": display.get("profit"),
             "roi": display.get("roi"),

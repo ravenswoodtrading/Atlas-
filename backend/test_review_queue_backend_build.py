@@ -18,6 +18,8 @@ See test_unified_review_queue.py for the "one decision resolves every
 outstanding view" (resolve_item) tests and the full section-19 scenario
 list -- this file covers the earlier layer resolve_item is built on.
 """
+from datetime import datetime, timedelta
+
 from app.services.review_queue_service import (
     ReviewQueueService,
     QUEUE_PRIORITY_BUY_NOW, QUEUE_PRIORITY_VA_TO_REVIEW,
@@ -241,6 +243,70 @@ assert LeadAnalysisService._fetch_inventory_snapshot() == {}, "unconfigured SP-A
 print("inventory snapshot: unconfigured SP-API degrades gracefully to {}: ok")
 
 las_module.get_sp_api_client = _original_get_sp_api_client
+
+
+# =========================================================================
+# CONFLICT SOURCE-PRICE RECENCY (2026-09-08, Tamara, re: B00HXE4BYW: "the
+# source price on the more info sheet is different than that which the VA
+# listed ... in terms of a conflict the most recent price is the one we
+# should see here")
+# =========================================================================
+
+now = datetime.now()
+
+# --- A genuine conflict where the VA's own lead is the MORE RECENT side
+# (e.g. an old scan record vs a lead analyzed just now) -- the merged
+# item's source marketplace/cost should come from the VA lead, not the
+# stale scan record it would otherwise always default to.
+stale_scan = item(
+    "scan", recommendation="IGNORE", when=now - timedelta(days=45),
+    best_source_marketplace="DE", best_source_cost_gbp=44.86,
+)
+fresh_lead = item(
+    "lead", recommendation="WATCH", when=now,
+    best_source_marketplace="bargainfox", best_source_cost_gbp=36.99,
+    conflict_note="Atlas's own scan pipeline currently marks this ASIN IGNORE -- worth a second look before acting.",
+)
+merged_recency = ReviewQueueService.merge_by_asin([stale_scan, fresh_lead])[0]
+assert merged_recency["conflict"] is True
+assert merged_recency["best_source_marketplace"] == "bargainfox", merged_recency["best_source_marketplace"]
+assert merged_recency["best_source_cost_gbp"] == 36.99, merged_recency["best_source_cost_gbp"]
+print("conflict recency: a more-recent VA lead's source price wins over a stale scan record's: ok")
+
+# --- The mirror case: the SCAN record is more recent than the lead --
+# display's own (scan/competitor-preferred) source price is correct here,
+# unchanged from before this fix.
+fresh_scan = item(
+    "scan", recommendation="IGNORE", when=now,
+    best_source_marketplace="DE", best_source_cost_gbp=44.86,
+)
+stale_lead = item(
+    "lead", recommendation="WATCH", when=now - timedelta(days=45),
+    best_source_marketplace="bargainfox", best_source_cost_gbp=36.99,
+    conflict_note="Atlas's own scan pipeline currently marks this ASIN IGNORE -- worth a second look before acting.",
+)
+merged_recency2 = ReviewQueueService.merge_by_asin([fresh_scan, stale_lead])[0]
+assert merged_recency2["best_source_marketplace"] == "DE", merged_recency2["best_source_marketplace"]
+assert merged_recency2["best_source_cost_gbp"] == 44.86, merged_recency2["best_source_cost_gbp"]
+print("conflict recency: a more-recent scan record's source price still wins over a stale VA lead's: ok")
+
+# --- No conflict at all (recommendations agree, no conflict_note) --
+# the scan/competitor-preferred default must be completely unchanged,
+# even if the lead happens to be more recent -- this fix only kicks in
+# when the two sides actually disagree.
+agreeing_scan = item(
+    "scan", recommendation="BUY", when=now - timedelta(days=45),
+    best_source_marketplace="DE", best_source_cost_gbp=44.86,
+)
+agreeing_lead = item(
+    "lead", recommendation="BUY", when=now,
+    best_source_marketplace="bargainfox", best_source_cost_gbp=36.99,
+)
+merged_no_conflict = ReviewQueueService.merge_by_asin([agreeing_scan, agreeing_lead])[0]
+assert merged_no_conflict["conflict"] is False
+assert merged_no_conflict["best_source_marketplace"] == "DE", merged_no_conflict["best_source_marketplace"]
+assert merged_no_conflict["best_source_cost_gbp"] == 44.86, merged_no_conflict["best_source_cost_gbp"]
+print("conflict recency: with no real conflict, the existing scan-preferred default is untouched: ok")
 
 
 # =========================================================================
