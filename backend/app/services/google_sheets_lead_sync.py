@@ -151,7 +151,25 @@ def pull_and_ingest_va_leads() -> dict:
             ingest_sheet_lead_row(payload, db)
             ingested += 1
 
-        db.flush()
+        # Real bug found live, 2026-09-08 (Tamara: "I have VA leads
+        # added today on the sheet that aren't showing") -- this used
+        # to be a bare db.flush(), which sends Pass 1's writes to the
+        # SQLite connection WITHOUT committing, leaving that write
+        # transaction open for the entire duration of Pass 2 below.
+        # apply_lead_decision (in Pass 2) can trigger ProductRepository.
+        # add_watch for an "oos"/"watch" decision, which opens its OWN
+        # separate SessionLocal() and commits immediately -- a second
+        # writer, in the SAME process, colliding with the still-open
+        # first one on the same SQLite file. That's a self-deadlock,
+        # not ordinary contention: it reproduced on EVERY single run
+        # (confirmed live -- 100% failure since 2026-09-07 12:36, the
+        # sheet always has at least one pending oos/watch lead),
+        # because the outer transaction can never release the lock
+        # while it's itself blocked waiting on the inner commit.
+        # Committing here instead makes Pass 1's writes durable and
+        # releases the lock before Pass 2 (and anything it calls) ever
+        # needs to write again.
+        db.commit()
 
         # ---- PASS 2: decision + VA-notes reconciliation, ANY source ----
         for asin, payload in latest_by_asin.items():
