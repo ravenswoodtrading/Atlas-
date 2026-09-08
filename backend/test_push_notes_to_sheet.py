@@ -18,8 +18,6 @@ live network call and can never touch the real production sheet.
 
 Run with `python test_push_notes_to_sheet.py` (plain script, no pytest).
 """
-from datetime import datetime, timezone
-
 from app.database.database import SessionLocal
 from app.database.models import Lead
 import app.services.google_sheets_lead_sync as sync_module
@@ -93,10 +91,12 @@ try:
     assert ws.row[atlas_notes_idx] == "", "the old, unused Atlas Notes column must NOT be written to any more"
     print("test 1: Atlas note appended into Client Notes, existing manual note preserved, old Atlas Notes column untouched: ok")
 
-    # 2 -- the appended line is dated and attributed.
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    assert f"[Atlas {today}]" in ws.row[client_notes_idx]
-    print("test 2: appended line is dated and attributed to Atlas: ok")
+    # 2 -- the appended line is the plain note text, with no "[Atlas
+    # YYYY-MM-DD]" prefix (2026-09-08, Tamara: "I don't want the Atlas
+    # date stamp on there").
+    assert "This is a real find, worth a second look." in ws.row[client_notes_idx]
+    assert "[Atlas " not in ws.row[client_notes_idx], "no date-stamp prefix should be added any more"
+    print("test 2: appended line has no Atlas date-stamp prefix, just the plain note text: ok")
 
     # 3 -- pushing the SAME unchanged note again is a no-op (no duplicate line).
     before = ws.row[client_notes_idx]

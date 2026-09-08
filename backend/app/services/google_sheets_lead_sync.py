@@ -280,16 +280,18 @@ def push_decision_to_sheet(lead_id: int) -> bool:
             # THAT column instead, never replacing what's already
             # there -- a full overwrite would have destroyed real,
             # pre-existing manual notes the instant Atlas commented on a
-            # lead someone had already annotated by hand. Each addition
-            # is dated and attributed so it's clear which lines came
-            # from Atlas vs the team's own manual entries; re-pushing an
+            # lead someone had already annotated by hand. Re-pushing an
             # unchanged note (e.g. resolving a lead a second time with
             # the same comment still in the box) is a no-op rather than
             # duplicating the same line forever.
+            #
+            # No "[Atlas YYYY-MM-DD]" prefix (2026-09-08, Tamara: "I
+            # don't want the Atlas date stamp on there") -- appends the
+            # plain note text as its own line, nothing prepended.
             notes_col = col_letter("Client Notes")
             if notes_col:
                 existing = rows[target_row_num - 1][notes_col - 1] if len(rows[target_row_num - 1]) >= notes_col else ""
-                new_line = f"[Atlas {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {atlas_notes}"
+                new_line = atlas_notes
                 if not existing.rstrip().endswith(new_line):
                     combined = f"{existing}\n{new_line}" if existing.strip() else new_line
                     ws.update_cell(target_row_num, notes_col, combined)
