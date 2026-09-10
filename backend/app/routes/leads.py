@@ -256,6 +256,21 @@ def ingest_sheet_lead_row(payload: dict, db, *, existing_lead=None, new_submissi
         lead = Lead(asin=asin, source="sheet")
         db.add(lead)
 
+    # Keep decision-time inputs and analysis immutable. Retain the latest
+    # sheet version separately so a retrospective edit remains visible.
+    previous = json.loads(lead.raw_sheet_data or '{}') if not is_new else {}
+    if lead.decision is not None:
+        original = {k: v for k, v in previous.items() if not k.startswith('_atlas_')}
+        if original != payload:
+            original['_atlas_latest_sheet_data'] = payload
+            original['_atlas_source_changed_at'] = datetime.now(timezone.utc).isoformat()
+        lead.raw_sheet_data = json.dumps(original)
+        db.flush()
+        return lead
+    analysis_fields = ('sourcing_type', 'va_roi', 'va_profit', 'va_cost_price',
+        'va_sale_price', 'source_detail', 'source_marketplace', 'va_notes', 'title', 'source_url')
+    before = tuple(getattr(lead, field) for field in analysis_fields)
+
     lead.sourcing_type = _normalize_sourcing_type(_extract(payload, SOURCING_TYPE_ALIASES))
     lead.raw_sheet_data = json.dumps(payload)
     lead.va_roi = _extract_float(payload, VA_ROI_ALIASES)
@@ -267,7 +282,7 @@ def ingest_sheet_lead_row(payload: dict, db, *, existing_lead=None, new_submissi
     lead.va_notes = _stringify(_extract(payload, VA_NOTES_ALIASES))
     lead.title = _stringify(_extract(payload, PRODUCT_NAME_ALIASES))
     lead.source_url = _stringify(_extract(payload, SOURCE_URL_ALIASES))
-    if is_new:
+    if is_new or before != tuple(getattr(lead, field) for field in analysis_fields):
         lead.status = "queued"
         lead.verdict = None
         lead.rationale = None
@@ -287,6 +302,9 @@ def sheet_lead_webhook(payload: dict, x_webhook_secret: str = Header(default=Non
 
     db = SessionLocal()
     try:
+        # Serialize webhook matching with the SQLite sync writer transaction.
+        from sqlalchemy import text
+        db.execute(text("BEGIN IMMEDIATE"))
         try:
             lead = ingest_sheet_lead_row(payload, db)
         except ValueError as exc:
@@ -574,5 +592,6 @@ def review_detail(request: Request, lead_id: int):
     return templates.TemplateResponse(
         request=request,
         name="review_lead_detail.html",
-        context={"request": request, "lead": lead, "metrics": metrics},
+        context={"request": request, "lead": lead, "metrics": metrics,
+                 "source_revision": json.loads(lead.raw_sheet_data or "{}").get("_atlas_latest_sheet_data")},
     )

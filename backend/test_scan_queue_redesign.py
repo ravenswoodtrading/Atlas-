@@ -74,7 +74,7 @@ class ScanQueueTests(unittest.TestCase):
 
     def test_removal_covers_all_brand_campaigns(self):
         queue.ScanQueueService.add_item('alpha', category_ids=['123'])
-        queue.ScanQueueService.delete_item(1)
+        queue.ScanQueueService.remove_brand(1)
         self.assertEqual([i.brand for i in queue.ScanQueueService.list_items()], ['beta'])
 
     def test_progress_only_completes_after_whole_page(self):
@@ -96,7 +96,7 @@ class ScanQueueTests(unittest.TestCase):
             scanner.return_value.scan.return_value = {'error': 'Not enough tokens'}
             queue.ScanQueueService._execute_scan_for_item(db, db.get(ScanQueueItem, 1))
             self.assertIsNone(db.get(ScanCampaignProgress, 1))
-            self.assertEqual(db.query(ScanQueueRun).count(), 0)
+            self.assertEqual(db.query(ScanQueueRun).one().outcome, 'Deferred: Not enough tokens')
 
     def test_rows_group_brand_without_double_counting_categories(self):
         queue.ScanQueueService.add_item('alpha', category_ids=['123'])

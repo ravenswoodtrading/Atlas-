@@ -101,6 +101,7 @@ class LeadAnalysisService:
     @staticmethod
     def _analyze_one(db, lead: Lead, inventory_by_asin: dict | None = None):
         inventory_by_asin = inventory_by_asin or {}
+        lead._analysis_source_payload = lead.raw_sheet_data
 
         try:
             with KeepaPriority.high_priority():
@@ -177,9 +178,10 @@ class LeadAnalysisService:
             # Keepa data here, before the AI call, means a verdict
             # failure below only costs the verdict -- not the real
             # price/photo/ROI data this lead already earned.
-            lead.keepa_metrics = json.dumps(metrics)
-            lead.analyzed_at = datetime.now(timezone.utc)
-            db.commit()
+            if not LeadAnalysisService._save_if_current(db, lead, {
+                'keepa_metrics': json.dumps(metrics), 'analyzed_at': datetime.now(timezone.utc)
+            }):
+                return
 
             try:
                 verdict, rationale = generate_verdict(
@@ -190,10 +192,9 @@ class LeadAnalysisService:
                 LeadAnalysisService._record_failure(db, lead, f"Analysis error: {exc}")
                 return
 
-            lead.verdict = verdict
-            lead.rationale = rationale
-            lead.status = "analyzed"
-            db.commit()
+            LeadAnalysisService._save_if_current(db, lead, {
+                'verdict': verdict, 'rationale': rationale, 'status': 'analyzed'
+            })
 
         except KeepaTokensExhaustedError as exc:
             # Transient, not this ASIN's fault -- leave the lead
@@ -211,13 +212,22 @@ class LeadAnalysisService:
             LeadAnalysisService._record_failure(db, lead, f"Analysis error: {exc}")
 
     @staticmethod
-    def _record_failure(db, lead: Lead, reason: str):
-        lead.analysis_attempts += 1
-
-        if lead.analysis_attempts >= MAX_ANALYSIS_ATTEMPTS:
-            lead.status = "analyzed"
-            lead.verdict = None
-            lead.rationale = f"Could not analyze after {MAX_ANALYSIS_ATTEMPTS} attempts -- {reason}"
-            lead.analyzed_at = datetime.now(timezone.utc)
-
+    def _save_if_current(db, lead, values):
+        # An edit or decision arriving during a network call wins over this
+        # worker. Compare-and-update atomically so old analysis cannot return.
+        source = getattr(lead, '_analysis_source_payload', lead.raw_sheet_data)
+        updated = db.query(Lead).filter(Lead.id == lead.id,
+            Lead.raw_sheet_data == source, Lead.decision.is_(None)).update(values, synchronize_session=False)
         db.commit()
+        db.expire(lead)
+        return bool(updated)
+
+    @staticmethod
+    def _record_failure(db, lead: Lead, reason: str):
+        attempts = lead.analysis_attempts + 1
+        values = {'analysis_attempts': attempts}
+        if attempts >= MAX_ANALYSIS_ATTEMPTS:
+            values.update(status='analyzed', verdict=None,
+                rationale=f'Could not analyze after {MAX_ANALYSIS_ATTEMPTS} attempts -- {reason}',
+                analyzed_at=datetime.now(timezone.utc))
+        LeadAnalysisService._save_if_current(db, lead, values)

@@ -26,7 +26,7 @@ live network call and can never touch the real production sheet.
 Run with `python test_va_sync_deadlock_fix.py` (plain script, no pytest).
 """
 from app.database.database import SessionLocal
-from app.database.models import Lead, SheetLeadSyncState, WatchedProduct
+from app.database.models import Lead, SheetLeadSyncState, SheetLeadSubmission, WatchedProduct
 import app.services.google_sheets_lead_sync as sync_module
 
 TEST_ASIN = "B0VADEADLOCK1"
@@ -54,6 +54,14 @@ def cleanup():
     try:
         db.query(Lead).filter(Lead.asin == TEST_ASIN).delete(synchronize_session=False)
         db.query(SheetLeadSyncState).filter(SheetLeadSyncState.asin == TEST_ASIN).delete(synchronize_session=False)
+        # Also clear SheetLeadSubmission -- sync_submissions() (added
+        # 2026-09-09, va_submission_sync.py) uses this table, not
+        # SheetLeadSyncState, as identity's real source of truth. A run
+        # that dies before reaching this cleanup (or an older version of
+        # this test that predated this table) leaves a row here that
+        # makes the NEXT run's "genuinely new ASIN" look like a pending
+        # edit to a stale, already-deleted Lead instead.
+        db.query(SheetLeadSubmission).filter(SheetLeadSubmission.asin == TEST_ASIN).delete(synchronize_session=False)
         db.query(WatchedProduct).filter(WatchedProduct.asin == TEST_ASIN).delete(synchronize_session=False)
         db.commit()
     finally:
@@ -72,22 +80,31 @@ try:
     ws = FakeWorksheet(header, rows)
     sync_module.open_sheet = lambda url: FakeSpreadsheet(ws)
 
-    # Baseline pass first (matches pull_and_ingest_va_leads' own "first
-    # sync never treats existing rows as new" safety rule) so the
-    # SECOND call below is the one that actually ingests + decides --
-    # otherwise this row would just get baselined, never reaching Pass 2.
-    baseline_result = sync_module.pull_and_ingest_va_leads()
-    print(f"test 1: baseline pass completes without error: ok ({baseline_result})")
+    # No baseline pass needed here: sync_submissions() (va_submission_
+    # sync.py, added 2026-09-09) keys "seen before" off SheetLeadSubmission
+    # identity (ASIN+Date), not a bare per-content-hash table, and the
+    # real production submission table is already initialized (not
+    # empty) -- so a genuinely new ASIN's FIRST appearance is ingested
+    # and decided immediately, in the same call. That's exactly the
+    # scenario that used to self-deadlock (Pass 1 ingest -> commit ->
+    # Pass 2's apply_lead_decision -> add_watch's own nested session),
+    # so this single call is the real regression check.
+    result = sync_module.pull_and_ingest_va_leads()
+    assert result["ingested"] >= 1, f"expected the new row to be ingested, got {result}"
+    assert result["decisions_applied"] >= 1, f"expected the OOS decision to be applied, got {result}"
+    print(f"test 1: sync with a pending OOS decision completes WITHOUT a database-locked deadlock: ok ({result})")
 
-    # Change the row's content (a genuinely new source detail) so Pass 1
-    # sees a new content hash and actually ingests + Pass 2 actually
-    # runs apply_lead_decision for this ASIN this time.
+    # Now edit the row (a genuinely new source detail, same ASIN). This
+    # sheet has no "Date" column, so the row's identity (ASIN + blank
+    # date) is unchanged from above -- match_rows() correctly treats
+    # this as an EDIT to the lead just ingested, not a second new lead.
+    # This exercises the code path that runs after Pass 1's commit on a
+    # second call, confirming it still doesn't deadlock or error.
     ws.rows = [[TEST_ASIN, "OOS", "Deadlock Test Product", "test note -- updated"]]
 
     result = sync_module.pull_and_ingest_va_leads()
-    assert result["ingested"] >= 1, f"expected the changed row to be ingested, got {result}"
-    assert result["decisions_applied"] >= 1, f"expected the OOS decision to be applied, got {result}"
-    print(f"test 2: sync with a pending OOS decision completes WITHOUT a database-locked deadlock: ok ({result})")
+    assert result["updated"] >= 1, f"expected the edited row to be matched as an update, got {result}"
+    print(f"test 2: re-sync after an edit to the same lead completes correctly: ok ({result})")
 
     # The lead really was decided (not left dangling from a half-failed
     # transaction), and the OOS auto-watch really did persist.

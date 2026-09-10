@@ -45,7 +45,8 @@ class SubmissionEdits(unittest.TestCase):
         self.db.commit()
         self.assertEqual(self.db.query(Lead).count(), 1)
         self.assertEqual((lead.decision, lead.status, lead.verdict), ('approved', 'reviewed', 'BUY'))
-        self.assertEqual(lead.va_sale_price, 25)
+        self.assertEqual(lead.va_sale_price, 20)
+        self.assertEqual(__import__('json').loads(lead.raw_sheet_data)['_atlas_latest_sheet_data']['Sale Price'], '25')
         self.assertEqual(lead.keepa_metrics, '{"saved": true}')
 
     def test_audit_columns_do_not_update_or_queue(self):

@@ -22,11 +22,18 @@ def _asin(value):
     return (found.group(1) if found else (value or "")).strip().upper()
 
 
-def _number(value):
+def _number(value, *, field='number', row=None, percentage=False, whole=False):
+    text = str(value if value is not None else '').replace(',', '').replace('£', '').strip()
+    if percentage and text.endswith('%'):
+        text = text[:-1].strip()
     try:
-        return float(str(value or "").replace(",", "").replace("£", "").strip())
-    except ValueError:
-        return 0.0
+        number = float(text)
+        if not math.isfinite(number) or (whole and not number.is_integer()):
+            raise ValueError()
+        return number
+    except (ValueError, TypeError):
+        location = f' on summary export row {row}' if row is not None else ''
+        raise ValueError(f'Invalid or missing {field}{location}.') from None
 
 
 def _date(value):
@@ -86,16 +93,16 @@ def _parse_summary(text):
     if missing:
         raise ValueError('Summary export is missing expected column(s): ' + ', '.join(missing))
     imported = []
-    for row in rows:
+    for row_index, row in enumerate(rows, 2):
         sku = (row.get("SKU") or "").strip().strip('"')
         if not sku:
             continue
         imported.append(SkuPerformanceSnapshot(
             sku=sku, asin=_asin(row.get("ASIN", "")), title=(row.get("Title") or "").strip(),
-            units=int(_number(row.get("Units"))), profit_loss=_number(row.get("Profit_Loss")),
-            sales=_number(row.get("Sales")), cog=_number(row.get("CoG")),
-            roi_pct=_number(row.get("RoI")), margin_pct=_number(row.get("Margin")),
-            current_stock_qty=int(_number(row.get("Current_Stock_QTY"))),
+            units=int(_number(row.get("Units"), field="Units", row=row_index, whole=True)), profit_loss=_number(row.get("Profit_Loss"), field="Profit_Loss", row=row_index),
+            sales=_number(row.get("Sales"), field="Sales", row=row_index), cog=_number(row.get("CoG"), field="CoG", row=row_index),
+            roi_pct=_number(row.get("RoI"), field="RoI", row=row_index, percentage=True), margin_pct=_number(row.get("Margin"), field="Margin", row=row_index, percentage=True),
+            current_stock_qty=int(_number(row.get("Current_Stock_QTY"), field="Current_Stock_QTY", row=row_index, whole=True)),
         ))
     if not imported:
         raise ValueError("Summary export contains no SKU rows.")

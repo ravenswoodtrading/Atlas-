@@ -30,8 +30,13 @@ def _describe_tick(result: dict) -> str:
     if result.get("skipped") == "queue empty":
         return "Queue is empty -- nothing to run."
 
-    if result.get("skipped") == "manual scan in progress":
-        return f"Skipped {result.get('brand', 'the next item')} -- a manual scan is running elsewhere right now."
+    if result.get("skipped") and "brand" in result:
+        # ScanCoordinator.busy_reason() (whatever a manual/high-priority
+        # scan is doing right now, or that one is waiting) -- the exact
+        # message varies, unlike the fixed paused/no-brands-due/queue-
+        # empty sentinels above, which is why this is a fallback rather
+        # than another exact-string check.
+        return f"Skipped {result.get('brand', 'the next item')} -- {result['skipped']}."
 
     if result.get("error"):
         return f"Couldn't run {result.get('brand', 'the next item')}: {result['error']}"
@@ -72,6 +77,7 @@ def build_scan_queue_context(tick_result: str = "") -> dict:
         "cadence": cadence,
         "paused": paused,
         "is_busy": ScanCoordinator.is_busy(),
+        "scan_holder": ScanCoordinator.status(),
         "tick_result": tick_result,
         "pending_review_count": len(pending_reviews()),
     }
@@ -153,7 +159,7 @@ def scan_queue_add_bulk(brands: str = Form(...), category_ids: str = Form("")):
 
 @router.post("/scan-queue/delete")
 def scan_queue_delete(item_id: int = Form(...)):
-    ScanQueueService.delete_item(item_id)
+    ScanQueueService.remove_brand(item_id)
     return RedirectResponse(url="/scan-queue", status_code=303)
 
 

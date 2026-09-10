@@ -148,6 +148,9 @@ WEEKLY_RECHECK_STALE_HOURS = 24 * 7
 OA_ARCHIVE_STALE_DAYS = 14
 
 
+REPLEN_RECHECK_STALE_HOURS = 24  # Proven A2A replen stock is checked daily; other safety-net checks remain weekly.
+
+
 async def _weekly_recheck_scheduler():
     while True:
         retry_delay = WEEKLY_RECHECK_TICK_SECONDS
@@ -167,7 +170,7 @@ async def _weekly_recheck_scheduler():
                         await asyncio.to_thread(ReplenService.import_uploaded_actuals)
                     except Exception:
                         print('STK replen import unavailable; continuing scheduled checks of existing items.')
-                    replen_result = await asyncio.to_thread(ReplenService.check_stale, 24)
+                    replen_result = await asyncio.to_thread(ReplenService.check_stale, REPLEN_RECHECK_STALE_HOURS)
                     # Added 2026-09-04, same scheduler/window -- see
                     # ReviewQueueService.recheck_stale_items' own
                     # docstring for the full reasoning (Tamara's own

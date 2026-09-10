@@ -10,7 +10,7 @@ AUDIT_COLUMNS = {'buy box on lead date', 'price drop (>5%)'}
 
 def normalized(payload):
     return {' '.join(k.lower().split()): str(v).strip() for k, v in payload.items()
-            if k.strip() and ' '.join(k.lower().split()) not in AUDIT_COLUMNS}
+            if k.strip() and not k.startswith('_atlas_') and ' '.join(k.lower().split()) not in AUDIT_COLUMNS}
 
 
 def identity(payload):
@@ -78,14 +78,29 @@ def sync_submissions(db, payloads):
                 ingest_sheet_lead_row(p, db, existing_lead=lead)
             counts['updated'] += 1
         state.payload = json.dumps(p)
+    # A webhook can create a Lead before the poller sees the new submission.
+    # Link only an unclaimed ASIN/date identity; ASIN alone would merge repeats.
+    linked_ids = {r[0] for r in db.query(SheetLeadSubmission.lead_id).all() if r[0] is not None}
+    unclaimed = defaultdict(list)
+    for existing in db.query(Lead).filter(Lead.source == 'sheet').all():
+        if existing.id not in linked_ids:
+            try:
+                unclaimed[identity(json.loads(existing.raw_sheet_data or '{}'))].append(existing)
+            except (ValueError, TypeError):
+                continue
     for ni in sorted(new):
         p = payloads[ni]
-        lead = ingest_sheet_lead_row(p, db, new_submission=True)
+        matches = unclaimed[identity(p)]
+        if len(matches) > 1:
+            counts['ambiguous'] += 1
+            continue
+        existing = matches.pop() if matches else None
+        lead = ingest_sheet_lead_row(p, db, existing_lead=existing, new_submission=existing is None)
         db.add(SheetLeadSubmission(asin=identity(p)[0], payload=json.dumps(p), lead_id=lead.id))
         counts['ingested'] += 1
     uncertain_asins = {identity(payloads[i])[0] for i in ambiguous}
     for oi in missing:
         if states[oi].asin not in uncertain_asins:
             states[oi].active = False
-    counts['ambiguous'] = len(ambiguous)
+    counts['ambiguous'] += len(ambiguous)
     return counts

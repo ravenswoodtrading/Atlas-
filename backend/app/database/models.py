@@ -389,6 +389,14 @@ class ScanCampaignProgress(Base):
     tracked_from_start: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class ScanQueuePage(Base):
+    """Products fully checked on an unfinished Finder page, including rejects."""
+    __tablename__ = "scan_queue_pages"
+    item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    page: Mapped[int] = mapped_column(Integer)
+    completed_asins: Mapped[str] = mapped_column(String, default="[]")
+
+
 class ScanQueueRun(Base):
     __tablename__ = "scan_queue_runs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

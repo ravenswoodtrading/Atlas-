@@ -132,7 +132,7 @@ class ProductFinder:
             # "return None" every caller already expects for a failed
             # Product Finder call.
             try:
-                products = self.api.product_finder(query, domain="GB")
+                raise RuntimeError("Installed Keepa client must support product_finder(wait=False); update keepa")
             except Exception as exc:
                 print(f"Product Finder failed (fallback call): {exc}")
                 return None
@@ -265,7 +265,7 @@ class ProductFinder:
             products = self.api.product_finder(query, wait=False, domain="GB")
         except TypeError:
             try:
-                products = self.api.product_finder(query, domain="GB")
+                raise RuntimeError("Installed Keepa client must support product_finder(wait=False); update keepa")
             except Exception as exc:
                 print(f"Product Finder (signal '{signal_type}') failed (fallback call): {exc}")
                 return None

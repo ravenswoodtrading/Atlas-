@@ -1,3 +1,5 @@
+import time
+from app.services.scan_coordinator import ScanCoordinator
 from dataclasses import asdict
 
 from app.keepa.parser import KeepaParser
@@ -170,6 +172,8 @@ class BrandScanService:
                     ran_out = True
                     break
 
+            if self.usage_category == "scan_queue":
+                ScanCoordinator.progress(f"{marketplace}: products {i+1}-{i+len(chunk)}")
             tokens_before = self.product_service.api.tokens_left
             try:
                 chunk_products = self.product_service.get_products(
@@ -258,7 +262,7 @@ class BrandScanService:
         return BrandScanService._clears_viable_roi(quick_product, cost_gbp, category_name)
 
     @staticmethod
-    def _sp_api_find_source_market(sp_client, asin: str, quick_product, category_name: str):
+    def _sp_api_find_source_market(sp_client, asin: str, quick_product, category_name: str, deadline=None):
         """
         Free (zero Keepa tokens) pass across EU_MARKETPLACES via
         SP-API's getItemOffers, checked in the same DE/FR/ES/IT
@@ -281,6 +285,8 @@ class BrandScanService:
         skip real work.
         """
         for marketplace in EU_MARKETPLACES:
+            if deadline is not None and (time.monotonic() >= deadline or KeepaPriority.has_pending()):
+                return None, None
             offer = sp_client.get_item_offers(asin, marketplace)
 
             if not offer or offer.get("status") != "Success" or not offer.get("price"):
@@ -296,7 +302,7 @@ class BrandScanService:
 
     def scan(self, brand: str, limit: int = 20, force_rescan: bool = False,
              asins: list = None, category_ids: list = None, page: int = 0,
-             include_no_eu_source: bool = False):
+             include_no_eu_source: bool = False, already_checked=None):
         """
         Full A2A pipeline for a brand, with chunked token-budget
         awareness so a scan never silently hangs OR blows through its
@@ -496,6 +502,8 @@ class BrandScanService:
                 }
 
             raw_page_count = len(asins)
+            if already_checked:
+                asins = [a for a in asins if a not in already_checked]
 
         # Step 1a - Skip user-excluded ASINs (marked via the Exclude
         # button on the results page) BEFORE spending any tokens --
@@ -556,7 +564,10 @@ class BrandScanService:
             asins = [a for a in asins if a not in recently_scanned]
             skipped_recently_scanned = before_count - len(asins)
 
+        page_has_more = len(asins) > limit
         asins = asins[:limit]
+        if self.usage_category == "scan_queue":
+            ScanCoordinator.progress(f"UK lookup: up to {len(asins)} products")
 
         empty_response = {
             "brand": brand, "count": 0, "opportunities": [],
@@ -804,14 +815,21 @@ class BrandScanService:
         if sp_client and remaining_asins:
             sp_resolved_by_market = {}
 
+            # Bound the optional free-source phase, then use the normal Keepa
+            # fallback. No product is classified as unavailable just for timing out.
+            sp_deadline = time.monotonic() + 20 if self.usage_category == "scan_queue" else None
             for asin in list(remaining_asins):
+                if sp_deadline is not None and (time.monotonic() >= sp_deadline or KeepaPriority.has_pending()):
+                    break
+                if self.usage_category == "scan_queue":
+                    ScanCoordinator.progress("Checking SP-API source prices")
                 quick_product = quick_by_asin.get(asin)
                 if not quick_product:
                     continue
 
                 category_name = category_names.get(quick_product.category, "")
                 marketplace, cost_gbp = BrandScanService._sp_api_find_source_market(
-                    sp_client, asin, quick_product, category_name,
+                    sp_client, asin, quick_product, category_name, deadline=sp_deadline,
                 )
 
                 # (None, None) means SP-API couldn't give a free answer
@@ -963,6 +981,11 @@ class BrandScanService:
             product = ProductMapper.from_keepa_multi(uk_product, eu_products)
             product.gated = asin in gated_asins
             product.eu_markets_checked = [m for m in EU_MARKETPLACES if asin in eu_attempted[m]]
+
+            if self.usage_category == 'scan_queue' and len(product.eu_markets_checked) < len(EU_MARKETPLACES):
+                # Do not save an unfinished result into the normal rescan cooldown.
+                # The page checkpoint will retry this product on a future turn.
+                continue
 
             if not product.buy_box_now:
                 if include_no_eu_source:
@@ -1139,6 +1162,13 @@ class BrandScanService:
         # Step 6 - Rank best opportunities first
         opportunities.sort(key=lambda o: o["report"]["score"], reverse=True)
 
+        completed_asins = {p.get('asin') for p in uk_products if p.get('asin')}
+        # A viable product is complete only after all four market checks. Keep
+        # incomplete work on this page for retry; rejects still earn a checkpoint.
+        if self.usage_category == 'scan_queue':
+            completed_asins = {a for a in completed_asins if a not in quick_by_asin
+                               or all(a in eu_attempted[m] for m in EU_MARKETPLACES)}
+        unfinished = bool(set(asins) - completed_asins)
         return {
             "brand": brand,
             "count": len(opportunities),
@@ -1167,5 +1197,6 @@ class BrandScanService:
             # whatever was left unscanned on this one) and to avoid
             # mistaking a token-starved partial page for a genuinely
             # exhausted catalog.
-            "uk_ran_out": uk_ran_out,
+            "uk_ran_out": uk_ran_out or page_has_more or (self.usage_category == 'scan_queue' and unfinished),
+            "completed_asins": sorted(completed_asins),
         }

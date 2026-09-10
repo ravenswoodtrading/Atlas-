@@ -35,10 +35,10 @@ class ProductRepository:
         SellerWatchService.list_notable_buyable (for competitor
         detections) -- extracted so all three stay provably in sync
         rather than each keeping their own copy of the same rule.
-        Confirmed sales (or, absent that, 3+ rank drops in 30d as a
-        proxy) + 25%+ ROI, OR a BUY recommendation outright. Raised
-        from 18% to 25% -- 18% wasn't a high enough bar for what
-        counts as a genuinely good lead.
+        Confirmed sales or 12+ rank drops in 30d plus the qualifying ROI.
+        BUY does not bypass sales evidence. The minimum ROI is 25%, or
+        20% for unit price above £100 or confirmed monthly sales above 100.
+        Thinner sales evidence can qualify for Verify instead.
 
         The ROI-only branch used to fire regardless of
         OpportunityEngine's own recommendation, so a product it had

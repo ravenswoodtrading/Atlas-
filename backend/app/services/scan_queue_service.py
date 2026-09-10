@@ -1,9 +1,10 @@
+import json
 from datetime import datetime, timezone
 
 from sqlalchemy import func
 
 from app.database.database import SessionLocal
-from app.database.models import ScanQueueItem, AutomationSettings, ScanCampaignProgress, ScanQueueRun, ScanTierReview
+from app.database.models import ScanQueueItem, AutomationSettings, ScanCampaignProgress, ScanQueueRun, ScanTierReview, ScanQueuePage
 from app.services.scan_schedule_service import schedule_maps, due_at
 from app.services.brand_scan_service import BrandScanService, WEEKLY_SAFETY_NET_RESERVE
 from app.services.scan_coordinator import ScanCoordinator
@@ -189,12 +190,13 @@ class ScanQueueService:
             # SQLite may reuse an ID after removing the last queue entry.
             # Old coverage must never become the new campaign's history.
             db.query(ScanCampaignProgress).filter_by(item_id=item.id).delete()
+            db.query(ScanQueuePage).filter_by(item_id=item.id).delete()
             db.commit()
         finally:
             db.close()
 
     @staticmethod
-    def delete_item(item_id: int):
+    def remove_brand(item_id: int):
         db = SessionLocal()
 
         try:
@@ -286,13 +288,35 @@ class ScanQueueService:
         # enough (every TICK_INTERVAL_SECONDS) to otherwise starve the
         # once-a-day Replen/Watchlist safety-net tick of tokens before
         # it ever gets a turn.
-        scanner = BrandScanService(token_reserve=WEEKLY_SAFETY_NET_RESERVE, usage_category="scan_queue")
-        result = scanner.scan(
-            item.brand,
-            limit=100,
-            page=item.next_page,
-            category_ids=category_ids,
-        )
+        checkpoint = db.get(ScanQueuePage, item.id)
+        checked = set(json.loads(checkpoint.completed_asins)) if checkpoint and checkpoint.page == item.next_page else set()
+        run = ScanQueueRun(brand=item.brand, item_id=item.id, outcome="Started", scanned=0, opportunities=0)
+        db.add(run)
+        db.commit()
+        ScanCoordinator.progress(f"Scan Queue: {item.brand}, catalogue page {item.next_page + 1}")
+        try:
+            scanner = BrandScanService(token_reserve=WEEKLY_SAFETY_NET_RESERVE, usage_category="scan_queue")
+            result = scanner.scan(item.brand, limit=10, page=item.next_page, category_ids=category_ids, already_checked=checked)
+        except Exception as exc:
+            db.rollback()
+            run = db.get(ScanQueueRun, run.id)
+            run.outcome = f"Failed: {type(exc).__name__}"
+            db.commit()
+            return {"item_id": item.id, "brand": item.brand, "error": f"Scan failed: {type(exc).__name__}"}
+        if result.get('completed_asins'):
+            checked.update(result['completed_asins'])
+            if checkpoint is None:
+                checkpoint = ScanQueuePage(item_id=item.id, page=item.next_page)
+                db.add(checkpoint)
+            checkpoint.page = item.next_page
+            checkpoint.completed_asins = json.dumps(sorted(checked))
+        run.scanned = result.get("asins_scanned") or 0
+        run.opportunities = result.get("count") or 0
+        run.outcome = ("Deferred: " + str(result['error'])[:180] if result.get('error') else
+                       "Blocked: excluded brand" if result.get('excluded_brand_skip') else
+                       "Blocked: gated brand" if result.get('gated_brand_skip') else
+                       "Partial page — continues next rotation" if result.get('uk_ran_out') else "Page checked")
+        db.commit()
 
         label = "automated, extra attention" if extra_attention else "automated"
 
@@ -336,10 +360,6 @@ class ScanQueueService:
             db.add(progress)
         if item.next_page == 0:
             progress.tracked_from_start = True
-        db.add(ScanQueueRun(brand=item.brand, item_id=item.id,
-                            scanned=result.get("asins_scanned") or 0,
-                            opportunities=result.get("count") or 0,
-                            outcome="Partial page — awaiting tokens" if result.get("uk_ran_out") else "Page checked"))
         item.scanned_count = (item.scanned_count or 0) + (result.get("asins_scanned") or 0)
         item.last_run_at = datetime.now(timezone.utc)
         item.status = "in_progress"
@@ -365,6 +385,8 @@ class ScanQueueService:
                 "extra_attention": extra_attention,
             }
 
+        if checkpoint is not None:
+            db.delete(checkpoint)
         raw_page_count = result.get("raw_page_count")
         exhausted_this_page = raw_page_count is not None and raw_page_count < 100
 
@@ -419,7 +441,7 @@ class ScanQueueService:
             # scheduler just tries again next interval; nothing about
             # the item's progress is touched, so nothing is lost.
             if not ScanCoordinator.try_acquire_for_automated_tick():
-                return {"item_id": item.id, "brand": item.brand, "skipped": "manual scan in progress"}
+                return {"item_id": item.id, "brand": item.brand, "skipped": ScanCoordinator.busy_reason()}
 
             try:
                 settings.last_scan_queue_item_id = item.id

@@ -1,4 +1,7 @@
 import threading
+import time
+import inspect
+import os
 
 
 class ScanCoordinator:
@@ -39,6 +42,44 @@ class ScanCoordinator:
     """
 
     _lock = threading.Lock()
+    _state_lock = threading.Lock()
+    _holder = None
+
+    @staticmethod
+    def _record_owner(owner):
+        with ScanCoordinator._state_lock:
+            ScanCoordinator._holder = dict(owner=owner, started=time.monotonic(), stage="Starting", updated=time.monotonic())
+
+    @staticmethod
+    def progress(stage):
+        with ScanCoordinator._state_lock:
+            if ScanCoordinator._holder is not None:
+                ScanCoordinator._holder.update(stage=stage, updated=time.monotonic())
+
+    @staticmethod
+    def status():
+        with ScanCoordinator._state_lock:
+            holder = dict(ScanCoordinator._holder or {})
+        now = time.monotonic()
+        return dict(owner=holder.get('owner'), stage=holder.get('stage'), pid=os.getpid(),
+                    held_seconds=int(now-holder['started']) if holder else 0,
+                    idle_seconds=int(now-holder['updated']) if holder else 0,
+                    waiting=ScanCoordinator.has_high_priority_pending())
+
+    @staticmethod
+    def busy_reason():
+        state = ScanCoordinator.status()
+        if state['owner']:
+            return f"Waiting for {state['owner']} ({state['held_seconds']}s; {state['stage']})"
+        return "Waiting for high-priority work" if state['waiting'] else "Another scan is running"
+
+    @staticmethod
+    def _release():
+        # Clear before releasing so a new holder cannot have its metadata erased.
+        with ScanCoordinator._state_lock:
+            ScanCoordinator._holder = None
+            ScanCoordinator._lock.release()
+
 
     # Guards _high_priority_waiting only -- NOT the scan lock above.
     _waiting_lock = threading.Lock()
@@ -83,14 +124,16 @@ class ScanCoordinator:
         caller go on to call release_after_manual_scan().
         """
         if timeout is None:
-            ScanCoordinator._lock.acquire()
-            return True
-
-        return ScanCoordinator._lock.acquire(timeout=timeout)
+            acquired = ScanCoordinator._lock.acquire()
+        else:
+            acquired = ScanCoordinator._lock.acquire(timeout=timeout)
+        if acquired:
+            ScanCoordinator._record_owner("manual/high-priority scan")
+        return acquired
 
     @staticmethod
     def release_after_manual_scan():
-        ScanCoordinator._lock.release()
+        ScanCoordinator._release()
 
     @staticmethod
     def try_acquire_for_automated_tick() -> bool:
@@ -108,11 +151,14 @@ class ScanCoordinator:
         if ScanCoordinator.has_high_priority_pending():
             return False
 
-        return ScanCoordinator._lock.acquire(blocking=False)
+        acquired = ScanCoordinator._lock.acquire(blocking=False)
+        if acquired:
+            ScanCoordinator._record_owner(inspect.currentframe().f_back.f_code.co_name)
+        return acquired
 
     @staticmethod
     def release_after_automated_tick():
-        ScanCoordinator._lock.release()
+        ScanCoordinator._release()
 
     @staticmethod
     def is_busy() -> bool:

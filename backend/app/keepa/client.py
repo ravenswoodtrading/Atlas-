@@ -28,7 +28,7 @@ def get_keepa_client():
     if not api_key:
         raise RuntimeError("KEEPA_API_KEY not found")
 
-    _cached_api = keepa.Keepa(api_key)
+    _cached_api = keepa.Keepa(api_key, timeout=10.0)
 
     # tokens_left stays at its uninitialized 0 until we explicitly ask
     # Keepa for the real account status -- without this, a fresh
