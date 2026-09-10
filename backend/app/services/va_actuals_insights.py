@@ -127,9 +127,9 @@ def report_view(batches, buys, selection, as_of, target_days=30):
             elif b['sell_through_days'] is not None and b['sell_through_days'] > target_days:
                 reasons.append(f"Took {b['sell_through_days']} days to sell through")
             if b['price_gap'] is not None and b['price_gap'] < 0:
-                reasons.append(f"Selling Â£{-b['price_gap']:.2f} per unit below plan")
+                reasons.append(f"Selling £{-b['price_gap']:.2f} per unit below plan")
             if b['sold'] and b['actual_profit'] < 0:
-                reasons.append(f"Allocated loss Â£{-b['actual_profit']:.2f}")
+                reasons.append(f"Allocated loss £{-b['actual_profit']:.2f}")
             if b['target_result'] == 'Below financial target':
                 reasons.append('ROI below 25% and margin below 14%')
             if reasons:

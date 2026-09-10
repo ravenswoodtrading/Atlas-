@@ -1,4 +1,4 @@
-# VA actuals â€” first implementation
+# VA actuals — first implementation
 
 Open `/reports/va/performance` after restarting Atlas. Its existing startup creates the two new reporting tables.
 
