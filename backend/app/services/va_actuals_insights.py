@@ -32,6 +32,47 @@ def date_selection(period='all', month='', quarter='', start='', end=''):
     return dict(period=period, month=month, quarter=quarter, start=start, end=end, lower=lower, upper=upper, label=label)
 
 
+def sold_cohort_metrics(batches):
+    """Totals for sold units from the selected purchase cohort, through export end.
+
+    FIFO allocation runs across all purchases before selecting this cohort.
+    Missing expectations and costs remain unavailable rather than becoming zero.
+    """
+    units = profit = revenue = cost = expected = 0.0
+    missing_expected_units = missing_cost_units = 0.0
+    leads = 0
+    for batch in batches:
+        if batch.get('issue'):
+            continue
+        sold = False
+        for sale in batch.get('allocations', []):
+            quantity = sale['allocated']
+            if quantity <= 0:
+                continue
+            sold = True
+            units += quantity
+            profit += sale['allocated_profit']
+            revenue += sale['allocated_sales']
+            if batch.get('expected_profit') is None:
+                missing_expected_units += quantity
+            else:
+                expected += batch['expected_profit'] * quantity
+            if sale.get('allocated_cog') is None or sale['allocated_cog'] <= 0:
+                missing_cost_units += quantity
+            else:
+                cost += sale['allocated_cog']
+        leads += int(sold)
+    expected_profit = None if missing_expected_units else expected
+    return dict(units=units, leads=leads, actual_profit=profit, revenue=revenue,
+        cost=None if missing_cost_units else cost, expected_profit=expected_profit,
+        profit_difference=profit - expected_profit if expected_profit is not None else None,
+        profit_difference_pct=(profit - expected_profit) / expected_profit * 100
+            if expected_profit is not None and expected_profit > 0 else None,
+        roi=profit / cost * 100 if cost > 0 and not missing_cost_units else None,
+        margin=profit / revenue * 100 if revenue > 0 else None,
+        missing_expected_units=missing_expected_units, missing_cost_units=missing_cost_units)
+
+
 def report_view(batches, buys, selection, as_of, target_days=30):
     # Allocation must run on ALL batches before filtering; earlier batches retain sales.
     selected = [b for b in batches if selection['lower'] is None or
@@ -86,9 +127,9 @@ def report_view(batches, buys, selection, as_of, target_days=30):
             elif b['sell_through_days'] is not None and b['sell_through_days'] > target_days:
                 reasons.append(f"Took {b['sell_through_days']} days to sell through")
             if b['price_gap'] is not None and b['price_gap'] < 0:
-                reasons.append(f"Selling £{-b['price_gap']:.2f} per unit below plan")
+                reasons.append(f"Selling Â£{-b['price_gap']:.2f} per unit below plan")
             if b['sold'] and b['actual_profit'] < 0:
-                reasons.append(f"Allocated loss £{-b['actual_profit']:.2f}")
+                reasons.append(f"Allocated loss Â£{-b['actual_profit']:.2f}")
             if b['target_result'] == 'Below financial target':
                 reasons.append('ROI below 25% and margin below 14%')
             if reasons:
@@ -114,6 +155,7 @@ def report_view(batches, buys, selection, as_of, target_days=30):
     returns = sum((v.get('returns') or 0) for v in unique_ledger.values())
     stock = sum((v.get('ending_balance') or 0) for v in unique_ledger.values())
     return dict(rows=selected, selection=selection, target_days=target_days,
+        sold_cohort=sold_cohort_metrics(selected),
         target_counts={label: sum(b['target_result'] == label for b in selected) for label in
             ('Met target', 'Missed sell-through target', 'Below financial target', 'Insufficient data')},
         undated=sum(not b.get('purchased_on') for b in batches),

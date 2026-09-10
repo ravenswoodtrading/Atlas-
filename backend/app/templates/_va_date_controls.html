@@ -6,6 +6,6 @@
 <div class="col-md-3" data-date-mode="custom"><label class="form-label" for="date-start">From</label><input type="date" class="form-control" id="date-start" name="start_date" value="{{ selection.start }}"></div>
 <div class="col-md-3" data-date-mode="custom"><label class="form-label" for="date-end">Through</label><input type="date" class="form-control" id="date-end" name="end_date" value="{{ selection.end }}"></div>
 <div class="col-auto"><button class="btn btn-primary">Apply dates</button></div></form>
-<p class="mt-3 mb-0"><strong>{{ selection.label }}</strong> · This period is based on when the VA lead was first listed and when we purchased the stock. It is not the customer order date or the sale date. Sales continue through {{ period_end or 'the uploaded export end date' }}, even if sold after this purchase period.</p>
+<p class="mt-3 mb-0"><strong>{{ selection.label }}</strong> · All figures use leads purchased in this period. Their sold units, expected and actual profit, ROI and margin include sales through {{ period_end or 'the uploaded export end date' }}, even when those sales happened after the purchase period.</p>
 {% if selection.lower and undated %}<p class="text-warning mb-0">{{ undated }} undated purchases cannot be assigned to this period. <a href="/reports/va/performance">View all dates to review them.</a></p>{% endif %}
 </div></div>

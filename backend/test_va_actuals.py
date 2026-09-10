@@ -55,7 +55,7 @@ class AllocationTests(unittest.TestCase):
         self.assertFalse(batches[1]['issue'])
         self.assertEqual(batches[1]['sold'], 10)
     def test_sheet_fields_and_ambiguous_purchase(self):
-        lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'£12', 'Client Notes':'Risky', 'Expected Profit':'3'}
+        lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'Â£12', 'Client Notes':'Risky', 'Expected Profit':'3'}
         buy = {'ASIN':'B000000001', 'Date Ordered':'02 Apr 26'}
         b = purchase_rows([lead], [buy])[0]
         self.assertEqual(b['purchased_on'], D('2026-04-02'))
@@ -153,6 +153,73 @@ class InsightTests(unittest.TestCase):
         with engine.connect() as db:
             self.assertEqual(db.execute(text('SELECT units, cog FROM va_sales_lines')).one(), (10,None))
         engine.dispose()
+
+class SoldCohortTests(unittest.TestCase):
+    def metrics(self, purchases, sales, month='2026-05'):
+        from app.services.va_actuals_insights import date_selection, report_view
+        batches = allocate_sales(purchases, sales, D('2026-04-01'), D('2026-06-30'))
+        return report_view(batches, [], date_selection('month', month=month), D('2026-06-30'))
+
+    def test_may_purchases_include_june_sales_and_exclude_april_purchases(self):
+        may = purchase(3, 10, '2026-05-01')
+        view = self.metrics([purchase(quantity=2), may],
+            [sale(2, 2, '2026-05-01'), sale(3, 4, '2026-05-31'), sale(4, 2, '2026-06-01')])
+        result = view['sold_cohort']
+        self.assertEqual(view['totals']['purchases'], 1)
+        self.assertEqual((result['units'], result['leads']), (6, 1))
+        self.assertEqual(result['expected_profit'], 18)
+        self.assertEqual(result['actual_profit'], 12)
+        self.assertAlmostEqual(result['profit_difference_pct'], -100/3)
+        self.assertEqual(result['roi'], 25)
+        self.assertEqual(result['margin'], 20)
+
+    def test_fifo_preserved_and_returns_weighted_by_totals(self):
+        first = purchase(quantity=2, day='2026-05-01')
+        second = purchase(3, 10, '2026-05-02'); second['expected_profit'] = 1
+        expensive = sale(4, 2, '2026-06-02')
+        expensive.update(sales=100, profit=10, cog=90)
+        view = self.metrics([first, second], [sale(2, 2, '2026-05-01'), expensive])
+        result = view['sold_cohort']
+        self.assertEqual(result['expected_profit'], 8)
+        self.assertEqual(result['actual_profit'], 14)
+        self.assertEqual(result['profit_difference_pct'], 75)
+        self.assertAlmostEqual(result['roi'], 14/106*100)
+        self.assertAlmostEqual(result['margin'], 14/120*100)
+
+    def test_missing_expectations_and_costs_do_not_become_zero(self):
+        p = purchase(day='2026-05-01'); p['expected_profit'] = None
+        sale_row = sale(2, 3, '2026-06-01'); sale_row['cog'] = None
+        result = self.metrics([p], [sale_row])['sold_cohort']
+        for key in ('expected_profit', 'profit_difference', 'profit_difference_pct', 'roi', 'cost'):
+            self.assertIsNone(result[key])
+        self.assertEqual(result['actual_profit'], 6)
+        self.assertEqual(result['margin'], 20)
+        self.assertEqual(result['missing_expected_units'], 3)
+        self.assertEqual(result['missing_cost_units'], 3)
+
+    def test_zero_expectation_loss_and_empty_cohort(self):
+        p = purchase(day='2026-05-01'); p['expected_profit'] = 0
+        sale_row = sale(2, 3, '2026-06-01'); sale_row['profit'] = -6
+        result = self.metrics([p], [sale_row])['sold_cohort']
+        self.assertIsNone(result['profit_difference_pct'])
+        self.assertEqual(result['profit_difference'], -6)
+        self.assertEqual(result['roi'], -25)
+        self.assertEqual(result['margin'], -20)
+        empty = self.metrics([p], [sale_row], month='2026-06')['sold_cohort']
+        self.assertEqual(empty['units'], 0)
+        self.assertIsNone(empty['roi'])
+        self.assertIsNone(empty['margin'])
+
+    def test_report_renders_cohort_metrics(self):
+        view = self.metrics([purchase(day='2026-05-01')], [sale(2, 4, '2026-06-12')])
+        env = Environment(loader=FileSystemLoader('app/templates'), autoescape=True)
+        html = env.get_template('va_performance.html').render(**view, errors=[], uploaded=None,
+            period_start=D('2026-04-01'), period_end=D('2026-06-30'))
+        for text in ('Expected profit on sold units', '£12.00', '£8.00', '-33.3%',
+                     'Overall ROI', '25.0%', 'Overall profit margin', '20.0%',
+                     'Includes only leads purchased in the selected period'):
+            self.assertIn(text, html)
+
 
 class UploadPageTests(unittest.TestCase):
     def test_upload_metadata_and_failed_replacement(self):

@@ -1,4 +1,4 @@
-# VA actuals — first implementation
+# VA actuals â€” first implementation
 
 Open `/reports/va/performance` after restarting Atlas. Its existing startup creates the two new reporting tables.
 
@@ -41,3 +41,9 @@ Top 10 is by ASIN across the selected purchases. All selected batches must meet 
 SellerToolKit source: https://sellertoolkit.com/ links to https://app.sellertoolkit.co.uk/. Exact report menu labels could not be verified in an authenticated account. The upload page explicitly identifies its names as descriptive and gives required groupings, columns and export scope rather than inventing a click path.
 
 Validation now includes 17 offline tests and browser checks using `preview_va_actuals.py` with synthetic data only: target-card filtering, top-product purchase drill-down, month filtering and the central upload page. Live business data has not been refreshed or replaced during these checks.
+
+## Profit comparison and overall returns
+
+All financial summary metrics follow the selected purchase cohort. May includes only VA leads purchased in May, with their allocated sales through the latest uploaded export date, including June or later sales. Sales from April purchases are excluded even if sold in May. FIFO allocation runs across all purchases before the cohort is selected.
+
+Expected sold profit is VA expected profit per unit multiplied by allocated units sold. Actual sold profit follows the same units. Percentage difference is (actual minus expected) / expected × 100, available only when total expected profit is positive. Overall ROI is total actual sold profit / total allocated sold cost × 100; margin is total actual sold profit / total allocated sales revenue × 100. These are ratios of totals, not averages of lead percentages. Unsold units do not contribute. Missing expectations disable the overall profit comparison; missing or zero sold costs disable overall ROI. The report shows the affected unit counts.
