@@ -339,7 +339,7 @@ class ScanQueueService:
         db.add(ScanQueueRun(brand=item.brand, item_id=item.id,
                             scanned=result.get("asins_scanned") or 0,
                             opportunities=result.get("count") or 0,
-                            outcome="Partial page â€” awaiting tokens" if result.get("uk_ran_out") else "Page checked"))
+                            outcome="Partial page — awaiting tokens" if result.get("uk_ran_out") else "Page checked"))
         item.scanned_count = (item.scanned_count or 0) + (result.get("asins_scanned") or 0)
         item.last_run_at = datetime.now(timezone.utc)
         item.status = "in_progress"

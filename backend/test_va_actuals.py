@@ -55,7 +55,7 @@ class AllocationTests(unittest.TestCase):
         self.assertFalse(batches[1]['issue'])
         self.assertEqual(batches[1]['sold'], 10)
     def test_sheet_fields_and_ambiguous_purchase(self):
-        lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'Â£12', 'Client Notes':'Risky', 'Expected Profit':'3'}
+        lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'£12', 'Client Notes':'Risky', 'Expected Profit':'3'}
         buy = {'ASIN':'B000000001', 'Date Ordered':'02 Apr 26'}
         b = purchase_rows([lead], [buy])[0]
         self.assertEqual(b['purchased_on'], D('2026-04-02'))
