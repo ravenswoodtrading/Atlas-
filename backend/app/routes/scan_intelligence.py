@@ -1,11 +1,12 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.discovery_intelligence_service import DiscoveryIntelligenceService
 from app.services.scan_queue_service import ScanQueueService
+from app.services.scan_schedule_service import pending_reviews, decide_review, TIERS
 from app.services.brand_scan_service import BrandScanService
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.activity_log import ActivityLog
@@ -323,6 +324,8 @@ def scan_intelligence(request: Request, brand: str = "", tick_result: str = "",
         name="scan_intelligence.html",
         context={
             "request": request,
+            "tier_reviews": pending_reviews(),
+            "schedule_tiers": TIERS,
             "targets": page_targets,
             "total_filtered": len(filtered),
             "page": page,
@@ -345,6 +348,17 @@ def scan_intelligence(request: Request, brand: str = "", tick_result: str = "",
             "action_label": ACTION_LABELS,
         },
     )
+
+
+@router.post("/scan-intelligence/tier-review")
+def scan_intelligence_tier_review(review_id: int = Form(...), decision: str = Form(...)):
+    if decision not in ("approve", "dismiss"):
+        raise HTTPException(422, "Choose approve or dismiss")
+    try:
+        decide_review(review_id, decision == "approve")
+    except LookupError as exc:
+        raise HTTPException(409, str(exc))
+    return RedirectResponse(url="/scan-intelligence#tier-reviews", status_code=303)
 
 
 @router.post("/scan-intelligence/add-to-queue")

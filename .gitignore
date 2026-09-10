@@ -12,3 +12,11 @@ backend/atlas_server.log
 backend/cloudflare_tunnel.log
 backend/google_oauth_client_secret.json
 backend/google_oauth_token.json
+
+# Local developer settings, validation dependencies and generated audits
+.claude/settings.local.json
+backend/.claude/settings.local.json
+.testdeps/
+.scan_*.py
+backend/report_checks/
+backend/bulk_recheck_output.log

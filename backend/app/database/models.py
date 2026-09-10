@@ -373,6 +373,49 @@ class ScanQueueItem(Base):
     )
 
 
+class ScanBrandSchedule(Base):
+    """Manual/approved cadence only; discovery scores never write this table."""
+    __tablename__ = "scan_brand_schedules"
+    brand: Mapped[str] = mapped_column(String, primary_key=True)
+    tier: Mapped[str] = mapped_column(String, default="regular")
+
+
+class ScanCampaignProgress(Base):
+    __tablename__ = "scan_campaign_progress"
+    item_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_full_pass_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    filtered_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tracked_from_start: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ScanQueueRun(Base):
+    __tablename__ = "scan_queue_runs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    brand: Mapped[str] = mapped_column(String, index=True)
+    item_id: Mapped[int] = mapped_column(Integer)
+    ran_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    scanned: Mapped[int] = mapped_column(Integer, default=0)
+    opportunities: Mapped[int] = mapped_column(Integer, default=0)
+    outcome: Mapped[str] = mapped_column(String)
+
+
+class ScanTierReview(Base):
+    __tablename__ = "scan_tier_reviews"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    brand: Mapped[str] = mapped_column(String, index=True)
+    week: Mapped[str] = mapped_column(String, index=True)
+    current_tier: Mapped[str] = mapped_column(String)
+    proposed_tier: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="pending")
+
+
+class ScanReviewWeek(Base):
+    __tablename__ = "scan_review_weeks"
+    week: Mapped[str] = mapped_column(String, primary_key=True)
+
+
 class AutomationSettings(Base):
     """
     Singleton (always id=1) row holding small app-wide settings that
@@ -615,6 +658,17 @@ class Lead(Base):
     )
     analyzed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
+class SheetLeadSubmission(Base):
+    """Persistent submission snapshots; content edits never imply a new lead."""
+    __tablename__ = "sheet_lead_submissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asin: Mapped[str] = mapped_column(String, index=True)
+    payload: Mapped[str] = mapped_column(String)
+    lead_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class SheetLeadSyncState(Base):
@@ -2101,5 +2155,106 @@ class SalesHistorySnapshot(Base):
     period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
     imported_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SkuPerformanceSnapshot(Base):
+    """Latest Seller Toolkit Sales Summary, retained at SKU grain."""
+    __tablename__ = "sku_performance_snapshots"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sku: Mapped[str] = mapped_column(String, unique=True, index=True)
+    asin: Mapped[str] = mapped_column(String, default="", index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    units: Mapped[int] = mapped_column(Integer, default=0)
+    profit_loss: Mapped[float] = mapped_column(Float, default=0.0)
+    sales: Mapped[float] = mapped_column(Float, default=0.0)
+    cog: Mapped[float] = mapped_column(Float, default=0.0)
+    roi_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    margin_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    current_stock_qty: Mapped[int] = mapped_column(Integer, default=0)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class SkuDailyPerformance(Base):
+    """Daily Seller Toolkit export collapsed to one row per SKU for reporting."""
+    __tablename__ = "sku_daily_performance"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sku: Mapped[str] = mapped_column(String, unique=True, index=True)
+    asin: Mapped[str] = mapped_column(String, default="", index=True)
+    first_sale_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_sale_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    sale_days: Mapped[int] = mapped_column(Integer, default=0)
+    units_sold: Mapped[int] = mapped_column(Integer, default=0)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class VaSalesImport(Base):
+    __tablename__ = "va_sales_imports"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class VaSalesLine(Base):
+    """One source daily export row; amounts are totals for that row."""
+    __tablename__ = "va_sales_lines"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_row: Mapped[int] = mapped_column(Integer)
+    sku: Mapped[str] = mapped_column(String)
+    asin: Mapped[str] = mapped_column(String, index=True)
+    sold_at: Mapped[datetime] = mapped_column(DateTime)
+    units: Mapped[int] = mapped_column(Integer)
+    sales: Mapped[float] = mapped_column(Float)
+    profit: Mapped[float] = mapped_column(Float)
+    cog: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class ReportUpload(Base):
+    """Latest successful shared report upload; updated atomically with its data."""
+    __tablename__ = "report_uploads"
+    report_key: Mapped[str] = mapped_column(String, primary_key=True)
+    filename: Mapped[str] = mapped_column(String)
+    row_count: Mapped[int] = mapped_column(Integer)
+    period_start: Mapped[datetime] = mapped_column(DateTime)
+    period_end: Mapped[datetime] = mapped_column(DateTime)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AmazonInventoryLedgerLine(Base):
+    """One row from Amazon's FBA Inventory Ledger Detailed View."""
+    __tablename__ = "amazon_inventory_ledger_lines"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_row: Mapped[int] = mapped_column(Integer)
+    event_date: Mapped[datetime] = mapped_column(DateTime, index=True)
+    fnsku: Mapped[str] = mapped_column(String, default="", index=True)
+    asin: Mapped[str] = mapped_column(String, default="", index=True)
+    msku: Mapped[str] = mapped_column(String, default="", index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    disposition: Mapped[str] = mapped_column(String, default="")
+    starting_balance: Mapped[int] = mapped_column(Integer, default=0)
+    receipts: Mapped[int] = mapped_column(Integer, default=0)
+    customer_shipments: Mapped[int] = mapped_column(Integer, default=0)
+    customer_returns: Mapped[int] = mapped_column(Integer, default=0)
+    transfers: Mapped[int] = mapped_column(Integer, default=0)
+    found: Mapped[int] = mapped_column(Integer, default=0)
+    lost: Mapped[int] = mapped_column(Integer, default=0)
+    damaged: Mapped[int] = mapped_column(Integer, default=0)
+    disposed: Mapped[int] = mapped_column(Integer, default=0)
+    other_events: Mapped[int] = mapped_column(Integer, default=0)
+    ending_balance: Mapped[int] = mapped_column(Integer, default=0)
+    unknown_events: Mapped[int] = mapped_column(Integer, default=0)
+    location: Mapped[str] = mapped_column(String, default="")
+
+
+class WeeklyVaReportSummary(Base):
+    """A deliberately saved AI meeting summary for one VA reporting week."""
+    __tablename__ = "weekly_va_report_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime, index=True)
+    summary_text: Mapped[str] = mapped_column(String, default="")
+    generated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )

@@ -4,6 +4,12 @@
 {% block title %}Scan Intelligence - Atlas{% endblock %}
 
 {% block content %}
+<section id="tier-reviews" class="card p-3 mb-4">
+<h2 class="h5">Weekly scan tier decisions Â· {{ tier_reviews|length }} awaiting approval</h2>
+<p class="small text-muted">Suggestions use scan performance, own EU A2A history and competitor activity. Only approval changes future scanning frequency. Brands stay in the queue.</p>
+{% for review in tier_reviews %}<div class="border-top py-3"><div class="d-flex flex-wrap justify-content-between gap-2"><div><strong>{{ review.brand }}</strong> Â· {{ schedule_tiers[review.current_tier] }} â†’ {{ schedule_tiers[review.proposed_tier] }}<p class="small mb-1">{{ review.reason }}</p><span class="small text-muted">{{ review.week }}</span></div><form method="post" action="/scan-intelligence/tier-review" class="d-flex gap-2 align-items-start"><input type="hidden" name="review_id" value="{{ review.id }}"><button name="decision" value="approve" class="btn btn-sm btn-dark">Approve change</button><button name="decision" value="dismiss" class="btn btn-sm btn-outline-secondary">Keep current tier</button></form></div></div>{% else %}<div class="small text-muted">No tier changes awaiting approval.</div>{% endfor %}
+</section>
+
 {# Discovery Intelligence Phase 3 (2026-09-04) -- Scan Intelligence.
    Read-only presentation of the existing DiscoveryIntelligenceService
    (Phase 1 aggregation + Phase 2 Action-aware scoring). No new scoring
@@ -17,7 +23,7 @@
    readability. Deliberately does NOT show "vs last month" deltas on
    the stat cards -- Atlas has no historical snapshot of these counts
    to compare against, and a fabricated delta would be worse than none. #}
-{% set tier_style = {"HIGH": ("success", "🔥"), "MEDIUM": ("warning", "🟡"), "LOW": ("secondary", "⚪")} %}
+{% set tier_style = {"HIGH": ("success", "ðŸ”¥"), "MEDIUM": ("warning", "ðŸŸ¡"), "LOW": ("secondary", "âšª")} %}
 {# action_label is passed in from the route -- reuses OpportunityLensService.ACTION_LABELS,
    the same canonical Action display strings Review Queue itself uses, rather than a second
    copy that could drift. #}
@@ -31,10 +37,8 @@
         <div class="text-muted small">What should Atlas scan next?</div>
     </div>
     <div class="text-end">
-        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add-brand-modal">
-            <i class="bi bi-plus-lg"></i> Add Brand
-        </button>
-        <div class="text-muted" style="font-size:.75rem;">Default: Let Atlas Decide</div>
+        <a class="btn btn-primary" href="/scan-queue">Manage Scan Queue</a>
+
     </div>
 </div>
 <div class="text-muted small mb-3">
@@ -122,10 +126,7 @@
                     <td>
                         <div class="d-flex gap-1">
                             {% if not c.queued %}
-                            <form method="post" action="/scan-intelligence/add-to-queue">
-                                <input type="hidden" name="brand" value="{{ c.brand }}">
-                                <button type="submit" class="btn btn-sm btn-dark" title="Add to Scan Queue"><i class="bi bi-plus-lg"></i></button>
-                            </form>
+                            <a class="btn btn-sm btn-outline-dark" href="/scan-queue?brand={{ c.brand|urlencode }}">Review in Scan Queue</a>
                             {% endif %}
                             <form method="post" action="/scan-intelligence/attention/extra-scan">
                                 <input type="hidden" name="brand" value="{{ c.brand }}">
@@ -411,12 +412,7 @@
                     <i class="bi bi-slash-circle"></i> Queued -- gated (manage on Exclusions)
                 </a>
                 {% else %}
-                <form method="post" action="/scan-intelligence/add-to-queue">
-                    <input type="hidden" name="brand" value="{{ s.brand }}">
-                    <button type="submit" class="btn btn-dark w-100">
-                        <i class="bi bi-plus-lg"></i> Add to Scan Queue
-                    </button>
-                </form>
+                <a class="btn btn-sm btn-outline-dark" href="/scan-queue?brand={{ s.brand|urlencode }}">Review in Scan Queue</a>
                 {% endif %}
                 <form method="post" action="/scan-intelligence/scan-now">
                     <input type="hidden" name="brand" value="{{ s.brand }}">
@@ -445,10 +441,10 @@
             {% if bh %}
             <div class="p-2 mb-2" style="background:#ecfdf5; border-radius:8px;">
                 <div class="small">
-                    <strong>{{ bh.purchase_count }}</strong> EU A2A purchase{{ "s" if bh.purchase_count != 1 }} ·
-                    <strong>£{{ "%.2f"|format(bh.total_profit) }}</strong> recorded profit
+                    <strong>{{ bh.purchase_count }}</strong> EU A2A purchase{{ "s" if bh.purchase_count != 1 }} Â·
+                    <strong>Â£{{ "%.2f"|format(bh.total_profit) }}</strong> recorded profit
                 </div>
-                <div class="small text-muted">{{ bh.distinct_asins }} distinct ASIN{{ "s" if bh.distinct_asins != 1 }} · {{ bh.eu_markets | join(", ") }}</div>
+                <div class="small text-muted">{{ bh.distinct_asins }} distinct ASIN{{ "s" if bh.distinct_asins != 1 }} Â· {{ bh.eu_markets | join(", ") }}</div>
                 {% if bh.avg_potential_roi_pct is not none %}
                 <div class="small text-muted" title="The workbook's own 'Potential ROI' column -- an estimate at time of purchase, not a confirmed/realized outcome.">Avg potential ROI at purchase: {{ bh.avg_potential_roi_pct }}%</div>
                 {% endif %}
@@ -479,7 +475,7 @@
             </div>
             <div class="p-2 mb-2" style="background:#f0fdfa; border-radius:8px;">
                 <div class="small">
-                    {{ econ.total_records }} scan{{ "s" if econ.total_records != 1 }} · {{ econ.useful_count }} useful Action{{ "s" if econ.useful_count != 1 }}
+                    {{ econ.total_records }} scan{{ "s" if econ.total_records != 1 }} Â· {{ econ.useful_count }} useful Action{{ "s" if econ.useful_count != 1 }}
                     {% if econ.status == "QUIET" %}<span class="badge bg-warning text-dark ms-1">QUIET</span>
                     {% elif econ.status == "NEVER_USEFUL" %}<span class="badge bg-secondary ms-1">Never useful yet</span>
                     {% else %}<span class="badge bg-success ms-1">ACTIVE</span>{% endif %}
@@ -487,7 +483,7 @@
                 {% if econ.meets_sample_floor %}
                 <div class="small text-muted">
                     <strong>{{ econ.useful_per_10k }}</strong> useful opportunities / 10k tokens
-                    {% if econ.tokens_per_confirmed_buy %} · {{ "{:,.0f}".format(econ.tokens_per_confirmed_buy) }} tokens/confirmed BUY{% endif %}
+                    {% if econ.tokens_per_confirmed_buy %} Â· {{ "{:,.0f}".format(econ.tokens_per_confirmed_buy) }} tokens/confirmed BUY{% endif %}
                 </div>
                 {% else %}
                 <div class="small text-muted">Fewer than {{ min_scans_for_efficiency }} scans -- not enough data for a reliable efficiency figure yet.</div>
@@ -514,7 +510,7 @@
                 <div class="small" style="color:#6f42c1;">{{ own.eu_high_value_low_confidence_count }} High Value -- Low Confidence</div>
                 {% endif %}
                 {% if own.eu_avg_buy_profit %}
-                <div class="small text-muted">Avg profit on confirmed BUY: £{{ "%.2f"|format(own.eu_avg_buy_profit) }}</div>
+                <div class="small text-muted">Avg profit on confirmed BUY: Â£{{ "%.2f"|format(own.eu_avg_buy_profit) }}</div>
                 {% endif %}
                 {% if own.total_scanned and own.total_scanned != own.eu_scanned %}
                 <div class="small text-muted">Also scanned {{ own.total_scanned }} time(s) total (incl. non-EU channels)</div>
@@ -682,18 +678,13 @@
                 {% for brand, bh in invisible_history %}
                 <tr>
                     <td class="fw-semibold text-capitalize">{{ brand }}</td>
-                    <td class="small">£{{ "%.2f"|format(bh.total_profit) }}</td>
+                    <td class="small">Â£{{ "%.2f"|format(bh.total_profit) }}</td>
                     <td class="small">{{ bh.purchase_count }}</td>
                     <td class="small">{{ bh.distinct_asins }}</td>
                     <td class="small text-muted">{{ bh.eu_markets | join(", ") }}</td>
                     <td class="small text-muted">{{ bh.most_recent.strftime("%Y-%m-%d") if bh.most_recent else "--" }}</td>
                     <td>
-                        <form method="post" action="/scan-intelligence/add-brand">
-                            <input type="hidden" name="brand" value="{{ brand }}">
-                            <button type="submit" class="btn btn-sm btn-outline-dark">
-                                <i class="bi bi-plus-lg"></i> Add Brand
-                            </button>
-                        </form>
+                        <a class="btn btn-sm btn-outline-dark" href="/scan-queue?brand={{ brand|urlencode }}">Review in Scan Queue</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -702,33 +693,6 @@
     </div>
 </div>
 {% endif %}
-
-<!-- Add Brand modal -->
-<div class="modal fade" id="add-brand-modal" tabindex="-1" aria-labelledby="add-brand-modal-label" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h5 class="modal-title" id="add-brand-modal-label"><i class="bi bi-plus-lg"></i> Add Brand</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-      </div>
-      <form method="post" action="/scan-intelligence/add-brand">
-        <div class="modal-body">
-            <div class="text-muted small mb-3">
-                For a brand Atlas has no evidence on yet, so it can't appear in the table.
-                This adds it straight to the <a href="/scan-queue">Scan Queue</a> with no category restriction
-                ("Let Atlas Decide") so Atlas starts building evidence on it.
-            </div>
-            <label class="form-label">Brand</label>
-            <input type="text" class="form-control" name="brand" placeholder="e.g. philips" required autofocus>
-        </div>
-        <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-            <button type="submit" class="btn btn-dark"><i class="bi bi-plus-lg"></i> Add Brand (Let Atlas Decide)</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
 
 {% call help_modal("scan-intelligence", "Scan Intelligence") %}
 <p>Atlas's own recommendation layer for what to scan next on EU A2A (DE/FR/ES/IT) -- built from

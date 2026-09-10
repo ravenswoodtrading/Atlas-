@@ -1085,6 +1085,7 @@ class BrandScanService:
                 product_dict.get("roi") or 0,
                 product_dict.get("roi_90d") or 0,
                 product_dict.get("sales_drops_30d") or 0,
+                product_dict.get("buy_box_now") or 0,
             ):
                 DiscordNotifier.notify_opportunity(product_dict, report_dict, source_label=brand)
 

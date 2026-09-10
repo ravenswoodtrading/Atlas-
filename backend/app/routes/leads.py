@@ -212,7 +212,7 @@ def normalize_client_rating(value) -> str | None:
     return None
 
 
-def ingest_sheet_lead_row(payload: dict, db) -> Lead:
+def ingest_sheet_lead_row(payload: dict, db, *, existing_lead=None, new_submission=False) -> Lead:
     """
     Single shared entry point for "a VA sheet row became/updated an
     Atlas Lead" -- used by BOTH the webhook below (unchanged external
@@ -231,20 +231,28 @@ def ingest_sheet_lead_row(payload: dict, db) -> Lead:
         raise ValueError("Payload has no recognizable ASIN column")
     asin = str(asin).strip().upper()
 
-    # UPDATES an existing still-pending (decision IS NULL) sheet lead for
-    # this ASIN in place rather than always inserting a new row
-    # (2026-09-02, fixing a real duplicate-Review-Queue bug -- a VA sheet
-    # re-sending the same still-unreviewed ASIN on a later sync created a
-    # fresh row every time instead of recognizing it was already queued).
-    # Reset back to "queued" so it gets re-analyzed with whatever changed.
-    lead = (
-        db.query(Lead)
-        .filter(Lead.asin == asin, Lead.source == "sheet", Lead.decision.is_(None))
-        .order_by(Lead.id.desc())
-        .first()
-    )
+    # The poller passes the matched submission explicitly. Webhook callers
+    # also match reviewed leads so a retrospective edit cannot reopen them.
+    lead = existing_lead
+    if lead is None and not new_submission:
+        candidates = db.query(Lead).filter(Lead.asin == asin, Lead.source == 'sheet').all()
+        submitted = str(_extract(payload, ['date']) or '').strip()
+        if submitted:
+            matched = []
+            for candidate in candidates:
+                try:
+                    original = json.loads(candidate.raw_sheet_data or '{}')
+                except (ValueError, TypeError):
+                    continue
+                if str(_extract(original, ['date']) or '').strip() == submitted:
+                    matched.append(candidate)
+            candidates = matched
+        if len(candidates) > 1:
+            raise ValueError('Ambiguous sheet submission; use the sheet sync to match the original row')
+        lead = candidates[0] if candidates else None
 
-    if lead is None:
+    is_new = lead is None
+    if is_new:
         lead = Lead(asin=asin, source="sheet")
         db.add(lead)
 
@@ -259,11 +267,12 @@ def ingest_sheet_lead_row(payload: dict, db) -> Lead:
     lead.va_notes = _stringify(_extract(payload, VA_NOTES_ALIASES))
     lead.title = _stringify(_extract(payload, PRODUCT_NAME_ALIASES))
     lead.source_url = _stringify(_extract(payload, SOURCE_URL_ALIASES))
-    lead.status = "queued"
-    lead.verdict = None
-    lead.rationale = None
-    lead.keepa_metrics = None
-    lead.analysis_attempts = 0
+    if is_new:
+        lead.status = "queued"
+        lead.verdict = None
+        lead.rationale = None
+        lead.keepa_metrics = None
+        lead.analysis_attempts = 0
 
     db.flush()
     return lead
@@ -286,7 +295,7 @@ def sheet_lead_webhook(payload: dict, x_webhook_secret: str = Header(default=Non
         db.commit()
         db.refresh(lead)
 
-        return {"id": lead.id, "status": "queued"}
+        return {"id": lead.id, "status": lead.status}
     finally:
         db.close()
 

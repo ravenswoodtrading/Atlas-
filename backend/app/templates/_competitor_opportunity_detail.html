@@ -15,6 +15,8 @@
     </div>
 </div>
 
+{% from "_source_listing_link.html" import source_listing_link %}
+<div class="mb-3">{{ source_listing_link(item) }}</div>
 <!-- CURRENT OPPORTUNITY -->
 <div class="mb-3">
     <div class="text-uppercase text-muted small fw-bold mb-1"><i class="bi bi-cart-check-fill text-success"></i> Current Opportunity</div>

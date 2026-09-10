@@ -1,4 +1,6 @@
 from datetime import date, datetime, timezone
+import time
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -120,13 +122,61 @@ VIEW_FILTERS = {
     "oa_investigate": QUEUE_PRIORITY_OA_INVESTIGATE,
 }
 VIEW_LABELS = {
-    "all": "All",
+    "all": "All to Review",
     "buy_now": "Buy Now",
-    "va_to_review": "VA to Review",
-    "borderline": "Borderline",
-    "needs_attention": "Needs Attention",
-    "oa_investigate": "OA to Investigate",
+    "va_to_review": "VA Leads to Decide",
+    "borderline": "Verify Before Buying",
+    "oa_investigate": "Find an OA Source",
 }
+
+# Items with these Lens actions are useful signals, but are not decisions a
+# person can make today. Keep them in Atlas for its monitoring workflows,
+# rather than letting them make the Review Queue look like an ever-growing
+# unresolved to-do list. VA and OA items remain reviewable regardless: they
+# each have their own human workflow.
+MONITOR_ONLY_ACTIONS = {"WATCH", "HISTORICAL_RECURRING", "BLOCKED"}
+_REVIEW_QUEUE_CACHE = {}
+_REVIEW_QUEUE_CACHE_TTL = 8
+
+
+def _clear_review_queue_cache():
+    _REVIEW_QUEUE_CACHE.clear()
+
+
+def _is_monitor_only(item: dict) -> bool:
+    return (
+        item.get("action") in MONITOR_ONLY_ACTIONS
+        and "lead" not in item.get("sources", [])
+        and "oa_investigate" not in item.get("sources", [])
+        and not item.get("conflict")
+    )
+
+
+def _matches_workflow_view(item: dict, view: str) -> bool:
+    """Whether a merged item belongs in one of the four human workflows."""
+    if _is_monitor_only(item):
+        return False
+    views = set(item.get("views", []))
+    sources = set(item.get("sources", []))
+    if view == "buy_now":
+        return QUEUE_PRIORITY_BUY_NOW in views
+    if view == "va_to_review":
+        return "lead" in sources
+    if view == "oa_investigate":
+        return "oa_investigate" in sources
+    if view == "borderline":
+        # A conflict or any former Borderline/Needs Attention item is a
+        # verification task, unless it is a monitor-only signal above.
+        return (
+            item.get("conflict")
+            or QUEUE_PRIORITY_BORDERLINE in views
+            or QUEUE_PRIORITY_NEEDS_ATTENTION in views
+        )
+    return False
+
+
+def _requires_human_review(item: dict) -> bool:
+    return any(_matches_workflow_view(item, view) for view in VIEW_FILTERS)
 
 # Source-type filter (secondary, per section 20) -- reuses the exact
 # "scan"/"competitor"/"lead" values already on every merged item's
@@ -236,7 +286,7 @@ def review_queue_oa_investigate_export():
 @router.get("/review-queue")
 def review_queue_page(
     request: Request, sort: str = "when_desc", view: str = "all", source: str = "all", q: str = "",
-    marketplace: str = "all", competitor: str = "all",
+    marketplace: str = "all", competitor: str = "all", reason: str = "all", page: int = 1,
 ):
     """
     Unified Review Queue (Command Centre UI build, 2026-09-03; refined
@@ -277,28 +327,69 @@ def review_queue_page(
     source = source if source in SOURCE_TYPE_LABELS else "all"
     sort = sort if sort in SORT_LABELS else "when_desc"
     marketplace = marketplace if marketplace in MARKETPLACE_LABELS else "all"
+    reason_options = {
+        "price_drop": "Price drop", "low_sales": "Low sales evidence",
+        "low_roi": "Low ROI", "needs_review": "Needs review", "missing_data": "Missing data",
+    }
+    reason = reason if reason in reason_options else "all"
 
-    # Shared once (2026-09-04 perf fix) -- list_queue_items() and
-    # queue_priority_summary() each need the same "latest ProductRecord
-    # per ASIN" snapshot; computing it once here instead of letting each
-    # reload the whole table independently roughly halves this route's
-    # remaining query cost. See ProductRepository.get_latest_per_asin's
-    # own docstring for the full history.
-    latest_records = ProductRepository.get_latest_per_asin()
-    all_items = ReviewQueueService.list_queue_items(sort=sort, latest_records=latest_records)
-    summary = ReviewQueueService.queue_priority_summary(latest_records=latest_records)
+    def item_reason(item):
+        # A peak-price opportunity takes precedence over the current ROI
+        # badge: it is specifically profitable if the Buy Box recovers.
+        if item.get("recommendation") == "PEAK_WINDOW" or (
+            (item.get("roi_90d") or 0) >= 25 and (item.get("roi") or 0) < 25
+        ):
+            return "price_drop"
+        if not ProductRepository.has_verify_sales_evidence(item.get("monthly_sales") or 0, item.get("sales_drops_30d") or 0):
+            return "missing_data"
+        if (item.get("monthly_sales") or 0) < 1 and (item.get("sales_drops_30d") or 0) < 12:
+            return "low_sales"
+        if item.get("recommendation") in ("LOW_CONFIDENCE", "LOW_SCORE"):
+            return "needs_review"
+        if max(item.get("roi") or 0, item.get("roi_90d") or 0) < 25:
+            return "low_roi"
+        return "needs_review"
+
+    # One unified queue build per request.  list_queue_items() already
+    # provides every item's view membership, so the tab counts below can
+    # be derived from that result.  Calling queue_priority_summary() here
+    # used to rebuild and merge the whole queue a second time just to get
+    # those counts; with a large scan history that made opening the page
+    # look like it had stalled.
+    cached_queue = _REVIEW_QUEUE_CACHE.get(sort)
+    now = time.monotonic()
+    if cached_queue and now - cached_queue[0] < _REVIEW_QUEUE_CACHE_TTL:
+        all_items = cached_queue[1]
+    else:
+        latest_records = ProductRepository.get_latest_per_asin()
+        all_items = ReviewQueueService.list_queue_items(sort=sort, latest_records=latest_records)
+        _REVIEW_QUEUE_CACHE[sort] = (now, all_items)
+    review_items = [item for item in all_items if _requires_human_review(item)]
+    monitor_count = len(all_items) - len(review_items)
+    summary = {
+        "unique_items": len(review_items),
+        # The exact number of merged raw rows requires the same second
+        # full queue rebuild. It is explanatory rather than actionable,
+        # so omit it from this fast path instead of delaying the page.
+        "duplicates_merged": 0,
+        **{
+            "buy_now": sum(1 for item in review_items if _matches_workflow_view(item, "buy_now")),
+            "va_to_review": sum(1 for item in review_items if _matches_workflow_view(item, "va_to_review")),
+            "borderline": sum(1 for item in review_items if _matches_workflow_view(item, "borderline")),
+            "oa_investigate": sum(1 for item in review_items if _matches_workflow_view(item, "oa_investigate")),
+        },
+    }
 
     competitor_names = sorted({
         (i.get("competitor_info") or {}).get("seller").nickname
-        for i in all_items
+        for i in review_items
         if (i.get("competitor_info") or {}).get("seller")
     })
     competitor = competitor if competitor in competitor_names else "all"
 
-    items = all_items
+    items = review_items
     if view != "all":
-        wanted = VIEW_FILTERS[view]
-        items = [i for i in items if wanted in i["views"]]
+        items = [item for item in items if _matches_workflow_view(item, view)]
     if source != "all":
         items = [i for i in items if source in i["sources"]]
     if marketplace != "all":
@@ -315,14 +406,34 @@ def review_queue_page(
             i for i in items
             if needle in (i.get("asin") or "").lower() or needle in (i.get("title") or "").lower()
         ]
+    if reason != "all":
+        items = [i for i in items if item_reason(i) == reason]
+
+    page_size = 50
+    page_count = max(1, (len(items) + page_size - 1) // page_size)
+    page = max(1, min(page, page_count))
+    first = (page - 1) * page_size
+    page_items = items[first:first + page_size]
+    query = dict(view=view, source=source, sort=sort, q=q,
+        marketplace=marketplace, competitor=competitor, reason=reason)
+    previous_url = '/review-queue?' + urlencode({**query, 'page': page - 1}) if page > 1 else None
+    next_url = '/review-queue?' + urlencode({**query, 'page': page + 1}) if page < page_count else None
 
     return templates.TemplateResponse(
         request=request,
         name="review_queue.html",
         context={
             "request": request,
-            "items": items,
-            "unique_total": len(all_items),
+            "items": page_items,
+            "page": page,
+            "page_count": page_count,
+            "page_start": first + 1 if items else 0,
+            "page_end": min(first + page_size, len(items)),
+            "filtered_total": len(items),
+            "previous_url": previous_url,
+            "next_url": next_url,
+            "unique_total": len(review_items),
+            "monitor_count": monitor_count,
             "summary": summary,
             "view": view,
             "view_labels": VIEW_LABELS,
@@ -332,6 +443,9 @@ def review_queue_page(
             "marketplace_labels": MARKETPLACE_LABELS,
             "competitor": competitor,
             "competitor_names": competitor_names,
+            "reason": reason,
+            "reason_options": reason_options,
+            "item_reason": item_reason,
             "watched_asins": ProductRepository.get_watched_asins(),
             "sort": sort,
             "sort_labels": SORT_LABELS,
@@ -561,6 +675,7 @@ def review_queue_resolve(
         )
 
     already_resolved = not resolved["scan"] and not resolved["competitor"] and not resolved["lead"]
+    _clear_review_queue_cache()
     return JSONResponse({"ok": True, "asin": asin, "resolved": resolved, "already_resolved": already_resolved})
 
 
@@ -578,6 +693,7 @@ def review_queue_reclassify(asin: str = Form(...), sourcing_tag: str = Form(...)
         return JSONResponse({"ok": False, "error": "Unknown sourcing tag."}, status_code=400)
 
     updated = SellerWatchService.set_manual_sourcing_tag(asin, sourcing_tag)
+    _clear_review_queue_cache()
     return JSONResponse({"ok": True, "asin": asin, "sourcing_tag": sourcing_tag, "updated": updated})
 
 
@@ -597,4 +713,5 @@ def review_queue_undo(asin: str = Form(...), scan: str = Form(""), competitor: s
         "lead": [int(x) for x in lead.split(",") if x],
     }
     ReviewQueueService.unresolve_item(asin, resolved)
+    _clear_review_queue_cache()
     return JSONResponse({"ok": True})

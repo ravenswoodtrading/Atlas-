@@ -1,0 +1,11 @@
+<div class="card mb-4"><div class="card-body">
+<form method="get" class="row g-3 align-items-end" id="va-dates">
+<div class="col-md-3"><label class="form-label" for="date-mode">Purchase period</label><select class="form-select" id="date-mode" name="period">{% for key,label in [('all','All dates'),('quarter','Quarter'),('month','Month'),('custom','Custom dates')] %}<option value="{{ key }}" {{ 'selected' if selection.period == key }}>{{ label }}</option>{% endfor %}</select></div>
+<div class="col-md-3" data-date-mode="quarter"><label class="form-label" for="date-quarter">Quarter</label><input class="form-control" id="date-quarter" name="quarter" value="{{ selection.quarter }}" placeholder="2026-Q2" pattern="[0-9]{4}-Q[1-4]"></div>
+<div class="col-md-3" data-date-mode="month"><label class="form-label" for="date-month">Month</label><input type="month" class="form-control" id="date-month" name="month" value="{{ selection.month }}"></div>
+<div class="col-md-3" data-date-mode="custom"><label class="form-label" for="date-start">From</label><input type="date" class="form-control" id="date-start" name="start_date" value="{{ selection.start }}"></div>
+<div class="col-md-3" data-date-mode="custom"><label class="form-label" for="date-end">Through</label><input type="date" class="form-control" id="date-end" name="end_date" value="{{ selection.end }}"></div>
+<div class="col-auto"><button class="btn btn-primary">Apply dates</button></div></form>
+<p class="mt-3 mb-0"><strong>{{ selection.label }}</strong> · This period is based on when the VA lead was first listed and when we purchased the stock. It is not the customer order date or the sale date. Sales continue through {{ period_end or 'the uploaded export end date' }}, even if sold after this purchase period.</p>
+{% if selection.lower and undated %}<p class="text-warning mb-0">{{ undated }} undated purchases cannot be assigned to this period. <a href="/reports/va/performance">View all dates to review them.</a></p>{% endif %}
+</div></div>

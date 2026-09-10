@@ -1,10 +1,10 @@
-import time
 from datetime import datetime, timezone
 
 from sqlalchemy import func
 
 from app.database.database import SessionLocal
-from app.database.models import ScanQueueItem, AutomationSettings
+from app.database.models import ScanQueueItem, AutomationSettings, ScanCampaignProgress, ScanQueueRun, ScanTierReview
+from app.services.scan_schedule_service import schedule_maps, due_at
 from app.services.brand_scan_service import BrandScanService, WEEKLY_SAFETY_NET_RESERVE
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.activity_log import ActivityLog
@@ -22,38 +22,6 @@ _LEGACY_TARGET_COUNT_PLACEHOLDER = 999_999
 # below so the "is my queue too long?" estimate always matches
 # whatever the scheduler is actually doing.
 TICK_INTERVAL_SECONDS = 60
-
-# Discovery Intelligence Phase 4A (2026-09-04) -- priority-AWARE
-# ORDERING of the existing round-robin, not a frequency change. See
-# _next_round_robin_item's own docstring for the full design note; the
-# short version: HIGH-tier brands sort earlier in each lap of the
-# round-robin, MEDIUM/LOW/unranked still get a turn every single lap
-# (same as before this change) -- only WHEN within a lap they're
-# reached shifts, not HOW OFTEN over time. Adaptive frequency
-# (actually scanning HIGH more often than LOW) is an explicitly
-# deferred, separate future phase.
-PRIORITY_TIER_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-
-# Brands with no Discovery Intelligence evidence yet (no competitor
-# sightings, no scan history) default to the SAME rank as MEDIUM, never
-# excluded or pushed to the back -- a brand you added by hand that
-# Atlas hasn't scored yet must not be penalised for that (this is what
-# "manual overrides must remain respected" cashes out to here).
-_DEFAULT_TIER_RANK = PRIORITY_TIER_RANK["MEDIUM"]
-
-# How long to reuse a computed brand->tier map before recomputing it.
-# DiscoveryIntelligenceService.list_discovery_targets() is a real ~2s
-# DB scan (confirmed by direct timing -- two full table aggregations
-# plus in-memory scoring over every brand with any evidence, currently
-# 650+); Discovery evidence itself moves at the pace of scans/competitor
-# sightings, not seconds, so recomputing it fresh on every 60s tick
-# would be pure overhead for no real gain. This is a performance cache
-# of the existing source of truth, not a second one -- it is never
-# written to, only ever rebuilt from DiscoveryIntelligenceService.
-_TIER_CACHE_TTL_SECONDS = 300
-_tier_cache: dict = {}
-_tier_cache_built_at: float = 0.0
-
 
 class ScanQueueService:
     """
@@ -188,7 +156,14 @@ class ScanQueueService:
             # would otherwise silently miss the previous campaign
             # below and reset to page 0 as if it were a brand new one.
             brand = brand.strip().lower()
+            if not brand:
+                raise ValueError("Enter a brand name")
             category_ids_str = ",".join(str(c) for c in category_ids) if category_ids else ""
+            # Repeated Add clicks must not create another identical campaign.
+            requested_categories = set(filter(None, category_ids_str.split(',')))
+            for existing in db.query(ScanQueueItem).all():
+                if existing.brand.strip().lower() == brand and set(filter(None, (existing.category_ids or '').split(','))) == requested_categories:
+                    return
 
             furthest_page = (
                 db.query(func.max(ScanQueueItem.next_page))
@@ -210,6 +185,10 @@ class ScanQueueService:
                 next_page=furthest_page or 0,
             )
             db.add(item)
+            db.flush()
+            # SQLite may reuse an ID after removing the last queue entry.
+            # Old coverage must never become the new campaign's history.
+            db.query(ScanCampaignProgress).filter_by(item_id=item.id).delete()
             db.commit()
         finally:
             db.close()
@@ -222,7 +201,8 @@ class ScanQueueService:
             item = db.get(ScanQueueItem, item_id)
 
             if item:
-                db.delete(item)
+                db.query(ScanTierReview).filter_by(brand=item.brand, status="pending").update({"status": "superseded"})
+                db.query(ScanQueueItem).filter_by(brand=item.brand).delete(synchronize_session=False)
                 db.commit()
         finally:
             db.close()
@@ -259,66 +239,8 @@ class ScanQueueService:
             db.close()
 
     @staticmethod
-    def _brand_tier_map() -> dict:
-        """
-        {normalized_brand: "HIGH"/"MEDIUM"/"LOW"} from the existing
-        DiscoveryIntelligenceService ranking, cached for
-        _TIER_CACHE_TTL_SECONDS (see that constant's own comment for
-        why). Never raises -- any failure (including the DB simply
-        being briefly busy) returns an EMPTY dict, which makes every
-        brand look "unranked" and fall back to _DEFAULT_TIER_RANK, i.e.
-        plain position order for that tick. A priority-lookup hiccup
-        must never be able to stop the scan queue from ticking.
-        """
-        global _tier_cache, _tier_cache_built_at
-
-        now = time.monotonic()
-        if _tier_cache and (now - _tier_cache_built_at) < _TIER_CACHE_TTL_SECONDS:
-            return _tier_cache
-
-        try:
-            from app.services.discovery_intelligence_service import DiscoveryIntelligenceService
-            targets = DiscoveryIntelligenceService.list_discovery_targets(limit=100_000)
-            _tier_cache = {t["brand"]: t["tier"] for t in targets}
-            _tier_cache_built_at = now
-        except Exception:
-            # Fail safe, not fail loud -- see docstring above. Keep
-            # whatever was cached before (even if stale/empty) rather
-            # than raising into the scheduler tick.
-            pass
-
-        return _tier_cache
-
-    @staticmethod
     def _next_round_robin_item(db, settings) -> ScanQueueItem | None:
-        """
-        Picks the next item to run this tick, cycling through ALL
-        queued items instead of always restarting from the highest-
-        priority one -- every brand gets a turn in the token budget
-        each lap round the queue, regardless of how many pages any one
-        brand's catalog needs.
-
-        Ordering within that lap (2026-09-04, Discovery Intelligence
-        Phase 4A) -- ORDERING, not frequency: items are sorted
-        HIGH/MEDIUM/LOW by their current Discovery Intelligence tier
-        (see _brand_tier_map), with `position` (the existing manual
-        up/down control) as a stable tiebreak within each tier. Every
-        item still appears in the lap EXACTLY ONCE -- nothing is
-        skipped, nothing is repeated, so the long-run average scan rate
-        per brand is unchanged from plain position order. What changes
-        is WHEN within a lap a brand is reached: HIGH-tier brands sort
-        toward the front, so they're picked up sooner after being added
-        or re-prioritized, while MEDIUM/LOW/unranked brands are still
-        guaranteed their turn every single lap -- there is no scenario
-        in which an item is dropped from the rotation. Adaptive
-        frequency (HIGH brands actually getting MORE turns than LOW
-        ones over time) is a deliberately separate, later phase.
-
-        settings.last_scan_queue_item_id is the id of whichever item
-        was picked (and attempted) on the previous tick. If it's no
-        longer in the queue (deleted, or this is the very first tick),
-        falls back to the front of the (tier-sorted) list.
-        """
+        """Rotate across campaigns eligible under the manually approved cadence."""
         items = (
             db.query(ScanQueueItem)
             .order_by(ScanQueueItem.position)
@@ -328,19 +250,19 @@ class ScanQueueService:
         if not items:
             return None
 
-        tier_map = ScanQueueService._brand_tier_map()
-        # list.sort() is stable -- items already in `position` order
-        # keep that relative order within the same tier rank, so manual
-        # reordering still has a real, visible effect within a tier.
-        items.sort(key=lambda it: PRIORITY_TIER_RANK.get(tier_map.get(it.brand), _DEFAULT_TIER_RANK))
-
-        if settings.last_scan_queue_item_id is not None:
-            ids = [i.id for i in items]
-            if settings.last_scan_queue_item_id in ids:
-                last_index = ids.index(settings.last_scan_queue_item_id)
-                return items[(last_index + 1) % len(items)]
-
-        return items[0]
+        tiers, progress = schedule_maps(db)
+        now = datetime.utcnow()
+        # Rotate fairly through eligible campaigns. Only a saved human decision
+        # changes cadence; Discovery ranking cannot override manual tiers.
+        ids = [i.id for i in items]
+        if settings.last_scan_queue_item_id in ids:
+            offset = ids.index(settings.last_scan_queue_item_id) + 1
+            items = items[offset:] + items[:offset]
+        for item in items:
+            tier = tiers.get(item.brand, "regular")
+            if tier == "regular" or due_at(item, tier, progress.get(item.id), len(items)) <= now:
+                return item
+        return None
 
     @staticmethod
     def _execute_scan_for_item(db, item: ScanQueueItem, extra_attention: bool = False) -> dict:
@@ -381,18 +303,10 @@ class ScanQueueService:
             )
 
         if result.get("excluded_brand_skip"):
-            # Defense in depth (2026-09-05) -- ProductRepository.
-            # add_brand_exclusion already removes every ScanQueueItem
-            # row for a brand the moment it's excluded, so this branch
-            # should rarely fire in practice. It exists for the brief
-            # race window between that removal and a tick already
-            # in-flight for the same item, and for the (deliberately
-            # unlikely) case a row somehow exists despite the exclusion.
-            # Unlike gating, an excluded brand is NOT left sitting in
-            # the rotation -- it's removed outright, matching "get it
-            # out of the queue now" (see ExcludedBrand's own docstring).
+            # An exclusion blocks the run. Only the user's explicit removal
+            # controls remove a brand; the scheduler never deletes it.
             item_id, brand_name = item.id, item.brand
-            db.delete(item)
+            item.status = "excluded"
             db.commit()
             return {"item_id": item_id, "brand": brand_name, "excluded_brand_skip": True, "extra_attention": extra_attention}
 
@@ -416,6 +330,16 @@ class ScanQueueService:
             # progress is lost and nothing gets skipped.
             return {"item_id": item.id, "brand": item.brand, "error": result["error"], "extra_attention": extra_attention}
 
+        progress = db.get(ScanCampaignProgress, item.id)
+        if progress is None:
+            progress = ScanCampaignProgress(item_id=item.id)
+            db.add(progress)
+        if item.next_page == 0:
+            progress.tracked_from_start = True
+        db.add(ScanQueueRun(brand=item.brand, item_id=item.id,
+                            scanned=result.get("asins_scanned") or 0,
+                            opportunities=result.get("count") or 0,
+                            outcome="Partial page â€” awaiting tokens" if result.get("uk_ran_out") else "Page checked"))
         item.scanned_count = (item.scanned_count or 0) + (result.get("asins_scanned") or 0)
         item.last_run_at = datetime.now(timezone.utc)
         item.status = "in_progress"
@@ -448,6 +372,10 @@ class ScanQueueService:
             # Completed a full lap of this brand's real catalog -- start
             # the next lap from the top rather than requesting pages
             # Keepa has nothing left to return for.
+            progress.filtered_count = item.next_page * 100 + raw_page_count
+            if progress.tracked_from_start:
+                progress.last_full_pass_at = datetime.utcnow()
+            progress.tracked_from_start = False
             item.next_page = 0
             item.exhausted = True
         else:
@@ -467,78 +395,10 @@ class ScanQueueService:
         }
 
     @staticmethod
-    def _run_extra_attention_scans(db) -> list:
-        """
-        Attention Engine v1 extra-attention slots (Phase 5B, approved
-        2026-09-04, enabled after a validated simulation -- see
-        attention_engine_service.select_extra_attention_slots' own
-        docstring for the full design/ranking rationale). Called ONCE
-        per completed lap (see run_next_tick's own wrap detection), not
-        once per tick -- this is a bounded, occasional TOP-UP on top of
-        the unchanged baseline guarantee, never a replacement for it.
-
-        Reuses the EXACT same _execute_scan_for_item path every normal
-        tick uses -- no second scanner, no new Keepa call site. Picks
-        the LOWEST-position ScanQueueItem row for each selected brand
-        (a brand can have more than one row, e.g. different category
-        filters -- the extra turn goes to its primary/oldest campaign).
-        Never raises into the caller -- a failure computing attention
-        candidates just means zero extra scans this lap, not a broken
-        tick (same fail-safe posture as _brand_tier_map above).
-        """
-        try:
-            from app.services.attention_engine_service import get_attention_candidates, select_extra_attention_slots
-            candidates = get_attention_candidates()
-            slots = select_extra_attention_slots(candidates)
-        except Exception:
-            return []
-
-        if not slots:
-            return []
-
-        items_by_brand = {}
-        for row in db.query(ScanQueueItem).order_by(ScanQueueItem.position).all():
-            items_by_brand.setdefault(row.brand, row)
-
-        results = []
-        for slot in slots:
-            item = items_by_brand.get(slot["brand"])
-            if item is None:
-                continue
-            results.append(ScanQueueService._execute_scan_for_item(db, item, extra_attention=True))
-        return results
-
-    @staticmethod
     def run_next_tick():
-        """
-        Called by the background scheduler on each interval. Runs ONE
-        baseline scan call (one Product Finder page) for the next item
-        in the round-robin rotation, updates its progress, and wraps
-        back to page 0 for another lap once the brand/category has
-        genuinely run out of new results (a page came back with fewer
-        than 100 raw results -- see BrandScanService.scan). It never
-        stops on its own -- pause the whole queue from this page if you
-        want it to stand down, or delete individual brands you don't
-        want tracked any more.
+        """Run one eligible campaign with the existing token budget and scan lock.
 
-        Extra attention (Phase 5B, 2026-09-04, enabled after a
-        validated simulation) -- when this tick's baseline pick
-        completes a full lap (the previous cursor was the LAST item in
-        the current tier-sorted order, so this pick wraps back to the
-        front), up to MAX_EXTRA_ATTENTION_PER_LAP additional scans run
-        in this SAME tick call, for the brands
-        attention_engine_service.select_extra_attention_slots ranks
-        highest -- see that function's own docstring for the ranking
-        (measured yield outranks a recent BUY once a brand has enough
-        scans to measure it; only currently-queued brands are
-        eligible). This is the ONLY place total scan volume increases
-        beyond the existing one-per-tick baseline, and it is bounded,
-        occasional (once per lap, roughly every N ticks for an N-brand
-        queue), and fully explainable per slot.
-
-        Never raises -- scan() already swallows Keepa errors and
-        returns an error/empty result instead of throwing. Returns a
-        small dict describing what happened, for logging/status.
+        Weekly recommendations never add scans or change a saved tier.
         """
         db = SessionLocal()
 
@@ -548,36 +408,10 @@ class ScanQueueService:
             if settings.paused:
                 return {"skipped": "paused"}
 
-            # Lap-wrap detection, BEFORE the cursor moves -- reuses the
-            # exact same tier-sorted ordering _next_round_robin_item
-            # computes internally; a fresh lap is starting on THIS pick
-            # if the item about to become "previous" (today's cursor)
-            # was the last one in that order.
-            tier_sorted_items = (
-                db.query(ScanQueueItem).order_by(ScanQueueItem.position).all()
-            )
-            if tier_sorted_items:
-                tier_map = ScanQueueService._brand_tier_map()
-                tier_sorted_items.sort(key=lambda it: PRIORITY_TIER_RANK.get(tier_map.get(it.brand), _DEFAULT_TIER_RANK))
-            previous_cursor_id = settings.last_scan_queue_item_id
-            lap_wrapped = bool(
-                tier_sorted_items
-                and previous_cursor_id is not None
-                and previous_cursor_id == tier_sorted_items[-1].id
-            )
-
             item = ScanQueueService._next_round_robin_item(db, settings)
 
             if item is None:
-                return {"skipped": "queue empty"}
-
-            # Record the cursor for next tick's rotation BEFORE any
-            # early return below -- even a skipped/errored tick should
-            # still advance the rotation past this item, or it would
-            # keep getting re-picked every tick while contributing
-            # nothing (e.g. stuck on a token error).
-            settings.last_scan_queue_item_id = item.id
-            db.commit()
+                return {"skipped": "no brands due" if db.query(ScanQueueItem).first() else "queue empty"}
 
             # Manual scans (Discovery, Replen "check now") always take
             # priority -- if one is already running, skip this tick
@@ -588,14 +422,14 @@ class ScanQueueService:
                 return {"item_id": item.id, "brand": item.brand, "skipped": "manual scan in progress"}
 
             try:
+                settings.last_scan_queue_item_id = item.id
+                progress = db.get(ScanCampaignProgress, item.id)
+                if progress is None:
+                    progress = ScanCampaignProgress(item_id=item.id)
+                    db.add(progress)
+                progress.last_attempt_at = datetime.utcnow()
+                db.commit()
                 baseline_result = ScanQueueService._execute_scan_for_item(db, item, extra_attention=False)
-
-                extra_results = []
-                if lap_wrapped:
-                    extra_results = ScanQueueService._run_extra_attention_scans(db)
-
-                if extra_results:
-                    baseline_result["extra_attention_scans"] = extra_results
 
                 return baseline_result
             finally:

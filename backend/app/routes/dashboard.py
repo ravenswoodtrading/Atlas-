@@ -1,4 +1,7 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+import re
+import time
 
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
@@ -15,11 +18,12 @@ from app.services.review_queue_service import (
 )
 from app.services.oa_source_discovery_service import OaSourceDiscoveryService
 from app.services.activity_log import ActivityLog
+from app.services.google_sheets_client import open_sheet
 # Quick Reject reason list (UI redesign pass, 2026-09-03) -- the Buy Now
 # table's row-level quick-reject dropdown on this page uses the exact
 # same six reasons as /review-queue's own rows, imported rather than
 # duplicated so the two can't drift apart.
-from app.routes.review_queue import QUICK_REJECT_REASONS
+from app.routes.review_queue import QUICK_REJECT_REASONS, VIEW_FILTERS, _matches_workflow_view, _requires_human_review
 
 router = APIRouter()
 
@@ -70,14 +74,100 @@ ACTIVITY_LABELS = {
 # what /review-queue itself is for).
 COMMAND_CENTRE_PREVIEW_SIZE = 5
 
-# Today's Buying Performance (2026-09-03, second UI pass) -- no
-# purchasing/spend integration exists yet (confirmed: no live Google
-# Sheets access, no route/service/table for it -- see dashboard.html's
-# own comment on this section). False shows an honest "Not connected
-# yet" state instead of fabricated numbers; flip to True once a real
-# data source (manual CSV upload / sheet webhook / live Sheets API
-# pull -- Tamara to decide) actually feeds real figures in.
-PURCHASING_CONNECTED = False
+# Command Centre purchasing snapshot. These are the user's existing
+# authoritative purchasing workbook tabs. Atlas only ever reads them.
+PURCHASING_SHEET_URL = "https://docs.google.com/spreadsheets/d/1WcO8SQ6cQEmoVG-GUmAJwBde1AIgp4aBg9pUBJ62UA0/edit?pli=1&gid=1374354957#gid=1374354957"
+PURCHASING_CACHE_TTL = timedelta(hours=1)
+_purchasing_snapshot_cache = {"created_at": None, "value": None}
+
+
+def _as_number(value):
+    """Read a currency/quantity cell without relying on sheet formatting."""
+    cleaned = re.sub(r"[^0-9.()-]", "", str(value or "")).replace("(", "-").replace(")", "")
+    if not cleaned or cleaned == "-":
+        return Decimal("0")
+    try:
+        return Decimal(cleaned)
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def _as_date(value):
+    value = str(value or "").strip()
+    for fmt in ("%Y-%m-%d", "%d %b %y", "%d %b %Y", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _monthly_daily_tracker_total(rows, month_start):
+    """Sum the date/value pairs from either official Daily Tracker tab."""
+    total = Decimal("0")
+    for row in rows[1:]:
+        for index in range(1, len(row) - 1):
+            entry_date = _as_date(row[index])
+            if entry_date and entry_date.year == month_start.year and entry_date.month == month_start.month:
+                total += _as_number(row[index + 1])
+    return total
+
+
+def _purchasing_snapshot():
+    """Return a cached, read-only month-to-date view of the official workbook."""
+    now = datetime.now()
+    cached_at = _purchasing_snapshot_cache["created_at"]
+    if cached_at and now - cached_at < PURCHASING_CACHE_TTL:
+        return _purchasing_snapshot_cache["value"]
+
+    month_start = date.today().replace(day=1)
+    snapshot = {
+        "available": False,
+        "month_label": month_start.strftime("%B %Y"),
+        "updated_at": now.strftime("%H:%M"),
+        "spend": Decimal("0"),
+        "profit": Decimal("0"),
+        "expected_profit": Decimal("0"),
+        "units": 0,
+        "purchase_lines": 0,
+        "error": None,
+    }
+    try:
+        workbook = open_sheet(PURCHASING_SHEET_URL)
+        spend_rows = workbook.worksheet("Daily Tracker - Spend").get_all_values()
+        profit_rows = workbook.worksheet("Daily Tracker - Profit").get_all_values()
+        buy_rows = workbook.worksheet("Buy Sheet").get_all_values()
+
+        snapshot["spend"] = _monthly_daily_tracker_total(spend_rows, month_start)
+        snapshot["profit"] = _monthly_daily_tracker_total(profit_rows, month_start)
+
+        # Buy Sheet has a second export block further right with another
+        # "Date Ordered" header. Keep the first (purchasing) block.
+        headers = {}
+        for index, header in enumerate(buy_rows[0]):
+            headers.setdefault(header.strip().lower(), index)
+        date_index = headers.get("date ordered")
+        quantity_index = headers.get("quantity")
+        expected_profit_index = headers.get("profit (total)")
+        if date_index is None or quantity_index is None or expected_profit_index is None:
+            raise ValueError("The Buy Sheet no longer has its expected Date Ordered, Quantity and Profit (Total) columns.")
+
+        for row in buy_rows[1:]:
+            if len(row) <= date_index:
+                continue
+            ordered_on = _as_date(row[date_index])
+            if not ordered_on or ordered_on.year != month_start.year or ordered_on.month != month_start.month:
+                continue
+            snapshot["purchase_lines"] += 1
+            snapshot["units"] += int(_as_number(row[quantity_index])) if len(row) > quantity_index else 0
+            snapshot["expected_profit"] += _as_number(row[expected_profit_index]) if len(row) > expected_profit_index else 0
+
+        snapshot["available"] = True
+    except Exception as exc:
+        snapshot["error"] = str(exc)
+
+    _purchasing_snapshot_cache.update({"created_at": now, "value": snapshot})
+    return snapshot
 
 
 def _command_centre():
@@ -91,29 +181,28 @@ def _command_centre():
     Dashboard doesn't pay for the full unified-queue computation
     (hundreds of rows across four scan filters plus both competitor
     queries) more than once on the same page load. No new dedup/
-    priority logic here -- everything below is just tallying/grouping
-    the `views`/`sources`/`conflict`/`historical_sourcing_evidence`
-    fields each already-merged item already carries.
+    priority logic here -- workflow membership comes from the same
+    helpers used by the Review Queue, including conflict/attention
+    verification tasks and the exclusion of monitor-only items.
     """
-    items = ReviewQueueService.list_queue_items()
+    cached = globals().get('_COMMAND_CENTRE_CACHE')
+    now = time.monotonic()
+    if cached and now - cached[0] < 15:
+        return cached[1]
+
+    items = [item for item in ReviewQueueService.list_queue_items() if _requires_human_review(item)]
 
     counts = {
         QUEUE_PRIORITY_BUY_NOW: 0, QUEUE_PRIORITY_VA_TO_REVIEW: 0,
         QUEUE_PRIORITY_BORDERLINE: 0, QUEUE_PRIORITY_NEEDS_ATTENTION: 0,
+        "OA_INVESTIGATE": 0,
     }
-    for item in items:
-        for view in item["views"]:
-            # OA_INVESTIGATE (2026-09-05) deliberately NOT counted here --
-            # Command Centre stays exactly as it is (Tamara's own
-            # instruction: no new card, no redesign); the fifth view only
-            # lives in Review Queue itself. Guarded rather than adding a
-            # 5th key so a future view can be added to QUEUE_PRIORITIES
-            # without this crashing again on an unrecognised one.
-            if view in counts:
-                counts[view] += 1
+    for view, priority in VIEW_FILTERS.items():
+        counts[priority] = sum(bool(_matches_workflow_view(item, view)) for item in items)
 
     def preview(view_name):
-        return [i for i in items if view_name in i["views"]][:COMMAND_CENTRE_PREVIEW_SIZE]
+        view = next(key for key, priority in VIEW_FILTERS.items() if priority == view_name)
+        return [i for i in items if _matches_workflow_view(i, view)][:COMMAND_CENTRE_PREVIEW_SIZE]
 
     # Sub-breakdown lines for the three secondary cards -- a quick "what
     # kind of thing is actually in here" without opening the full view.
@@ -121,7 +210,7 @@ def _command_centre():
     # land in more than one bucket (e.g. a Borderline item sourced from
     # both Competitor and VA counts in both), so bucket totals are not
     # guaranteed to sum to the card's own headline count.
-    va_items = [i for i in items if QUEUE_PRIORITY_VA_TO_REVIEW in i["views"]]
+    va_items = [i for i in items if _matches_workflow_view(i, "va_to_review")]
     va_breakdown = {
         "strong_buy": sum(1 for i in va_items if QUEUE_PRIORITY_BUY_NOW in i["views"]),
         "borderline": sum(
@@ -134,7 +223,7 @@ def _command_centre():
         ),
     }
 
-    borderline_items = [i for i in items if QUEUE_PRIORITY_BORDERLINE in i["views"]]
+    borderline_items = [i for i in items if _matches_workflow_view(i, "borderline")]
     borderline_breakdown = {
         "from_competitor": sum(1 for i in borderline_items if "competitor" in i["sources"]),
         "from_va": sum(1 for i in borderline_items if "lead" in i["sources"]),
@@ -153,7 +242,7 @@ def _command_centre():
         0, len(attention_items) - attention_breakdown["historical_not_buyable"] - attention_breakdown["conflict"]
     )
 
-    return {
+    result = {
         "unique_total": len(items),
         "counts": counts,
         # Only Buy Now still gets an item-level preview -- the other
@@ -166,6 +255,8 @@ def _command_centre():
         "borderline_breakdown": borderline_breakdown,
         "attention_breakdown": attention_breakdown,
     }
+    globals()['_COMMAND_CENTRE_CACHE'] = (now, result)
+    return result
 
 
 def _lead_counts():
@@ -355,8 +446,10 @@ def _greeting() -> str:
 
 @router.get("/")
 def dashboard(request: Request):
+    from app.services.scan_schedule_service import pending_reviews
     stats = ProductRepository.get_summary_stats()
     sheet_leads_waiting, manual_leads_waiting = _lead_counts()
+    purchasing_snapshot = _purchasing_snapshot()
 
     return templates.TemplateResponse(
         request=request,
@@ -364,6 +457,7 @@ def dashboard(request: Request):
         context={
             "request": request,
             "stats": stats,
+            "scan_tier_review_count": len(pending_reviews()),
             "sheet_leads_waiting": sheet_leads_waiting,
             "manual_leads_waiting": manual_leads_waiting,
             "keepa_tokens_remaining": _keepa_tokens_remaining(),
@@ -374,7 +468,8 @@ def dashboard(request: Request):
             "greeting": _greeting(),
             "last_updated": datetime.now().strftime("%H:%M"),
             "quick_reject_reasons": QUICK_REJECT_REASONS,
-            "purchasing_connected": PURCHASING_CONNECTED,
+            "purchasing_sheet_url": PURCHASING_SHEET_URL,
+            "purchasing_snapshot": purchasing_snapshot,
             # review_queue_summary/consider_summary intentionally no
             # longer computed here (2026-09-03, Command Centre UI
             # build) -- they were only ever used by the three alert

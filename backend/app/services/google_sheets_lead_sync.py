@@ -32,6 +32,7 @@ from app.database.database import SessionLocal
 from app.database.models import Lead, SheetLeadSyncState
 from app.services.google_sheets_client import open_sheet
 from app.services.review_queue_service import apply_lead_decision
+from app.services.va_submission_sync import sync_submissions
 from app.routes.leads import (
     ingest_sheet_lead_row, normalize_client_rating, _extract,
     ASIN_ALIASES, CLIENT_RATING_ALIASES, VA_NOTES_ALIASES, DATE_LAST_ADDED_ALIASES,
@@ -50,9 +51,8 @@ DECISION_TO_CLIENT_RATING = {
 
 
 def _row_content_hash(row: list) -> str:
-    # Hash the WHOLE row, not just the fields we map -- see
-    # SheetLeadSyncState's own docstring: any edit to any column is a
-    # genuine change worth re-syncing, not just ones this code parses.
+    # Retain raw content history for repeat reporting and legacy compatibility.
+    # This hash is NOT submission identity and does not decide queue admission.
     return hashlib.sha256(json.dumps(row, default=str).encode("utf-8")).hexdigest()
 
 
@@ -65,20 +65,10 @@ def pull_and_ingest_va_leads() -> dict:
     THE pull entry point, called by the scheduler (or manually). Two
     independent passes over the same sheet read:
 
-    PASS 1 -- new/changed row ingestion (content-hash-gated, unchanged
-    from the original design). For each row with a real ASIN:
-      - First time this ASIN has ever been seen at all: baseline it
-        (record its content hash) WITHOUT calling ingest_sheet_lead_row.
-        This is the hard safety requirement -- Lead Sheet already has
-        720 historical rows, most already fully decided by the team's
-        own manual process; treating all of them as brand-new Atlas
-        leads on the very first sync would flood the Review Queue and
-        burn Keepa tokens re-analyzing already-settled decisions.
-      - Seen before, content unchanged: skip entirely (no re-analysis,
-        no wasted Keepa spend).
-      - Seen before, content changed (or genuinely new after the
-        baseline): ingest via ingest_sheet_lead_row (creates/updates a
-        Lead(source="sheet"), same mapping the old webhook used).
+    PASS 1 -- preserve raw content history, then match persistent submission
+    snapshots. Existing submissions update in place without resetting review
+    or analysis. Only additional submissions create queued leads. The first
+    snapshot pass baselines historical rows; ambiguous edits are held back.
 
     PASS 2 -- decision + VA-notes reconciliation, added 2026-09-05 after
     a real gap was found live: Tamara found real pending leads in her
@@ -122,6 +112,7 @@ def pull_and_ingest_va_leads() -> dict:
         known_hashes = {s.content_hash for s in db.query(SheetLeadSyncState).all()}
         is_first_run = len(known_hashes) == 0
         latest_by_asin = {}  # asin -> payload, last occurrence wins, for Pass 2
+        payloads = []
 
         for row in rows[1:]:
             payload = _row_to_payload(header, row)
@@ -129,6 +120,7 @@ def pull_and_ingest_va_leads() -> dict:
             if not asin_raw:
                 continue
             asin = str(asin_raw).strip().upper()
+            payloads.append(payload)
             latest_by_asin[asin] = payload
             content_hash = _row_content_hash(row)
 
@@ -148,8 +140,13 @@ def pull_and_ingest_va_leads() -> dict:
                 baselined += 1
                 continue
 
-            ingest_sheet_lead_row(payload, db)
-            ingested += 1
+            # Content history is retained for repeat-reporting only. Submission
+            # matching below decides whether this is an edit or a new lead.
+
+        submission_counts = sync_submissions(db, payloads)
+        baselined = submission_counts['baselined']
+        ingested = submission_counts['ingested']
+        skipped_unchanged = submission_counts['skipped_unchanged']
 
         # Real bug found live, 2026-09-08 (Tamara: "I have VA leads
         # added today on the sheet that aren't showing") -- this used
@@ -204,6 +201,8 @@ def pull_and_ingest_va_leads() -> dict:
         "baselined": baselined, "ingested": ingested,
         "decisions_applied": decisions_applied, "skipped_unchanged": skipped_unchanged,
         "notes_backfilled": notes_backfilled, "is_first_run": is_first_run,
+        "updated": submission_counts['updated'],
+        "ambiguous": submission_counts['ambiguous'],
     }
 
 

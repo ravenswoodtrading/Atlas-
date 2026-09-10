@@ -357,6 +357,17 @@ ATLAS
 
 <a href="/review/history" title="History" class="{{ 'active' if nav_path == '/review/history' }}"><i class="bi bi-clock-history"></i> <span class="link-text">History</span></a>
 
+<div class="sidebar-section-label">Reporting</div>
+<a href="/reports/uploads" title="Report Uploads" class="{{ 'active' if nav_path == '/reports/uploads' }}"><i class="bi bi-cloud-upload"></i> <span class="link-text">Report Uploads</span></a>
+
+<a href="/reports/va" title="VA Weekly Report" class="{{ 'active' if nav_path == '/reports/va' }}"><i class="bi bi-bar-chart-line-fill"></i> <span class="link-text">VA Weekly Report</span></a>
+
+<a href="/reports/va/monthly" title="VA Monthly Report" class="{{ 'active' if nav_path == '/reports/va/monthly' }}"><i class="bi bi-calendar3"></i> <span class="link-text">VA Monthly Report</span></a>
+
+<a href="/reports/va/performance" title="VA Performance" class="{{ 'active' if nav_path == '/reports/va/performance' }}"><i class="bi bi-graph-up-arrow"></i> <span class="link-text">VA Performance</span></a>
+
+<a href="/reports/actual-performance" title="Actual Performance" class="{{ 'active' if nav_path == '/reports/actual-performance' }}"><i class="bi bi-graph-up-arrow"></i> <span class="link-text">Actual Performance</span></a>
+
 <div class="sidebar-section-label">Operations</div>
 
 <a href="/watchlist" title="Watchlist" class="{{ 'active' if nav_path == '/watchlist' }}"><i class="bi bi-star"></i> <span class="link-text">Watchlist</span></a>
@@ -549,6 +560,8 @@ ATLAS
     });
 })();
 </script>
+
+{% block scripts %}{% endblock %}
 
 </body>
 

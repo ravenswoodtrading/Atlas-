@@ -1093,6 +1093,12 @@ class ReviewQueueService:
         for record in (
             list(scan_records) + list(peak_records) + list(low_confidence_records) + list(low_score_records)
         ):
+            # No confirmed sales and fewer than three Keepa drops is not
+            # actionable evidence, so keep it out of every scan lane.
+            if not ProductRepository.has_verify_sales_evidence(
+                record.monthly_sales or 0, record.sales_drops_30d or 0
+            ):
+                continue
             if record.asin in seen_scan_asins:
                 continue
 
@@ -1148,6 +1154,20 @@ class ReviewQueueService:
 
         leads.extend(ReviewQueueService._pending_leads(LEAD_MAIN_VERDICTS))
         leads.extend(ReviewQueueService._pending_sheet_leads_unrated())
+
+        # A VA lead still needs minimum sales evidence to be actionable.
+        # Keepa/VA rows with neither confirmed monthly sales nor three
+        # rank drops belong outside the buying queues, even when analysis
+        # has not produced a verdict yet.
+        leads = [
+            lead for lead in leads
+            if not (
+                ReviewQueueService._origin(lead) == "sheet"
+                and not ProductRepository.has_verify_sales_evidence(
+                    lead.get("monthly_sales") or 0, lead.get("sales_drops_30d") or 0
+                )
+            )
+        ]
 
         ReviewQueueService._flag_conflicts(leads)
 

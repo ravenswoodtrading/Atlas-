@@ -50,7 +50,7 @@ EXCELLENT_PROFIT = 15
 IS_NOTABLE_ROI = 25
 
 # ProductRepository.is_notable's own SALES_DROPS_NOTABLE_THRESHOLD.
-SALES_DROPS_NOTABLE_THRESHOLD = 3
+SALES_DROPS_NOTABLE_THRESHOLD = 12
 
 # ScoringEngine.NO_SALES_DATA_STRONG_RANK_DROPS / ScoringEngine's own
 # "Good confirmed sales (20+/month)" tier.

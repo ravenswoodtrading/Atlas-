@@ -106,7 +106,7 @@
             </thead>
             <tbody>
                 {% for item in items %}
-                <tr class="{{ 'table-success' if item.current_roi and item.current_roi > 25 }}">
+                <tr id="replen-{{ item.id }}" class="{{ 'table-success' if item.current_roi and item.current_roi > 25 }}">
                     <td style="max-width:240px;">
                         <div class="fw-semibold small">{{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}</div>
                         <div class="text-muted small">

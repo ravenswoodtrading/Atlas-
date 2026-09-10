@@ -45,9 +45,8 @@
              visible without digging through the rest of the panel. -->
         <div class="mt-1">
             <a href="https://www.amazon.co.uk/dp/{{ item.asin }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Amazon UK</a>
-            {% if item.va_info and item.va_info.source_url %}
-            <a href="{{ item.va_info.source_url }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Source listing</a>
-            {% endif %}
+            {% from "_source_listing_link.html" import source_listing_link %}
+            {{ source_listing_link(item, manual_candidate) }}
         </div>
         {% if item.action and item.freshness_caption %}
         {# Context for reading the rest of the card, not a claim the

@@ -1,12 +1,13 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Request, Form
+from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.scan_queue_service import ScanQueueService
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.product_repository import ProductRepository
+from app.services.scan_schedule_service import queue_rows, set_brand_tier, recent_runs, pending_reviews, TIERS
 
 router = APIRouter()
 
@@ -22,6 +23,9 @@ def _describe_tick(result: dict) -> str:
     """
     if result.get("skipped") == "paused":
         return "Automated scanning is paused -- nothing was run. Resume it first."
+
+    if result.get("skipped") == "no brands due":
+        return "No brands are due yet under their saved scan tiers."
 
     if result.get("skipped") == "queue empty":
         return "Queue is empty -- nothing to run."
@@ -59,33 +63,65 @@ def build_scan_queue_context(tick_result: str = "") -> dict:
     hub's "Automated" tab).
     """
     items = ScanQueueService.list_items()
-    performance = ProductRepository.get_brand_performance([item.brand for item in items])
+    paused = ScanQueueService.is_paused()
     cadence = ScanQueueService.estimate_cadence(len(items))
 
     return {
-        "items": items,
-        "performance": performance,
+        "items": queue_rows(items, paused),
+        "performance": {},
         "cadence": cadence,
-        "paused": ScanQueueService.is_paused(),
+        "paused": paused,
         "is_busy": ScanCoordinator.is_busy(),
         "tick_result": tick_result,
+        "pending_review_count": len(pending_reviews()),
     }
 
 
 @router.get("/scan-queue")
-def scan_queue_page(request: Request, tick_result: str = ""):
+def scan_queue_page(request: Request, tick_result: str = "", brand: str = ""):
     return templates.TemplateResponse(
         request=request,
         name="scan_queue.html",
-        context={"request": request, **build_scan_queue_context(tick_result)}
+        context={"request": request, "brand_prefill": brand, **build_scan_queue_context(tick_result)}
     )
 
 
 @router.post("/scan-queue/add")
 def scan_queue_add(brand: str = Form(...), category_ids: str = Form("")):
+    if not brand.strip():
+        raise HTTPException(422, "Enter a brand name")
     ids = [c.strip() for c in category_ids.split(",") if c.strip()] or None
     ScanQueueService.add_item(brand, category_ids=ids)
     return RedirectResponse(url="/scan-queue", status_code=303)
+
+
+@router.get("/scan-queue/brand/{item_id}")
+def scan_queue_brand(request: Request, item_id: int):
+    items = ScanQueueService.list_items()
+    item = next((i for i in items if i.id == item_id), None)
+    if item is None:
+        raise HTTPException(404, "Brand is no longer in the queue")
+    row = next(r for r in queue_rows(items, ScanQueueService.is_paused()) if r["brand"] == item.brand)
+    return templates.TemplateResponse(request=request, name="scan_brand_details.html", context={
+        "request": request, "row": row,
+        "performance": ProductRepository.get_brand_performance([item.brand]).get(item.brand, {}),
+        "runs": recent_runs(item.brand), "tiers": TIERS,
+        "recommendation": next((r for r in pending_reviews() if r.brand == item.brand), None),
+    })
+
+
+@router.post("/scan-queue/tier")
+def scan_queue_tier(item_id: int = Form(...), tier: str = Form(...)):
+    item = next((i for i in ScanQueueService.list_items() if i.id == item_id), None)
+    if item is None:
+        raise HTTPException(404, "Brand is no longer in the queue")
+    try:
+        set_brand_tier(item.brand, tier)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(409, str(exc))
+    return RedirectResponse(url=f"/scan-queue/brand/{item_id}", status_code=303)
 
 
 @router.post("/scan-queue/add-bulk")

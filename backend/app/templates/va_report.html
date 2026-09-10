@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% block title %}VA Reports - Atlas{% endblock %}
+
+{% block extra_head %}
+<style>
+.report-hero { background: linear-gradient(135deg, #172554, #1e3a8a); color: white; border-radius: 18px; }
+.metric-card { border: 1px solid #dbeafe; border-radius: 14px; height: 100%; box-shadow:0 5px 18px rgba(30,58,138,.07); transition:transform .15s ease,box-shadow .15s ease; }
+.metric-card:hover { transform:translateY(-2px); box-shadow:0 10px 24px rgba(30,58,138,.12); }
+.report-metrics > div:nth-child(4n+1) .metric-card { background:linear-gradient(135deg,#eff6ff,#dbeafe); border-color:#bfdbfe; }
+.report-metrics > div:nth-child(4n+2) .metric-card { background:linear-gradient(135deg,#ecfdf5,#d1fae5); border-color:#a7f3d0; }
+.report-metrics > div:nth-child(4n+3) .metric-card { background:linear-gradient(135deg,#fffbeb,#fef3c7); border-color:#fde68a; }
+.report-metrics > div:nth-child(4n+4) .metric-card { background:linear-gradient(135deg,#f5f3ff,#ede9fe); border-color:#ddd6fe; }
+.metric-number { font-size: 2rem; font-weight: 750; color: #0f172a; line-height: 1.05; }
+.report-panel { border: 1px solid #dbeafe; border-radius: 14px; box-shadow:0 5px 18px rgba(30,58,138,.05); background:linear-gradient(180deg,#fff,#f8fbff) !important; }
+.channel-bar { height: 8px; background: #e2e8f0; border-radius: 100px; overflow: hidden; }
+.channel-bar > span { display: block; height: 100%; border-radius: inherit; background: #2563eb; }
+.rating-ok { color: #0f766e; } .rating-good { color: #2563eb; } .rating-avoid { color: #b91c1c; }
+.trend-up { color:#15803d; } .trend-down { color:#b91c1c; } .trend-flat { color:#64748b; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid p-4 p-lg-5">
+  <div class="report-hero p-4 p-lg-5 mb-4">
+    <div class="d-flex flex-wrap justify-content-between gap-3 align-items-start">
+      <div>
+        <div class="text-uppercase small fw-semibold opacity-75 mb-2">Atlas reporting</div>
+        <h1 class="h2 mb-2">VA lead report</h1>
+        <p class="mb-0 opacity-75">A clear view of VA-sheet submissions, purchases and feedback for your weekly meeting.</p>
+      </div>
+      <form class="d-flex flex-wrap gap-2" method="get">
+        <input type="date" name="date_value" value="{{ anchor }}" class="form-control">
+        <input type="hidden" name="period" value="week">
+        <button class="btn btn-light fw-semibold">View report</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="d-flex align-items-baseline justify-content-between mb-3">
+    <h2 class="h4 mb-0">{{ period_label }}</h2>
+    <div><a class="btn btn-sm btn-outline-secondary" href="/reports/va?date_value={{ previous_start }}&period={{ period }}">← Previous week</a> <a class="btn btn-sm btn-outline-secondary" href="/reports/va?date_value={{ next_start }}&period={{ period }}">Next week →</a></div>
+  </div>
+
+  {% if sheet_error %}<div class="alert alert-warning">The VA sheet could not be reached right now. Please refresh in a moment.</div>{% endif %}
+
+  <div class="row g-3 mb-4 report-metrics">
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Leads submitted</div><div class="metric-number">{{ submitted }}</div><div class="small trend-{{ trends.submitted.direction }} mt-2">{{ '↑' if trends.submitted.direction == 'up' else '↓' if trends.submitted.direction == 'down' else '–' }} {{ trends.submitted.change|abs }} vs last week</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Leads bought</div><div class="metric-number">{{ bought }} <span class="fs-5 text-success">{{ bought_percent }}%</span></div><div class="small trend-{{ trends.bought.direction }} mt-2">{{ '↑' if trends.bought.direction == 'up' else '↓' if trends.bought.direction == 'down' else '–' }} {{ trends.bought.change|abs }} vs last week · {{ units_bought|round(0)|int }} units</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Total spend</div><div class="metric-number">£{{ '%.2f'|format(total_spend) }}</div><div class="small trend-{{ trends.total_spend.direction }} mt-2">{{ '↑' if trends.total_spend.direction == 'up' else '↓' if trends.total_spend.direction == 'down' else '–' }} £{{ '%.2f'|format(trends.total_spend.change|abs) }} vs last week</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Expected profit</div><div class="metric-number">£{{ '%.2f'|format(expected_profit) }}</div><div class="small trend-{{ trends.expected_profit.direction }} mt-2">{{ '↑' if trends.expected_profit.direction == 'up' else '↓' if trends.expected_profit.direction == 'down' else '–' }} £{{ '%.2f'|format(trends.expected_profit.change|abs) }} vs last week</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Units bought</div><div class="metric-number">{{ units_bought|round(0)|int }}</div><div class="small trend-{{ trends.units_bought.direction }} mt-2">{{ '↑' if trends.units_bought.direction == 'up' else '↓' if trends.units_bought.direction == 'down' else '–' }} {{ trends.units_bought.change|abs|round(0)|int }} vs last week</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Bought leads / working day</div><div class="metric-number">{{ '%.1f'|format(bought_per_working_day) }}</div><div class="small trend-{{ trends.bought_per_working_day.direction }} mt-2">{{ '↑' if trends.bought_per_working_day.direction == 'up' else '↓' if trends.bought_per_working_day.direction == 'down' else '–' }} {{ '%.1f'|format(trends.bought_per_working_day.change|abs) }} vs last week</div><div class="text-muted small mt-1">Based on five working days</div></div></div>
+    <div class="col-md-6 col-xl-3"><div class="metric-card bg-white p-4"><div class="text-muted small text-uppercase fw-semibold mb-2">Average lead value</div><div class="metric-number">£{{ '%.2f'|format(average_lead_value) }}</div><div class="small trend-{{ trends.average_lead_value.direction }} mt-2">{{ '↑' if trends.average_lead_value.direction == 'up' else '↓' if trends.average_lead_value.direction == 'down' else '–' }} £{{ '%.2f'|format(trends.average_lead_value.change|abs) }} vs last week</div><div class="text-muted small mt-1">Expected profit per submitted lead</div></div></div>
+  </div>
+
+  {% include '_va_price_drop.html' %}
+  <div class="row g-4">
+    <div class="col-xl-7">
+      <section class="report-panel bg-white p-4 mb-4">
+        <h2 class="h5 mb-1">Channel breakdown</h2>
+        <p class="text-muted small mb-4">Where leads came from, and the proportion that were bought.</p>
+        {% for channel in channels %}
+        <div class="mb-4">
+          <div class="d-flex justify-content-between mb-1"><strong>{{ channel.name }}</strong><span class="text-muted small">{{ channel.submitted }} submitted · {{ channel.bought }} bought ({{ channel.bought_percent }}%)</span></div>
+          <div class="channel-bar"><span style="width: {{ channel.submitted_percent }}%"></span></div>
+          <div class="text-muted small mt-1">{{ channel.submitted_percent }}% of submissions</div>
+        </div>
+        {% endfor %}
+      </section>
+
+      <section class="report-panel bg-white p-4">
+        <h2 class="h5 mb-1">Sourcing method used</h2>
+        <p class="text-muted small mb-3">How the VA found each lead, separate from its purchasing channel.</p>
+        {% if methods %}
+        <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr class="text-muted small"><th>Method</th><th>Submitted</th><th>Bought</th><th>Units</th><th>Spend</th><th>Expected profit</th></tr></thead><tbody>
+        {% for method in methods %}<tr><td class="fw-semibold">{{ method.name }}</td><td>{{ method.submitted }}</td><td>{{ method.bought }}</td><td>{{ method.units|round(0)|int }}</td><td>£{{ '%.2f'|format(method.spend) }}</td><td>£{{ '%.2f'|format(method.expected_profit) }}</td></tr>{% endfor %}
+        </tbody></table></div>
+        {% else %}<div class="text-muted small">No sourcing methods recorded for this period.</div>{% endif %}
+      </section>
+
+      <section class="report-panel bg-white p-4">
+        <h2 class="h5 mb-1">Weekly meeting notes</h2>
+        <p class="text-muted small">Plain-language takeaways generated from this period’s Atlas data.</p>
+        <ul class="mb-0 ps-3">
+          {% for note in commentary %}<li class="mb-2">{{ note }}</li>{% endfor %}
+        </ul>
+      </section>
+    </div>
+    <div class="col-xl-5">
+      <section class="report-panel bg-white p-4 mb-4">
+        <h2 class="h5 mb-3">VA ratings</h2>
+        <div class="row text-center g-2">
+          <div class="col-4"><div class="metric-number rating-ok">{{ ratings.Ok }}</div><div class="small text-muted">OK</div></div>
+          <div class="col-4"><div class="metric-number rating-good">{{ ratings.Good }}</div><div class="small text-muted">Good</div></div>
+          <div class="col-4"><div class="metric-number rating-avoid">{{ ratings.Avoid }}</div><div class="small text-muted">Avoid</div></div>
+        </div>
+      </section>
+      <section class="report-panel bg-white p-4">
+        <div class="d-flex justify-content-between gap-2"><div><h2 class="h5 mb-1">AI Avoid themes</h2><p class="text-muted small mb-3">Saved for this weekly meeting; never regenerated unless you ask.</p></div><form method="post" action="/reports/va/summary"><input type="hidden" name="period_start" value="{{ anchor }}"><button class="btn btn-sm btn-outline-primary">{{ 'Refresh' if ai_summary else 'Generate' }} summary</button></form></div>
+        {% if ai_summary %}<div class="small" style="white-space:pre-line">{{ ai_summary.summary_text }}</div><div class="text-muted small mt-3">Generated {{ ai_summary.generated_at.strftime('%-d %b %Y %H:%M') }}</div>{% else %}<div class="text-muted small">Generate a short theme summary instead of listing individual comments.</div>{% endif %}
+      </section>
+    </div>
+  </div>
+</div>
+{% endblock %}

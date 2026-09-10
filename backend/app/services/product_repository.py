@@ -21,13 +21,14 @@ class ProductRepository:
 
     # sales_drops_30d (Keepa's salesRankDrops30) at or above this
     # counts as evidence of sales when monthly_sales has no confirmed
-    # figure -- high enough to filter out a single stray rank
-    # fluctuation, low enough to still catch real-but-thin velocity.
-    SALES_DROPS_NOTABLE_THRESHOLD = 3
+    # figure. Twelve drops is the minimum owner-approved velocity for
+    # the Buy Now queue; thinner evidence remains available in Verify.
+    SALES_DROPS_NOTABLE_THRESHOLD = 12
+    VERIFY_SALES_DROPS_THRESHOLD = 3
 
     @staticmethod
     def is_notable(recommendation: str, monthly_sales: int, roi: float, roi_90d: float,
-                    sales_drops_30d: int = 0) -> bool:
+                    sales_drops_30d: int = 0, unit_price: float = 0.0) -> bool:
         """
         "Worth a look" bar shared by list_latest's "notable" filter,
         the Dashboard's star-buy/BUY counters, and
@@ -82,7 +83,13 @@ class ProductRepository:
             return False
 
         has_sales_evidence = monthly_sales > 0 or sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
-        return recommendation == "BUY" or (has_sales_evidence and (roi > 25 or roi_90d > 25))
+        minimum_roi = 20 if unit_price > 100 or monthly_sales > 100 else 25
+        return has_sales_evidence and (roi >= minimum_roi or roi_90d >= minimum_roi)
+
+    @staticmethod
+    def has_verify_sales_evidence(monthly_sales: int, sales_drops_30d: int) -> bool:
+        """Minimum evidence for Verify: confirmed sales or 3 Keepa drops."""
+        return monthly_sales > 0 or sales_drops_30d >= ProductRepository.VERIFY_SALES_DROPS_THRESHOLD
 
     @staticmethod
     def save_opportunity(product_dict: dict, report_dict: dict, brand_query: str):
@@ -169,23 +176,26 @@ class ProductRepository:
         """
         db = SessionLocal()
         try:
-            all_records = (
+            # Let SQLite discard historical duplicates before ORM hydration.
+            # The old path loaded every ProductRecord into Python and then
+            # deduplicated it, which made Review Queue slower as scan history
+            # grew. A window query returns only one row per ASIN.
+            ranked = db.query(
+                ProductRecord.id,
+                func.row_number().over(
+                    partition_by=ProductRecord.asin,
+                    order_by=(ProductRecord.scanned_at.desc(), ProductRecord.id.desc()),
+                ).label('rn'),
+            ).subquery()
+            latest_ids = [row.id for row in db.query(ranked.c.id).filter(ranked.c.rn == 1).all()]
+            if not latest_ids:
+                return []
+            return (
                 db.query(ProductRecord)
+                .filter(ProductRecord.id.in_(latest_ids))
                 .order_by(ProductRecord.scanned_at.desc())
                 .all()
             )
-
-            seen = set()
-            latest = []
-
-            for record in all_records:
-                if record.asin in seen:
-                    continue
-
-                seen.add(record.asin)
-                latest.append(record)
-
-            return latest
         finally:
             db.close()
 
@@ -265,7 +275,8 @@ class ProductRepository:
             latest = [
                 r for r in latest if not r.review
                 and ProductRepository.is_notable(
-                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
+                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d,
+                    r.buy_box_now
                 )
             ]
         elif review_filter == "consider":
@@ -285,13 +296,15 @@ class ProductRepository:
             # "peak" is: is_notable() explicitly excludes it (see
             # that method's own comment), so it would never surface
             # via "notable" no matter how good its ROI looks.
-            latest = [r for r in latest if not r.review and r.recommendation == "LOW_CONFIDENCE"]
+            latest = [r for r in latest if not r.review and r.recommendation == "LOW_CONFIDENCE"
+                      and ProductRepository.has_verify_sales_evidence(r.monthly_sales, r.sales_drops_30d)]
         elif review_filter == "low_score":
             # Genuinely viable leads with real sales evidence a weak
             # composite score knocked out of CONSIDER/BUY -- see
             # OpportunityEngine.analyse's LOW_SCORE branch
             # (2026-09-03). Same reasoning as "low_confidence" above.
-            latest = [r for r in latest if not r.review and r.recommendation == "LOW_SCORE"]
+            latest = [r for r in latest if not r.review and r.recommendation == "LOW_SCORE"
+                      and ProductRepository.has_verify_sales_evidence(r.monthly_sales, r.sales_drops_30d)]
         elif review_filter == "any":
             latest = [r for r in latest if not r.review]
         elif review_filter == "consider_worthwhile":
@@ -302,10 +315,11 @@ class ProductRepository:
                 and (r.profit > 0 or r.profit_90d > 0)
                 and (
                     r.monthly_sales > 0
-                    or r.sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
+                    or r.sales_drops_30d >= ProductRepository.VERIFY_SALES_DROPS_THRESHOLD
                 )
                 and not ProductRepository.is_notable(
-                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d
+                    r.recommendation, r.monthly_sales, r.roi, r.roi_90d, r.sales_drops_30d,
+                    r.buy_box_now
                 )
             ]
 

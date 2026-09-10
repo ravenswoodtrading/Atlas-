@@ -38,7 +38,7 @@ from app.routes import (
     categories, scan_queue, replen, competitors, review_queue, oa_lookup,
     verdict, leads, signals, oa_source_discovery, help as help_route,
     token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
-    scan_intelligence,
+    scan_intelligence, reports, actual_performance, va_performance,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -72,6 +72,11 @@ async def _scan_queue_scheduler():
             # BrandScanService.scan() makes blocking HTTP calls (via the
             # keepa library) -- run it off the event loop so it can't
             # stall every other request while a tick is in flight.
+            from app.services.scan_schedule_service import refresh_weekly_reviews
+            try:
+                await asyncio.to_thread(refresh_weekly_reviews)
+            except Exception as exc:
+                print(f"Weekly scan review failed (scanning continues): {exc}")
             result = await asyncio.to_thread(ScanQueueService.run_next_tick)
             summary = result.get("skipped") or result.get("error") or (
                 f"{result.get('brand', '?')}: {result.get('asins_scanned_this_tick', 0)} ASINs"
@@ -145,16 +150,24 @@ OA_ARCHIVE_STALE_DAYS = 14
 
 async def _weekly_recheck_scheduler():
     while True:
+        retry_delay = WEEKLY_RECHECK_TICK_SECONDS
         try:
             # Same non-blocking "skip if a manual scan is already
             # running" priority rule as the other automated ticks --
             # this is a safety net for whatever the user HASN'T
             # manually checked recently, so it should never compete
             # with something they're actively doing right now.
-            if ScanCoordinator.try_acquire_for_automated_tick():
+            acquired = ScanCoordinator.try_acquire_for_automated_tick()
+            if not acquired:
+                retry_delay = 60
+            if acquired:
                 try:
                     watch_result = await asyncio.to_thread(WatchlistService.check_stale, WEEKLY_RECHECK_STALE_HOURS)
-                    replen_result = await asyncio.to_thread(ReplenService.check_stale, WEEKLY_RECHECK_STALE_HOURS)
+                    try:
+                        await asyncio.to_thread(ReplenService.import_uploaded_actuals)
+                    except Exception:
+                        print('STK replen import unavailable; continuing scheduled checks of existing items.')
+                    replen_result = await asyncio.to_thread(ReplenService.check_stale, 24)
                     # Added 2026-09-04, same scheduler/window -- see
                     # ReviewQueueService.recheck_stale_items' own
                     # docstring for the full reasoning (Tamara's own
@@ -250,8 +263,9 @@ async def _weekly_recheck_scheduler():
                 await asyncio.to_thread(ActivityLog.record, "oa_archive", f"{archived} stale OA/unclear listing(s) archived")
         except Exception as exc:
             print(f"Weekly recheck tick failed: {exc}")
+            retry_delay = 60
 
-        await asyncio.sleep(WEEKLY_RECHECK_TICK_SECONDS)
+        await asyncio.sleep(retry_delay)
 
 
 # How often the lead-analysis background worker checks for VA-submitted
@@ -511,25 +525,29 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         print(f"Verdict run reconciliation failed (non-fatal): {exc}")
 
-    scan_queue_task = asyncio.create_task(_scan_queue_scheduler())
-    seller_watch_task = asyncio.create_task(_seller_watch_scheduler())
-    weekly_recheck_task = asyncio.create_task(_weekly_recheck_scheduler())
-    lead_analysis_task = asyncio.create_task(_lead_analysis_scheduler())
-    va_lead_sheet_task = asyncio.create_task(_va_lead_sheet_scheduler())
-    signal_task = asyncio.create_task(_signal_scheduler())
-    eu_a2a_freshness_task = asyncio.create_task(_eu_a2a_freshness_scheduler())
-    inventory_cleanup_task = asyncio.create_task(_inventory_cleanup_scheduler())
-    storage_fee_task = asyncio.create_task(_storage_fee_scheduler())
+    # A local preview should be able to load the real UI and database
+    # without immediately starting every Keepa, Sheets and SP-API job.
+    # This is opt-in via preview.bat; normal run.bat leaves the variable
+    # unset, so Atlas automation keeps its existing behaviour.
+    automation_enabled = os.getenv("ATLAS_AUTOMATION_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off"}
+    background_tasks = []
+    if automation_enabled:
+        background_tasks = [
+            asyncio.create_task(_scan_queue_scheduler()),
+            asyncio.create_task(_seller_watch_scheduler()),
+            asyncio.create_task(_weekly_recheck_scheduler()),
+            asyncio.create_task(_lead_analysis_scheduler()),
+            asyncio.create_task(_va_lead_sheet_scheduler()),
+            asyncio.create_task(_signal_scheduler()),
+            asyncio.create_task(_eu_a2a_freshness_scheduler()),
+            asyncio.create_task(_inventory_cleanup_scheduler()),
+            asyncio.create_task(_storage_fee_scheduler()),
+        ]
+    else:
+        print("Atlas preview mode: background automation is paused.")
     yield
-    scan_queue_task.cancel()
-    seller_watch_task.cancel()
-    weekly_recheck_task.cancel()
-    lead_analysis_task.cancel()
-    va_lead_sheet_task.cancel()
-    signal_task.cancel()
-    eu_a2a_freshness_task.cancel()
-    inventory_cleanup_task.cancel()
-    storage_fee_task.cancel()
+    for task in background_tasks:
+        task.cancel()
 
 
 app = FastAPI(title="Atlas", lifespan=lifespan)
@@ -544,6 +562,8 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 # touching existing ones. The old 'products' table (incompatible legacy
 # schema) is left alone -- product_records is a separate table.
 Base.metadata.create_all(bind=engine)
+from app.database.reporting_schema import migrate_reporting_schema
+migrate_reporting_schema(engine)
 
 
 @app.middleware("http")
@@ -591,6 +611,9 @@ app.include_router(leads.router)
 app.include_router(signals.router)
 app.include_router(oa_source_discovery.router)
 app.include_router(scan_intelligence.router)
+app.include_router(reports.router)
+app.include_router(actual_performance.router)
+app.include_router(va_performance.router)
 app.include_router(help_route.router)
 app.include_router(token_usage.router)
 app.include_router(criteria.router)

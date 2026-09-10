@@ -70,6 +70,55 @@ class ReplenService:
     """
 
     @staticmethod
+    def import_uploaded_actuals():
+        """Idempotently add proven Amazon-sourced winners from shared STK data."""
+        import csv
+        import io
+        from collections import defaultdict
+        from app.database.models import VaSalesLine, AmazonInventoryLedgerLine
+        from app.services.google_sheets_client import open_sheet
+        from app.services.va_performance_service import PURCHASING_SHEET_URL
+        values = open_sheet(PURCHASING_SHEET_URL).worksheet('Buy Sheet').get_all_values()
+        stream = io.StringIO()
+        csv.writer(stream).writerows([r[:16] + [''] * max(0, 16-len(r)) for r in values])
+        stream.seek(0)
+        purchases = ReplenService.parse_buy_sheet(stream)
+        # Mixed OA/A2A purchase histories cannot establish A2A performance.
+        mixed = {r[2].strip().upper() for r in values[1:] if len(r)>14 and 'amazon' not in r[14].lower()}
+        totals = defaultdict(lambda: dict(units=0, profit=0., cog=0., missing=False))
+        with SessionLocal() as db:
+            returned = {r.asin.strip().upper() for r in db.query(AmazonInventoryLedgerLine).filter(
+                AmazonInventoryLedgerLine.customer_returns > 0).all()}
+            for row in db.query(VaSalesLine).all():
+                item = totals[row.asin.strip().upper()]
+                item['units'] += row.units
+                item['profit'] += row.profit
+                item['cog'] += row.cog or 0
+                item['missing'] |= row.cog is None
+            removed = []
+            for entry in db.query(ReplenItem).all():
+                if entry.asin in returned and (entry.notes or '').startswith('Added from uploaded STK actuals:'):
+                    removed.append(entry.asin)
+                    db.delete(entry)
+            db.flush()
+            existing = {r.asin for r in db.query(ReplenItem).all()}
+            added = []
+            for asin, purchase in purchases.items():
+                item = totals.get(asin)
+                if asin in existing or asin in mixed or asin in returned or not item or item['missing'] or item['units'] <= 0 or item['cog'] <= 0:
+                    continue
+                roi = 100 * item['profit'] / item['cog']
+                if roi < 20:
+                    continue
+                db.add(ReplenItem(asin=asin, title=purchase['title'], brand=purchase['brand'],
+                    category=purchase['category'], source_store=purchase['store'],
+                    achieved_roi=roi, achieved_units=item['units'],
+                    notes='Added from uploaded STK actuals: achieved ROI >=20%; Amazon purchase history only; no recorded ledger customer returns.'))
+                added.append(asin)
+            db.commit()
+        return {'added': len(added), 'asins': added, 'removed_returned': removed}
+
+    @staticmethod
     def parse_buy_sheet(file_path: str) -> dict:
         """
         Returns {asin: {store, cost, date, title, brand, category}} for

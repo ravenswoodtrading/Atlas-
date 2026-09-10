@@ -1,0 +1,13 @@
+{% macro source_listing_link(item, manual_candidate=none) %}
+{% set source = namespace(url='') %}
+{% if item.va_info and item.va_info.source_url %}{% set source.url = item.va_info.source_url|trim %}
+{% elif item.source_url %}{% set source.url = item.source_url|trim %}
+{% elif manual_candidate and manual_candidate.retailer_url %}{% set source.url = manual_candidate.retailer_url|trim %}
+{% elif item.best_source_marketplace in ['UK','DE','FR','ES','IT'] %}
+{% set domains = {'UK':'co.uk','DE':'de','FR':'fr','ES':'es','IT':'it'} %}
+{% set source.url = 'https://www.amazon.' ~ domains[item.best_source_marketplace] ~ '/dp/' ~ item.asin %}
+{% endif %}
+{% if source.url|lower is string and (source.url|lower).startswith(('https://','http://')) %}
+<a href="{{ source.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Source listing ↗</a>
+{% else %}<span class="small text-muted">Source URL not recorded</span>{% endif %}
+{% endmacro %}

@@ -63,6 +63,14 @@ class ProductFinder:
             # typically brand-new or barely-tracked listings, not
             # genuine candidates either way.
             "current_SALES_gte": 1,
+            # Brand discovery only: UK prices are in pence. COUNT_NEW
+            # is offer-count history, not distinct sellers or gating proof.
+            # https://keepa.com/api-docs/product-finder.html
+            "current_BUY_BOX_SHIPPING_gte": 1000,
+            "avg90_COUNT_NEW_gte": 3,
+            # Whole-percent Finder ceiling: exclude 97%+ ownership by
+            # any seller (Amazon included), without another product call.
+            "buyBoxStatsTopSeller90_lte": 96,
             # Best-sellers first. Amazon/Keepa sales rank convention:
             # rank 1 = best seller in its category, so ascending order
             # on current_SALES is lowest-rank-number-first = strongest

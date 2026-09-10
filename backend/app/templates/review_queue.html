@@ -2,6 +2,106 @@
 
 {% block title %}Review Queue - Atlas{% endblock %}
 
+{% block extra_head %}
+<style>
+/* Review Queue UX pass: the queue is a decision workspace, not a data dump.
+   Keep the recommendation and the next action visually ahead of supporting
+   evidence, while preserving every existing data point in the row or detail
+   panel. */
+.qi-guidance {
+    background: #eef6ff;
+    border: 1px solid #cfe2ff;
+    border-radius: 12px;
+    color: #24466d;
+}
+.qi-row {
+    border: 1px solid #e5e7eb;
+    transition: box-shadow .15s ease, border-color .15s ease;
+}
+.qi-row:hover {
+    border-color: #cbd5e1;
+    box-shadow: 0 5px 16px rgba(15, 23, 42, .07);
+}
+.qi-row .qi-open-btn:focus-visible,
+.qi-row .qi-open-btn:hover .fw-semibold {
+    color: #0d6efd;
+}
+.qi-action-bar {
+    gap: .4rem !important;
+}
+.qi-action-bar .btn {
+    white-space: nowrap;
+}
+.qi-source-label {
+    color: #64748b;
+    font-size: .72rem;
+    font-weight: 600;
+}
+.qi-stat-strip {
+    background: #f8fafc;
+    border-radius: 9px;
+    padding: .7rem .8rem;
+}
+.qi-stat-label {
+    color: #64748b;
+    font-size: .69rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.qi-workflows {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(150px, 1fr));
+    gap: .65rem;
+}
+.qi-workflow-card {
+    display: block;
+    min-height: 100%;
+    padding: .8rem .85rem;
+    border: 1px solid #dbe2ea;
+    border-radius: 12px;
+    background: #fff;
+    color: #334155;
+    text-decoration: none;
+    transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.qi-workflow-card:hover {
+    color: #1e3a5f;
+    border-color: #93c5fd;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
+    transform: translateY(-1px);
+}
+.qi-workflow-card.active {
+    background: #eff6ff;
+    border: 2px solid #2563eb;
+    padding: calc(.8rem - 1px) calc(.85rem - 1px);
+    color: #163b6d;
+}
+.qi-workflow-title {
+    font-size: .8rem;
+    font-weight: 800;
+    letter-spacing: .025em;
+    text-transform: uppercase;
+}
+.qi-workflow-description {
+    margin-top: .2rem;
+    color: #64748b;
+    font-size: .73rem;
+    line-height: 1.25;
+}
+.qi-workflow-card.active .qi-workflow-description { color: #315d92; }
+@media (max-width: 1199.98px) {
+    .qi-workflows { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 767.98px) {
+    .qi-action-bar { width: 100%; }
+    .qi-action-bar .btn { flex: 1; }
+    .qi-stat-strip { gap: .65rem !important; }
+    .qi-workflows { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+{% endblock %}
+
 {% block content %}
 {% set flags = {"UK": "🇬🇧", "DE": "🇩🇪", "FR": "🇫🇷", "ES": "🇪🇸", "IT": "🇮🇹"} %}
 {% set view_style = {
@@ -60,6 +160,14 @@
     {% endif %}
 </div>
 
+<div class="qi-guidance small px-3 py-2 mb-3">
+    <i class="bi bi-arrow-right-circle-fill me-1"></i>
+    <strong>Work one item at a time:</strong> open an item to check its evidence, then record Buy or Reject. Your decision is saved immediately and can be undone.
+    {% if monitor_count %}
+    <span class="ms-1">{{ monitor_count }} non-actionable item{{ "s" if monitor_count != 1 }} stay in Atlas monitoring and are kept out of this decision list.</span>
+    {% endif %}
+</div>
+
 {% if view == "oa_investigate" %}
 {# Real confusion found live, 2026-09-07 (Tamara: "these queues look
    to have different items are they both the same?") -- see the
@@ -72,20 +180,33 @@
 </div>
 {% endif %}
 
-<!-- Primary filter: workflow views (section 20) -->
-<ul class="nav nav-pills mb-2 flex-wrap" style="gap:.35rem;">
-    {% for v in ["all", "buy_now", "va_to_review", "borderline", "needs_attention", "oa_investigate"] %}
-    <li class="nav-item">
-        <a class="nav-link {{ 'active' if view == v }}"
-           href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}&marketplace={{ marketplace }}&competitor={{ competitor }}">
-            {{ view_labels[v] }}
-            <span class="badge {{ 'bg-light text-dark' if view != v else 'bg-white text-dark' }} ms-1">
-                {{ unique_total if v == "all" else summary.get(v, 0) }}
-            </span>
-        </a>
-    </li>
+<!-- Primary workflow selector: these are queues with a purpose, not
+     lightweight filters, so give each one enough space to explain the
+     next action before the user opens it. -->
+{% set workflow_descriptions = {
+    "all": "Every item that needs a decision",
+    "buy_now": "Ready to act on now",
+    "va_to_review": "Submitted by your VA",
+    "borderline": "Check one key point first",
+    "oa_investigate": "Find a confirmed retailer source",
+} %}
+{% set workflow_icons = {
+    "all": "bi-inboxes-fill", "buy_now": "bi-cart-check-fill",
+    "va_to_review": "bi-people-fill", "borderline": "bi-patch-question-fill",
+    "oa_investigate": "bi-search-heart-fill",
+} %}
+<div class="qi-workflows mb-3">
+    {% for v in ["all", "buy_now", "va_to_review", "borderline", "oa_investigate"] %}
+    <a class="qi-workflow-card {{ 'active' if view == v }}"
+       href="?view={{ v }}&source={{ source }}&sort={{ sort }}&q={{ q }}&marketplace={{ marketplace }}&competitor={{ competitor }}&reason={{ reason }}">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+            <div class="qi-workflow-title"><i class="bi {{ workflow_icons[v] }} me-1"></i>{{ view_labels[v] }}</div>
+            <span class="badge {{ 'bg-primary' if view == v else 'bg-light text-dark border' }}">{{ unique_total if v == "all" else summary.get(v, 0) }}</span>
+        </div>
+        <div class="qi-workflow-description">{{ workflow_descriptions[v] }}</div>
+    </a>
     {% endfor %}
-</ul>
+</div>
 
 <!-- Secondary controls: search / source / sort (UI redesign pass, 2026-09-03) -->
 <form method="get" action="/review-queue" class="row g-2 align-items-center mb-3">
@@ -121,6 +242,14 @@
         </select>
     </div>
     <div class="col-6 col-md-2">
+        <select name="reason" class="form-select form-select-sm" onchange="this.form.submit()">
+            <option value="all">Reason: All</option>
+            {% for value, label in reason_options.items() %}
+            <option value="{{ value }}" {{ "selected" if reason == value }}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md-2">
         <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
             {% for value, label in sort_labels.items() %}
             <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
@@ -139,6 +268,10 @@
 </div>
 {% endif %}
 
+<div class="d-flex justify-content-between align-items-center mb-2 small text-muted">
+    <span>Showing {{ page_start }}–{{ page_end }} of {{ filtered_total }} matching items</span>
+    {% if page_count > 1 %}<span>Page {{ page }} of {{ page_count }}</span>{% endif %}
+</div>
 <div id="qi-list">
 {% for item in items %}
 <div class="card mb-2 qi-row" style="border-radius:12px;" data-row-asin="{{ item.asin }}">
@@ -158,6 +291,7 @@
                 <div>
                     <div class="fw-semibold">
                         {{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}
+                        {% if view == "borderline" or view == "all" %}<span class="badge rounded-pill text-bg-warning ms-1">{{ reason_options.get(item_reason(item), "Needs review") }}</span>{% endif %}
                     </div>
                     <div class="text-muted small">
                         {{ item.asin }}
@@ -228,13 +362,16 @@
                         <span class="badge" style="background:#475569;color:#fff;" title="This ASIN has appeared on the VA Lead Sheet before."><i class="bi bi-clock-history"></i> Seen on VA sheet before</span>
                         {% endif %}
                         {% for src in item.sources %}
-                        <span class="badge bg-light text-dark border">{{ source_type_labels[src] }}</span>
+                        <span class="qi-source-label">{{ source_type_labels[src] }}</span>
                         {% endfor %}
                     </div>
                 </div>
             </div>
 
-            <div class="d-flex align-items-start flex-shrink-0" style="gap:.35rem;">
+            <div class="d-flex align-items-start flex-shrink-0 qi-action-bar">
+                <button type="button" class="btn btn-sm btn-primary qi-open-btn" data-asin="{{ item.asin }}">
+                    <i class="bi bi-eye"></i> Review
+                </button>
                 <button type="button" class="btn btn-sm btn-outline-success qi-buy-btn" data-asin="{{ item.asin }}">
                     <i class="bi bi-check-lg"></i> Buy
                 </button>
@@ -256,12 +393,6 @@
                         {% endfor %}
                     </ul>
                 </div>
-                <div class="dropdown">
-                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"></button>
-                    <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item qi-open-btn" href="#" data-asin="{{ item.asin }}"><i class="bi bi-eye"></i> More info</a></li>
-                    </ul>
-                </div>
             </div>
         </div>
 
@@ -272,9 +403,9 @@
              A grid with auto-fit + 1fr columns makes every cell share
              the row's REAL width evenly, still wrapping naturally on a
              narrow/mobile screen the same as before. -->
-        <div class="small mt-2" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(90px, 1fr));gap:1rem;">
+        <div class="small mt-2 qi-stat-strip" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(90px, 1fr));gap:1rem;">
             <div>
-                <div class="text-muted">Source</div>
+                <div class="qi-stat-label">Source</div>
                 <div>
                     {% if item.best_source_marketplace %}
                         {{ flags.get(item.best_source_marketplace, "") }} {{ item.best_source_marketplace }}
@@ -284,7 +415,7 @@
                 </div>
             </div>
             <div>
-                <div class="text-muted">Buy price</div>
+                <div class="qi-stat-label">Cost</div>
                 {% if item.oa_price_guide and not item.best_source_marketplace %}
                 {# OA Source Discovery (2026-09-05) -- no confirmed source,
                    so a real "£0.00 buy price" would misread as "sourced
@@ -298,7 +429,7 @@
                 {% endif %}
             </div>
             <div>
-                <div class="text-muted">Amazon price</div>
+                <div class="qi-stat-label">Sell price</div>
                 <div>{{ "£%.2f"|format(item.buy_box_now) if item.buy_box_now else "--" }}</div>
                 {# VA's own expected sale price (2026-09-07, Tamara: "we
                    need to add VA expected sales price on the leads") --
@@ -321,7 +452,7 @@
                    Atlas checked and found zero. The VA's own figure is
                    shown as its own separate, clearly-labelled line below,
                    never blended into this number again. #}
-                <div class="text-muted">Profit (today)</div>
+                <div class="qi-stat-label">Profit today</div>
                 {% if item.profit is none %}
                 <div class="text-muted">-- <span style="font-size:.75em;">not yet analyzed</span></div>
                 {% else %}
@@ -343,7 +474,7 @@
                 {% endif %}
             </div>
             <div>
-                <div class="text-muted">ROI (today)</div>
+                <div class="qi-stat-label">ROI today</div>
                 {% if item.roi is none %}
                 <div class="text-muted">--</div>
                 {% else %}
@@ -366,7 +497,7 @@
                  "nothing confirms this sells" is itself a real risk this
                  row was previously making easy to skim past. -->
             <div>
-                <div class="text-muted">Sales</div>
+                <div class="qi-stat-label">Sales proof</div>
                 <div class="fw-semibold {{ 'text-success' if item.monthly_sales else ('text-warning' if item.sales_drops_30d else 'text-danger') }}">
                     {% if item.monthly_sales %}
                         <i class="bi bi-graph-up-arrow"></i> {{ item.monthly_sales }}/mo
@@ -378,14 +509,23 @@
                 </div>
             </div>
             <div>
-                <div class="text-muted" title="This is the most recent scan/detection date, not when the lead was first found -- a recheck resets this.">Last checked</div>
+                <div class="qi-stat-label" title="This is the most recent scan/detection date, not when the lead was first found -- a recheck resets this.">Checked</div>
                 <div>{{ item.when | ago }}</div>
             </div>
         </div>
     </div>
 </div>
+
 {% endfor %}
 </div>
+
+{% if page_count > 1 %}
+<nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Review Queue pages">
+    {% if previous_url %}<a class="btn btn-outline-secondary btn-sm" href="{{ previous_url }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-muted">Page {{ page }} of {{ page_count }}</span>
+    {% if next_url %}<a class="btn btn-outline-secondary btn-sm" href="{{ next_url }}">Next</a>{% else %}<span></span>{% endif %}
+</nav>
+{% endif %}
 
 <!-- Shared detail panel -- content loaded per-item via /review-queue/item/{asin},
      rather than rendering every row's full detail inline (section 14). -->

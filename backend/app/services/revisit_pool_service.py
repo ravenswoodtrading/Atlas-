@@ -135,11 +135,12 @@ class RevisitPoolService:
 
         was_notable = ProductRepository.is_notable(
             prev.recommendation, prev.monthly_sales or 0, prev.roi or 0, prev.roi_90d or 0,
-            prev.sales_drops_30d or 0,
+            prev.sales_drops_30d or 0, prev.buy_box_now or 0,
         )
         is_notable_fresh = ProductRepository.is_notable(
             fresh_record.recommendation, fresh_record.monthly_sales or 0, fresh_record.roi or 0,
             fresh_record.roi_90d or 0, fresh_record.sales_drops_30d or 0,
+            fresh_record.buy_box_now or 0,
         )
         recovered = is_notable_fresh and not was_notable
 

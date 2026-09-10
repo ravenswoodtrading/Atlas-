@@ -1,12 +1,18 @@
 {% extends "base.html" %}
-{% from "_scan_queue_content.html" import scan_queue_content %}
-
 {% block title %}Scan Queue - Atlas{% endblock %}
-
-{% block extra_head %}
-<meta http-equiv="refresh" content="20">
-{% endblock %}
-
+{% block extra_head %}<style>.sq-table td,.sq-table th{padding:.42rem .7rem;white-space:nowrap;font-size:.875rem}.sq-table th{color:#61738c;font-weight:600}.sq-table{margin:0}.sq-shell{border:1px solid #dce6f1;border-radius:12px;background:white;overflow:hidden}</style>{% endblock %}
 {% block content %}
-{{ scan_queue_content(items, performance, cadence, paused, is_busy, tick_result) }}
+<div class="p-3 p-lg-4">
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+ <div><h1 class="h4 mb-1">Scan Queue <span class="text-muted small">{{ items|length }} brands</span></h1><span class="small text-muted">{{ 'Paused' if paused else 'Scan running' if is_busy else 'Active' }} Â· Regular brands rotate continuously; less regular brands wait four queue rotations.</span></div>
+ <div class="d-flex gap-2"><a class="btn btn-sm btn-outline-secondary" href="/scan-intelligence">Scan Intelligence{% if pending_review_count %} Â· {{ pending_review_count }} to review{% endif %}</a><button class="btn btn-sm btn-dark" data-bs-toggle="collapse" data-bs-target="#add-brand">Add brand</button><form method="post" action="/scan-queue/{{ 'resume' if paused else 'pause' }}"><button class="btn btn-sm btn-outline-secondary">{{ 'Resume' if paused else 'Pause' }}</button></form><form method="post" action="/scan-queue/run-now"><button class="btn btn-sm btn-outline-secondary" {{ 'disabled' if paused or is_busy }}>Run one now</button></form></div>
+</div>
+{% if tick_result %}<div class="alert alert-info py-2">{{ tick_result }}</div>{% endif %}
+<div class="collapse {{ 'show' if brand_prefill }} mb-3" id="add-brand"><div class="card p-3"><form method="post" action="/scan-queue/add" class="d-flex flex-wrap gap-2 align-items-end"><div><label for="brand" class="form-label small">Brand</label><input id="brand" class="form-control form-control-sm" name="brand" value="{{ brand_prefill or '' }}" required></div><div><label for="categories" class="form-label small">Category IDs (optional)</label><input id="categories" class="form-control form-control-sm" name="category_ids"></div><button class="btn btn-sm btn-dark">Add brand</button></form><details class="mt-3"><summary class="small">Add multiple brands</summary><form method="post" action="/scan-queue/add-bulk" class="mt-2"><label for="brands" class="form-label small">One brand per line, or separated by commas</label><textarea id="brands" name="brands" class="form-control mb-2" rows="3" required></textarea><button class="btn btn-sm btn-dark">Add all</button></form></details></div></div>
+<div class="sq-shell table-responsive"><table class="table table-hover align-middle sq-table"><thead><tr><th scope="col">Brand</th><th scope="col">Tier</th><th scope="col">Products after filters</th><th scope="col">Last scanned (UTC)</th><th scope="col">Full catalogue pass (UTC)</th><th scope="col">Next scan</th><th scope="col">Details</th></tr></thead><tbody>
+{% for row in items %}<tr><td class="fw-semibold">{{ row.brand }}</td><td>{{ 'Regular' if row.tier == 'regular' else 'Less regular' }}</td><td>{{ '{:,}'.format(row.filtered_count) if row.filtered_count is not none else 'Not recorded' }}</td><td>{{ row.last_run_at.strftime('%d %b %H:%M') if row.last_run_at else 'Never' }}</td><td>{{ row.last_full_pass_at.strftime('%d %b %H:%M') if row.last_full_pass_at else 'Not recorded' }}</td><td>{{ row.next_scan }}</td><td><a href="/scan-queue/brand/{{ row.id }}" aria-label="Details for {{ row.brand }}">Details â†’</a></td></tr>
+{% else %}<tr><td colspan="7" class="text-muted p-4">No brands queued. Add a brand to begin scanning.</td></tr>{% endfor %}
+</tbody></table></div>
+<p class="small text-muted mt-2">Catalogue sizes are observed at the end of a filtered catalogue traversal. Timing is approximate and depends on tokens and other scans. <a href="/scan-queue">Refresh status</a></p>
+</div>
 {% endblock %}
