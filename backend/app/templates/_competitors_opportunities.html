@@ -98,9 +98,22 @@
 </form>
 
 {% if view != "all" %}
-<div class="mb-3 small">
-    <span class="badge bg-light text-dark border">{{ view_labels.get(view, view) }}</span>
-    <a href="/competitors?tab=opportunities&source={{ source }}" class="text-decoration-none ms-1">Clear filter &times;</a>
+<div class="mb-3 small d-flex align-items-center justify-content-between">
+    <div>
+        <span class="badge bg-light text-dark border">{{ view_labels.get(view, view) }}</span>
+        <a href="/competitors?tab=opportunities&source={{ source }}" class="text-decoration-none ms-1">Clear filter &times;</a>
+    </div>
+    {% if view == "oa_investigate" %}
+    <!-- Same export the Review Queue's OA to Investigate view already offers
+         (oa_export_service.py) -- reused verbatim rather than a second copy,
+         since it's the exact same list_oa_worth_investigating dataset this
+         view itself renders. Clean ASIN/EAN/brand/title/Amazon-URL columns,
+         no styling ceremony -- built to be fed straight into an AI sourcing
+         search, not just read on screen. -->
+    <a href="/review-queue/oa-investigate/export.xlsx" class="btn btn-sm btn-outline-dark">
+        <i class="bi bi-download"></i> Export for OA Research
+    </a>
+    {% endif %}
 </div>
 {% endif %}
 
