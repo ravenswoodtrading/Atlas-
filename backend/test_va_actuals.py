@@ -61,8 +61,47 @@ class AllocationTests(unittest.TestCase):
         self.assertEqual(b['purchased_on'], D('2026-04-02'))
         self.assertEqual(b['comments'], 'Risky')
         self.assertFalse(purchase_rows([lead], [buy, buy])[0]['issue'])
-        other = dict(buy, **{'Date Ordered': '03 Apr 26'})
-        self.assertTrue(purchase_rows([lead], [buy, other])[0]['issue'])
+
+    def test_repeat_asin_purchases_queue_fifo(self):
+        # Tamara, 2026-09-10: "If the ASIN appears more than once just
+        # attribute to the item that sells first" -- don't try to prove
+        # which write-up caused which order; with one lead and two Buy
+        # Sheet orders, take the EARLIEST eligible order rather than
+        # bailing out as ambiguous (the old behaviour this replaces).
+        lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'£12', 'Expected Profit':'3'}
+        earlier = {'ASIN':'B000000001', 'Date Ordered':'02 Apr 26'}
+        later = {'ASIN':'B000000001', 'Date Ordered':'05 Apr 26'}
+        b = purchase_rows([lead], [later, earlier])[0]
+        self.assertFalse(b['issue'])
+        self.assertEqual(b['purchased_on'], D('2026-04-02'))
+
+        # Two repeat leads for the same ASIN, two orders -> paired oldest
+        # submission with oldest order, next with next (ordinal FIFO).
+        first_lead = {'ASIN':'B000000001', 'Date':'01 Apr 26', 'Purchased Qty':'10', 'Sale Price':'£12', 'Expected Profit':'3'}
+        second_lead = {'ASIN':'B000000001', 'Date':'03 Apr 26', 'Purchased Qty':'5', 'Sale Price':'£12', 'Expected Profit':'3'}
+        batches = purchase_rows([first_lead, second_lead], [earlier, later])
+        self.assertFalse(batches[0]['issue'])
+        self.assertFalse(batches[1]['issue'])
+        self.assertEqual(batches[0]['purchased_on'], D('2026-04-02'))
+        self.assertEqual(batches[1]['purchased_on'], D('2026-04-05'))
+
+    def test_repeat_asin_never_matches_an_order_before_its_own_submission(self):
+        # Tamara's caveat: a VA can write up an ASIN already purchased
+        # earlier (e.g. a replenishment of existing stock). An order dated
+        # before THIS lead's own submission must never be attributed to
+        # it, even if it's the only order on the sheet.
+        old_order = {'ASIN':'B000000001', 'Date Ordered':'02 Apr 26'}
+        late_lead = {'ASIN':'B000000001', 'Date':'10 Apr 26', 'Purchased Qty':'10', 'Sale Price':'£12', 'Expected Profit':'3'}
+        b = purchase_rows([late_lead], [old_order])[0]
+        self.assertTrue(b['issue'])
+        self.assertIsNone(b['purchased_on'])
+
+        # But a later lead correctly skips a too-early order to claim a
+        # later one still eligible for it.
+        eligible_order = {'ASIN':'B000000001', 'Date Ordered':'12 Apr 26'}
+        b2 = purchase_rows([late_lead], [old_order, eligible_order])[0]
+        self.assertFalse(b2['issue'])
+        self.assertEqual(b2['purchased_on'], D('2026-04-12'))
 
 class ImportTests(unittest.TestCase):
     def setUp(self):

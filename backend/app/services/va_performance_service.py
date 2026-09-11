@@ -55,42 +55,54 @@ def purchase_rows(lead_rows, buy_rows):
             rating=_value(row, 'client rating'), comments=_value(row, 'client notes'),
             va_notes=_value(row, 'va notes'), method=_value(row, 'sourcing method used', 'sourcing method'),
             issue='Invalid purchased quantity' if not quantity.is_integer() else 'Missing ASIN' if not asin else 'Submission date unavailable' if not submitted else ''))
+    # Resolve missing purchase dates by treating each ASIN's repeat VA leads
+    # and Buy Sheet orders as one FIFO queue (Tamara, 2026-09-10): "If the
+    # ASIN appears more than once just attribute to the item that sells
+    # first." We don't need to prove which specific write-up caused which
+    # specific order -- we need to know what happened to the stock, and
+    # va_sales_allocation.allocate_sales already sells FIFO against
+    # whatever purchased_on each batch ends up with. So the oldest
+    # unresolved submission for an ASIN gets the oldest eligible order,
+    # the next-oldest submission gets the next order, and so on.
+    unresolved_by_asin = defaultdict(list)
     for batch in result:
-        if batch['purchased_on'] or not batch['submitted']:
-            continue
-        if sum(b['asin'] == batch['asin'] and b['submitted'] == batch['submitted'] for b in result) > 1:
-            batch['issue'] = batch['issue'] or 'Repeated same-day VA leads need a purchase date match'
-            continue
-        later = [b['submitted'] for b in result if b['asin'] == batch['asin'] and b['submitted'] and b['submitted'] > batch['submitted']]
-        upper = min(later) if later else date.max
-        candidates = [r for r in buy_rows if str(_value(r, 'asin')).strip().upper() == batch['asin']
-            and (d := _purchase_date(str(_value(r, 'date ordered')))) and batch['submitted'] <= d < upper]
+        if not batch['purchased_on'] and batch['submitted']:
+            unresolved_by_asin[batch['asin']].append(batch)
+    for asin, batches in unresolved_by_asin.items():
+        # Tie-broken by row id (sheet order) -- submissions on the exact
+        # same day have no other signal to order them by, and FIFO still
+        # needs *a* stable order to hand out queue positions.
+        batches.sort(key=lambda b: (b['submitted'], b['id']))
+        candidates = [r for r in buy_rows if str(_value(r, 'asin')).strip().upper() == asin
+            and _purchase_date(str(_value(r, 'date ordered')))]
         # The Buy Sheet can contain an identical duplicated row for one order
-        # (same date, quantity and SKU). Collapse those export duplicates before
-        # deciding whether the VA batch has an unambiguous purchase match.
-        unique_candidates = []
+        # (same date, quantity and SKU). Collapse those export duplicates
+        # before queuing them.
+        orders = []
         seen_candidates = set()
         for candidate in candidates:
-            key = (
-                _purchase_date(str(_value(candidate, 'date ordered'))),
-                _optional_number(_value(candidate, 'quantity')),
-                str(_value(candidate, 'sku')).strip(),
-            )
+            ordered_on = _purchase_date(str(_value(candidate, 'date ordered')))
+            key = (ordered_on, _optional_number(_value(candidate, 'quantity')), str(_value(candidate, 'sku')).strip())
             if key not in seen_candidates:
                 seen_candidates.add(key)
-                unique_candidates.append(candidate)
-        candidates = unique_candidates
-        if len(candidates) > 1:
-            # Later replenishments should not invalidate an unambiguous original
-            # order. Require the earliest order's quantity to match the VA batch.
-            first_day = min(_purchase_date(str(_value(r, 'date ordered'))) for r in candidates)
-            earliest = [r for r in candidates if _purchase_date(str(_value(r, 'date ordered'))) == first_day]
-            if len(earliest) == 1 and _optional_number(_value(earliest[0], 'quantity')) == batch['quantity']:
-                candidates = earliest
-        if len(candidates) == 1:
-            batch['purchased_on'] = _purchase_date(str(_value(candidates[0], 'date ordered')))
-        else:
-            batch['issue'] = batch['issue'] or ('Multiple Buy Sheet purchases need a date match' if candidates else 'No matching Buy Sheet purchase date')
+                orders.append(ordered_on)
+        orders.sort()
+        order_idx = 0
+        for batch in batches:
+            # A submission can never be matched to an order dated before its
+            # own submission date (Tamara's caveat: a VA can write up an
+            # ASIN that was already purchased earlier, e.g. a replenishment
+            # of existing stock) -- otherwise an already-settled older
+            # purchase could get silently attributed to a brand-new lead.
+            # Submissions are walked oldest-first, so any order skipped here
+            # predates every remaining submission too and is never revisited.
+            while order_idx < len(orders) and orders[order_idx] < batch['submitted']:
+                order_idx += 1
+            if order_idx < len(orders):
+                batch['purchased_on'] = orders[order_idx]
+                order_idx += 1
+            else:
+                batch['issue'] = batch['issue'] or 'No Buy Sheet purchase order available on or after the submission date'
     return result
 
 
