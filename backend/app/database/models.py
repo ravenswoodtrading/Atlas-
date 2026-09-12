@@ -2254,6 +2254,31 @@ class StkCogsRun(Base):
     unresolved_json: Mapped[str] = mapped_column(String, default="[]")
 
 
+class AmazonListingUploadBatch(Base):
+    """
+    One row per Amazon Listing Upload scheduler tick (2026-09-12,
+    Tamara: reduced from every 30 minutes to once a day, plus "include
+    somewhere on Atlas a summary of how many ASINs were uploaded and any
+    failures" and a Command Centre flag for a batch with failures). This
+    is the unit the summary page and the Command Centre banner both key
+    off -- individual AmazonListingUpload rows are the per-SKU detail
+    underneath one of these.
+
+    acknowledged_at is the "cleared when read" mechanism Tamara asked
+    for -- null means the Command Centre still flags it; set (by
+    /automation/amazon-listings/acknowledge) once she's seen it. A batch
+    with zero failures is never flagged in the first place, so it's
+    never a candidate for acknowledgement regardless of this field.
+    """
+    __tablename__ = "amazon_listing_upload_batches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    succeeded_count: Mapped[int] = mapped_column(Integer, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
 class AmazonListingUpload(Base):
     """
     History of automatic Amazon listing submissions (2026-09-12) --
@@ -2268,10 +2293,15 @@ class AmazonListingUpload(Base):
     SKU can legitimately be resubmitted (e.g. a retry after a transient
     failure, or the Buy Sheet's own known duplicate-row quirk); only
     `status` distinguishes which attempt actually stuck.
+
+    batch_id is nullable -- rows created before AmazonListingUploadBatch
+    existed (2026-09-12's first live runs) have none; the summary page
+    and Command Centre only ever look at batch-linked rows going forward.
     """
     __tablename__ = "amazon_listing_uploads"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("amazon_listing_upload_batches.id"), nullable=True, index=True)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     sku: Mapped[str] = mapped_column(String, index=True)
     asin: Mapped[str] = mapped_column(String, default="")

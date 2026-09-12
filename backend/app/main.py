@@ -40,6 +40,7 @@ from app.routes import (
     verdict, leads, signals, oa_source_discovery, help as help_route,
     token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
     scan_intelligence, reports, actual_performance, va_performance,
+    amazon_listing_uploads,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -474,14 +475,14 @@ INVENTORY_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 # column for rows ready to submit to Amazon (Amazon Listing Upload,
 # 2026-09-12, Tamara: "fully automatic" -- replaces the manual "download
 # the file, upload it to Seller Central, then clear the flag by hand"
-# step). 30 minutes: prompt enough that a row marked Y doesn't sit
-# waiting for an hour, without hammering the Listings/Catalog APIs on a
-# process that's naturally bursty (a handful of rows at a time, not
-# continuous). No day/hour gating unlike the VA lead sync -- there's no
-# reason a real Amazon listing can't be created outside business hours,
-# unlike that scheduler's "leads should wait for a human to review them
-# at a sane hour" reasoning.
-AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS = 30 * 60
+# step). Reduced from every 30 minutes to once a day (Tamara, 2026-09-12)
+# -- rows sit for at most a day rather than needing near-real-time
+# turnaround, and a daily cadence matches the once-a-day batch summary
+# now shown on /automation/amazon-listings. No day/hour gating unlike
+# the VA lead sync -- there's no reason a real Amazon listing can't be
+# created outside business hours, unlike that scheduler's "leads should
+# wait for a human to review them at a sane hour" reasoning.
+AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 async def _amazon_listing_upload_scheduler():
@@ -603,6 +604,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 Base.metadata.create_all(bind=engine)
 from app.database.reporting_schema import migrate_reporting_schema
 migrate_reporting_schema(engine)
+amazon_listing_upload_service.migrate_schema(engine)
 
 
 @app.middleware("http")
@@ -659,6 +661,7 @@ app.include_router(criteria.router)
 app.include_router(shortlist.router)
 app.include_router(inventory_cleanup.router)
 app.include_router(storage_fee_watch.router)
+app.include_router(amazon_listing_uploads.router)
 
 
 @app.get("/opportunities/{brand}")

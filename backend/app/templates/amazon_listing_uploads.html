@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Amazon Listing Uploads - Atlas{% endblock %}
+{% block content %}
+<div class="container-fluid p-4" style="max-width:1100px">
+<h1 class="h2">Amazon Listing Uploads</h1>
+<p class="text-muted">Runs once a day. Submits every Buy Sheet row marked "Listing Uploader (Y)" directly to Amazon and updates the sheet's flags on success — no manual Seller Central upload needed.</p>
+
+<div class="card">
+<div class="card-body">
+<h2 class="h5">Batch history</h2>
+{% if not batches %}
+<p class="text-muted mb-0">No runs recorded yet.</p>
+{% else %}
+<div class="table-responsive">
+<table class="table align-middle">
+<thead><tr><th>Run (UTC)</th><th>Uploaded</th><th>Failed</th><th></th></tr></thead>
+<tbody>
+{% for batch in batches %}
+<tr class="{{ 'table-warning' if batch.failed_count and not batch.acknowledged }}">
+  <td>{{ batch.run_at.strftime('%d %b %Y %H:%M') }}</td>
+  <td>{{ batch.succeeded_count }}</td>
+  <td>{{ batch.failed_count }}</td>
+  <td>
+    {% if batch.failed_count and not batch.acknowledged %}
+    <form method="post" action="/automation/amazon-listings/acknowledge/{{ batch.id }}" class="d-inline">
+      <button class="btn btn-sm btn-outline-secondary">Mark as read</button>
+    </form>
+    {% elif batch.failed_count %}
+    <span class="text-muted small">Read</span>
+    {% endif %}
+  </td>
+</tr>
+{% if batch.failures %}
+<tr>
+  <td colspan="4" class="pt-0">
+    <div class="small text-muted">Failed rows — Amazon rejected or couldn't classify these; still marked "Listing Uploader (Y)" on the Buy Sheet, safe to retry once resolved:</div>
+    <ul class="small mb-2">
+      {% for f in batch.failures %}
+      <li>{{ f.asin }} — {{ f.sku }} — {{ f.error }}</li>
+      {% endfor %}
+    </ul>
+  </td>
+</tr>
+{% endif %}
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% endif %}
+</div>
+</div>
+</div>
+{% endblock %}

@@ -20,9 +20,12 @@ This module owns the sheet reading, attribute construction and Buy Sheet
 write-back; SPAPIClient.put_listing_item owns only the HTTP call.
 """
 import time
+from datetime import datetime, timezone
+
+from sqlalchemy import inspect, text
 
 from app.database.database import SessionLocal
-from app.database.models import AmazonListingUpload
+from app.database.models import AmazonListingUpload, AmazonListingUploadBatch
 from app.services.google_sheets_client import open_sheet
 from app.services.va_performance_service import PURCHASING_SHEET_URL, _optional_number
 from app.sp_api.client import MARKETPLACE_IDS, SPAPIClient, get_sp_api_client
@@ -53,6 +56,20 @@ PRICE_MARKUP = 1.2
 DEFAULT_COUNTRY_OF_ORIGIN = "DE"
 
 MARKETPLACE = "UK"
+
+
+def migrate_schema(engine):
+    """
+    Small additive migration, same pattern as reporting_schema.py's own
+    -- amazon_listing_uploads already existed on the live DB (created by
+    this feature's own first live test runs, 2026-09-12) before
+    AmazonListingUploadBatch/batch_id were added, so Base.metadata.
+    create_all() alone won't add the new column to it.
+    """
+    if 'amazon_listing_uploads' in inspect(engine).get_table_names():
+        if 'batch_id' not in {c['name'] for c in inspect(engine).get_columns('amazon_listing_uploads')}:
+            with engine.begin() as connection:
+                connection.execute(text('ALTER TABLE amazon_listing_uploads ADD COLUMN batch_id INTEGER'))
 
 
 def _find_column(header, name):
@@ -166,9 +183,12 @@ def _get_product_types_chunked(client, asins):
     return results
 
 
-def _record(sku, asin, price, row, status, error):
+def _record(sku, asin, price, row, status, error, batch_id=None):
     with SessionLocal() as db:
-        db.add(AmazonListingUpload(sku=sku, asin=asin, price=price, buy_sheet_row=row, status=status, error=error))
+        db.add(AmazonListingUpload(
+            batch_id=batch_id, sku=sku, asin=asin, price=price,
+            buy_sheet_row=row, status=status, error=error,
+        ))
         db.commit()
 
 
@@ -202,12 +222,20 @@ def run_pending_uploads(preview=False):
             ))
         return dict(succeeded=0, failed=0, results=results, preview=True)
 
+    with SessionLocal() as db:
+        batch = AmazonListingUploadBatch()
+        db.add(batch)
+        db.commit()
+        db.refresh(batch)
+        batch_id = batch.id
+
     client = get_sp_api_client()
     if client is None:
-        return dict(succeeded=0, failed=len(rows), results=[
-            dict(row=r["row"], sku=r["sku"], asin=r["asin"], status="failed",
-                 error="SP-API not configured") for r in rows
-        ])
+        for r in rows:
+            _record(r["sku"], r["asin"], r["price"], r["row"], "failed", "SP-API not configured", batch_id)
+            results.append(dict(row=r["row"], sku=r["sku"], asin=r["asin"], status="failed", error="SP-API not configured"))
+        _finish_batch(batch_id, 0, len(rows))
+        return dict(succeeded=0, failed=len(rows), results=results, batch_id=batch_id)
 
     asins = list({r["asin"] for r in rows})
     product_types = _get_product_types_chunked(client, asins)
@@ -220,7 +248,7 @@ def run_pending_uploads(preview=False):
         product_type = product_types.get(r["asin"])
         if not product_type:
             error = f"No Amazon product type found for ASIN {r['asin']}"
-            _record(r["sku"], r["asin"], r["price"], r["row"], "failed", error)
+            _record(r["sku"], r["asin"], r["price"], r["row"], "failed", error, batch_id)
             results.append(dict(row=r["row"], sku=r["sku"], asin=r["asin"], status="failed", error=error))
             failed += 1
             continue
@@ -230,25 +258,72 @@ def run_pending_uploads(preview=False):
 
         if outcome["success"]:
             _mark_done(ws, r["row"], header)
-            _record(r["sku"], r["asin"], r["price"], r["row"], "succeeded", "")
+            _record(r["sku"], r["asin"], r["price"], r["row"], "succeeded", "", batch_id)
             results.append(dict(row=r["row"], sku=r["sku"], asin=r["asin"], status="succeeded", error=""))
             succeeded += 1
         else:
-            _record(r["sku"], r["asin"], r["price"], r["row"], "failed", outcome["error"])
+            _record(r["sku"], r["asin"], r["price"], r["row"], "failed", outcome["error"], batch_id)
             results.append(dict(row=r["row"], sku=r["sku"], asin=r["asin"], status="failed", error=outcome["error"]))
             failed += 1
 
-    return dict(succeeded=succeeded, failed=failed, results=results)
+    _finish_batch(batch_id, succeeded, failed)
+    return dict(succeeded=succeeded, failed=failed, results=results, batch_id=batch_id)
 
 
-def recent_failures(limit=20):
+def _finish_batch(batch_id, succeeded, failed):
     with SessionLocal() as db:
-        rows = (db.query(AmazonListingUpload)
-                .filter(AmazonListingUpload.status == "failed")
-                .order_by(AmazonListingUpload.submitted_at.desc())
-                .limit(limit).all())
-        # A later SUCCEEDED attempt for the same SKU supersedes an
-        # earlier failure -- only surface a SKU still unresolved.
-        succeeded_skus = {r[0] for r in db.query(AmazonListingUpload.sku)
-                           .filter(AmazonListingUpload.status == "succeeded").all()}
-        return [r for r in rows if r.sku not in succeeded_skus]
+        batch = db.get(AmazonListingUploadBatch, batch_id)
+        batch.succeeded_count = succeeded
+        batch.failed_count = failed
+        db.commit()
+
+
+def unacknowledged_failed_batches():
+    """Batches with at least one failure that haven't been marked read
+    yet -- what the Command Centre banner counts (Tamara, 2026-09-12:
+    "flag on the command centre view if there are any failures on an
+    upload batch. The message can be cleared when read")."""
+    with SessionLocal() as db:
+        return (db.query(AmazonListingUploadBatch)
+                .filter(AmazonListingUploadBatch.failed_count > 0,
+                        AmazonListingUploadBatch.acknowledged_at.is_(None))
+                .order_by(AmazonListingUploadBatch.run_at.desc()).all())
+
+
+def acknowledge_batch(batch_id):
+    with SessionLocal() as db:
+        batch = db.get(AmazonListingUploadBatch, batch_id)
+        if batch:
+            batch.acknowledged_at = datetime.now(timezone.utc)
+            db.commit()
+
+
+def acknowledge_all_failed_batches():
+    with SessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        (db.query(AmazonListingUploadBatch)
+         .filter(AmazonListingUploadBatch.failed_count > 0,
+                 AmazonListingUploadBatch.acknowledged_at.is_(None))
+         .update({AmazonListingUploadBatch.acknowledged_at: now}))
+        db.commit()
+
+
+def batch_history(limit=30):
+    """[{id, run_at, succeeded_count, failed_count, acknowledged}] for
+    the summary page (Tamara, 2026-09-12: "include somewhere on Atlas a
+    summary of how many ASINs were uploaded and any failures")."""
+    with SessionLocal() as db:
+        batches = (db.query(AmazonListingUploadBatch)
+                   .order_by(AmazonListingUploadBatch.run_at.desc())
+                   .limit(limit).all())
+        return [dict(id=b.id, run_at=b.run_at, succeeded_count=b.succeeded_count,
+                     failed_count=b.failed_count, acknowledged=b.acknowledged_at is not None)
+                for b in batches]
+
+
+def batch_failures(batch_id):
+    with SessionLocal() as db:
+        return (db.query(AmazonListingUpload)
+                .filter(AmazonListingUpload.batch_id == batch_id,
+                        AmazonListingUpload.status == "failed")
+                .order_by(AmazonListingUpload.submitted_at).all())
