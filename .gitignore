@@ -20,3 +20,6 @@ backend/.claude/settings.local.json
 .scan_*.py
 backend/report_checks/
 backend/bulk_recheck_output.log
+CODEX_REVIEW_NOTES.md
+CODEX_REVIEW_RESPONSE.md
+_preview_sourcing_ledger.html
