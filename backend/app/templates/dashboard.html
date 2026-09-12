@@ -6,6 +6,7 @@
 {% block content %}
 <div class="container-fluid p-4 p-lg-5">
 {% if scan_tier_review_count %}<div class="alert alert-warning"><strong>{{ scan_tier_review_count }} Scan Intelligence decisions need review.</strong> <a href="/scan-intelligence#tier-reviews">Review weekly tier suggestions →</a></div>{% endif %}
+{% if stk_cogs_due %}<div class="alert alert-info"><strong>Weekly Seller Toolkit Cost of Goods update is due.</strong> Download the Update List from STK and <a href="/reports/uploads#stk-cogs">fill in missing costs →</a></div>{% endif %}
   <section class="cc-hero p-4 p-lg-5 mb-4 d-flex flex-wrap justify-content-between align-items-start gap-3"><div><div class="text-uppercase small fw-semibold opacity-75 mb-2">Atlas command centre</div><h1 class="h2 mb-2">{{ greeting }}</h1><p class="mb-0 opacity-75">Your next decisions, purchasing position and Atlas health.</p></div><span class="badge text-bg-light px-3 py-2">Updated {{ last_updated }}</span></section>
   <section class="cc-hero p-4 mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3"><div><h2 class="h5 mb-1">{{ command_centre.unique_total }} decisions need attention</h2><div class="opacity-75">Start with the clearest opportunities, then work through follow-up items.</div></div><a class="btn btn-light fw-semibold" href="/review-queue">Open review queue</a></section>
   <div class="row g-3 mb-4">

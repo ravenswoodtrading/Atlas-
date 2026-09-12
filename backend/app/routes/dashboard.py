@@ -275,6 +275,21 @@ def _lead_counts():
         db.close()
 
 
+def _stk_cogs_due():
+    """
+    Weekly Command Centre reminder (2026-09-12, Tamara) for the Seller
+    Toolkit Cost-of-Goods fill process -- STK only creates a CoG row once
+    a shipment has actually gone out, so Atlas can't trigger this itself
+    on a schedule; this just nudges Tamara to run it herself via
+    /reports/uploads if it's been a week (or never) since the last run.
+    """
+    from app.services.stk_cogs_service import latest_run
+    run = latest_run()
+    if not run:
+        return True
+    return datetime.now(timezone.utc) - run["run_at"].replace(tzinfo=timezone.utc) >= timedelta(days=7)
+
+
 def _keepa_tokens_remaining():
     """
     Current Keepa token balance, read from the cached client's own
@@ -458,6 +473,7 @@ def dashboard(request: Request):
             "request": request,
             "stats": stats,
             "scan_tier_review_count": len(pending_reviews()),
+            "stk_cogs_due": _stk_cogs_due(),
             "sheet_leads_waiting": sheet_leads_waiting,
             "manual_leads_waiting": manual_leads_waiting,
             "keepa_tokens_remaining": _keepa_tokens_remaining(),

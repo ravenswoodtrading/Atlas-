@@ -2230,6 +2230,30 @@ class ReportUpload(Base):
     uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class StkCogsRun(Base):
+    """
+    History of Seller Toolkit Cost-of-Goods fill runs (2026-09-12) -- each
+    row is one /reports/uploads/stk-cogs upload: Tamara downloads STK's own
+    "Update List" export whenever a shipment has gone out (STK only creates
+    a CoG row once that's happened, so this is inherently ad hoc, never on
+    Atlas's own schedule), Atlas fills what it can and hands back a ready-
+    to-reupload file. Kept as a running history (not a single latest-row
+    like ReportUpload) so the Command Centre's weekly reminder can tell
+    "never run" apart from "run 3 weeks ago", and so unresolved_json from
+    the last run stays visible on /reports/uploads until the next one.
+    """
+    __tablename__ = "stk_cogs_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    filename: Mapped[str] = mapped_column(String, default="")
+    filled_from_sku: Mapped[int] = mapped_column(Integer, default=0)
+    filled_from_buy_sheet: Mapped[int] = mapped_column(Integer, default=0)
+    # JSON list of [asin, sku, title] the run could resolve from neither
+    # the SKU itself nor the Buy Sheet -- needs a human to price manually.
+    unresolved_json: Mapped[str] = mapped_column(String, default="[]")
+
+
 class AmazonInventoryLedgerLine(Base):
     """One row from Amazon's FBA Inventory Ledger Detailed View."""
     __tablename__ = "amazon_inventory_ledger_lines"
