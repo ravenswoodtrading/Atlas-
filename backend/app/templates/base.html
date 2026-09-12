@@ -561,6 +561,30 @@ ATLAS
 })();
 </script>
 
+<script>
+// Legacy quick review forms also require a reason. Cancelling saves nothing.
+document.addEventListener('submit', function (event) {
+    var form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    var path = new URL(form.action, location.href).pathname;
+    var decision = form.querySelector('[name="decision"]');
+    var verdict = form.querySelector('[name="verdict"]');
+    if (!((path === '/review/set' && verdict && verdict.value === 'down') ||
+          (path === '/review/decide' && decision && decision.value === 'rejected'))) return;
+    var reason = form.querySelector('[name="reason"]');
+    var category = form.querySelector('[name="reason_category"]');
+    if (category && category.value && category.value !== 'OTHER') return;
+    if (reason && reason.value.trim()) return;
+    var note = window.prompt('Why are you rejecting this item? (required)');
+    if (!note || !note.trim()) { event.preventDefault(); return; }
+    if (!reason) {
+        reason = document.createElement('input');
+        reason.type = 'hidden'; reason.name = 'reason'; form.appendChild(reason);
+    }
+    reason.value = note.trim();
+});
+</script>
+
 {% block scripts %}{% endblock %}
 
 </body>

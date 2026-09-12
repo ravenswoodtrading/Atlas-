@@ -1,0 +1,383 @@
+<title>The Sourcing Ledger</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root{
+    --paper:#FAF7F1; --paper-raised:#FFFFFF; --ink:#201D1A; --ink-soft:#5B564C; --ink-faint:#8A8378;
+    --line:#DDD5C7; --line-strong:#C7BCA8;
+    --accent:#1F4B4A; --accent-ink:#0E2E2D; --accent-tint:#E4EDEC;
+    --good:#2E7D4F; --good-tint:#E6F1EA;
+    --warn:#B5651D; --warn-tint:#F7EAD9;
+    --critical:#A83A3A; --critical-tint:#F5E6E4;
+    --neutral:#8A8378; --neutral-tint:#EDEAE3;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#15181A; --paper-raised:#1B1F21; --ink:#ECE7DC; --ink-soft:#A7A197; --ink-faint:#726C60;
+      --line:#33322D; --line-strong:#454239;
+      --accent:#5CB3A8; --accent-ink:#BEE6DD; --accent-tint:#1C2E2C;
+      --good:#57B583; --good-tint:#17281F;
+      --warn:#E0954A; --warn-tint:#2C2015;
+      --critical:#E07070; --critical-tint:#2E1B1B;
+      --neutral:#9C9587; --neutral-tint:#232320;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#15181A; --paper-raised:#1B1F21; --ink:#ECE7DC; --ink-soft:#A7A197; --ink-faint:#726C60;
+    --line:#33322D; --line-strong:#454239;
+    --accent:#5CB3A8; --accent-ink:#BEE6DD; --accent-tint:#1C2E2C;
+    --good:#57B583; --good-tint:#17281F;
+    --warn:#E0954A; --warn-tint:#2C2015;
+    --critical:#E07070; --critical-tint:#2E1B1B;
+    --neutral:#9C9587; --neutral-tint:#232320;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Sans", system-ui, sans-serif;
+    font-size:16px; line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding:56px 28px 96px;}
+
+  h1,h2,h3{font-family:"Fraunces", Georgia, serif; text-wrap:balance; color:var(--ink); font-weight:500;}
+  .code, .mono{font-family:"IBM Plex Mono", monospace;}
+  .tabular{font-variant-numeric:tabular-nums;}
+
+  /* ---- Masthead ---- */
+  .masthead{border-bottom:2px solid var(--ink); padding-bottom:22px; margin-bottom:40px;}
+  .masthead .eyebrow{
+    font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint);
+    display:flex; justify-content:space-between; margin-bottom:14px;
+  }
+  .masthead h1{font-size:42px; line-height:1.05; margin:0 0 8px;}
+  .masthead .sub{font-size:16.5px; color:var(--ink-soft); max-width:60ch;}
+
+  /* ---- Verdict band ---- */
+  .verdict{
+    display:flex; gap:32px; align-items:flex-end; flex-wrap:wrap;
+    background:var(--accent); color:var(--accent-tint);
+    border-radius:6px; padding:30px 32px; margin-bottom:44px;
+  }
+  .verdict .num{font-family:"Fraunces", serif; font-size:76px; line-height:1; font-weight:600; color:#fff;}
+  .verdict .num sup{font-size:32px; position:relative; top:-30px;}
+  .verdict .label{font-size:15px; max-width:44ch; color:#EAF3F1; padding-bottom:6px;}
+  .verdict .label b{color:#fff;}
+
+  /* ---- Section rhythm ---- */
+  section{margin-bottom:52px;}
+  .section-head{display:flex; align-items:baseline; gap:14px; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:10px;}
+  .section-head .n{font-family:"IBM Plex Mono", monospace; font-size:13px; color:var(--ink-faint);}
+  .section-head h2{font-size:23px; margin:0;}
+  p{color:var(--ink-soft); margin:0 0 14px;}
+  p.lede{color:var(--ink); font-size:17px;}
+  strong{color:var(--ink); font-weight:600;}
+
+  /* ---- Metric tiles ---- */
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:22px 0;}
+  .tile{background:var(--paper-raised); padding:16px 18px;}
+  .tile .k{font-size:11.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-faint); margin-bottom:6px;}
+  .tile .v{font-family:"Fraunces", serif; font-size:27px; font-weight:600; color:var(--ink);}
+  .tile .v.warn{color:var(--warn);} .tile .v.good{color:var(--good);} .tile .v.critical{color:var(--critical);}
+  .tile .d{font-size:12.5px; color:var(--ink-faint); margin-top:3px;}
+
+  /* ---- Outcome bar chart ---- */
+  .outcome-chart{margin:20px 0 8px;}
+  .obar-row{display:grid; grid-template-columns:190px 1fr 58px; align-items:center; gap:12px; margin-bottom:9px;}
+  .obar-row .lbl{font-size:13.5px; color:var(--ink); display:flex; align-items:center; gap:7px;}
+  .obar-row .dot{width:9px;height:9px;border-radius:2px;flex:none;}
+  .obar-track{background:var(--neutral-tint); border-radius:3px; height:22px; overflow:hidden;}
+  .obar-fill{height:100%; border-radius:3px;}
+  .obar-row .cnt{font-family:"IBM Plex Mono",monospace; font-size:13px; text-align:right; color:var(--ink-soft);}
+  .chart-axis{display:grid; grid-template-columns:190px 1fr 58px; gap:12px; margin-top:2px;}
+  .chart-axis .scale{position:relative; height:16px; font-size:10.5px; color:var(--ink-faint); font-family:"IBM Plex Mono",monospace;}
+  .chart-axis .scale span{position:absolute; transform:translateX(-50%);}
+  .chart-axis .scale span:first-child{transform:none;}
+  .chart-axis .scale span:last-child{transform:translateX(-100%);}
+
+  /* ---- Method ROI chart ---- */
+  .roi-chart{margin:20px 0;}
+  .rbar-row{display:grid; grid-template-columns:168px 1fr 50px; align-items:center; gap:12px; margin-bottom:8px;}
+  .rbar-row .lbl{font-size:13px; color:var(--ink);}
+  .rbar-row .lbl .n{color:var(--ink-faint); font-size:11.5px;}
+  .rbar-track{background:var(--neutral-tint); border-radius:3px; height:16px; position:relative;}
+  .rbar-fill{height:100%; border-radius:3px; background:var(--accent);}
+  .rbar-fill.below{background:var(--ink-faint);}
+  .rbar-target{position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--warn);}
+  .rbar-row .val{font-family:"IBM Plex Mono",monospace; font-size:12.5px; text-align:right;}
+  .roi-legend{font-size:12px; color:var(--ink-faint); margin-top:6px; display:flex; align-items:center; gap:8px;}
+  .roi-legend .swatch{display:inline-block;width:12px;height:2px;background:var(--warn);}
+
+  /* ---- Tables ---- */
+  .tbl-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:6px;}
+  table{border-collapse:collapse; width:100%; min-width:520px; font-size:13.5px;}
+  th{text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--ink-faint); font-weight:600; padding:10px 14px; background:var(--paper-raised); border-bottom:1px solid var(--line-strong);}
+  td{padding:9px 14px; border-bottom:1px solid var(--line); color:var(--ink);}
+  tr:last-child td{border-bottom:none;}
+  td.num, th.num{text-align:right; font-family:"IBM Plex Mono",monospace;}
+  td.asin{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-soft);}
+  tbody tr:hover td{background:var(--accent-tint);}
+
+  .pill{display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:20px; font-size:11.5px; font-weight:600;}
+  .pill.good{background:var(--good-tint); color:var(--good);}
+  .pill.warn{background:var(--warn-tint); color:var(--warn);}
+  .pill.critical{background:var(--critical-tint); color:var(--critical);}
+  .pill.neutral{background:var(--neutral-tint); color:var(--ink-faint);}
+
+  /* ---- Callout ---- */
+  .callout{border-left:3px solid var(--warn); background:var(--warn-tint); border-radius:0 6px 6px 0; padding:14px 18px; margin:18px 0;}
+  .callout p{color:var(--ink); margin:0; font-size:14.5px;}
+  .callout.good{border-color:var(--good); background:var(--good-tint);}
+  .callout.critical{border-color:var(--critical); background:var(--critical-tint);}
+
+  /* ---- Actions ---- */
+  .actions{counter-reset:action;}
+  .action{
+    display:grid; grid-template-columns:44px 1fr; gap:16px; padding:18px 0; border-bottom:1px solid var(--line);
+  }
+  .action:last-child{border-bottom:none;}
+  .action .idx{
+    counter-increment:action; font-family:"Fraunces",serif; font-size:26px; color:var(--accent); font-weight:600;
+  }
+  .action .idx::before{content:counter(action);}
+  .action h3{font-size:16.5px; margin:0 0 5px;}
+  .action p{margin:0; font-size:14px;}
+  .action .why{font-size:12.5px; color:var(--ink-faint); margin-top:7px; font-style:italic;}
+
+  footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font-size:12px; color:var(--ink-faint);}
+  footer p{color:var(--ink-faint); font-size:12px;}
+
+  @media (max-width:640px){
+    .masthead h1{font-size:32px;}
+    .verdict .num{font-size:54px;}
+    .obar-row, .chart-axis{grid-template-columns:110px 1fr 44px;}
+    .rbar-row{grid-template-columns:110px 1fr 44px;}
+    .action{grid-template-columns:32px 1fr;}
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow"><span>Sourcing &amp; Buying Review</span><span>Data through 8 Sep 2026</span></div>
+    <h1>The Sourcing Ledger</h1>
+    <div class="sub">What actually happened to the 215 VA leads we've bought since records began &mdash; against what the sheet said would happen &mdash; and what that tells us about how we find and buy stock.</div>
+  </div>
+
+  <div class="verdict">
+    <div class="num">3.7<sup>%</sup></div>
+    <div class="label">of purchases hit our own target &mdash; full sell-through inside 30 days, at 25%+ ROI or 14%+ margin. <b>8 out of 215.</b> This report is about the other 96.3%.</div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Batches purchased</div><div class="v">215</div><div class="d">1,143 units</div></div>
+    <div class="tile"><div class="k">Units sold to date</div><div class="v">295</div><div class="d">387 remaining, on tracked batches</div></div>
+    <div class="tile"><div class="k">Expected profit</div><div class="v">&pound;3,372</div><div class="d">what the sheet said, on units sold</div></div>
+    <div class="tile"><div class="k">Actual profit</div><div class="v warn">&pound;2,255</div><div class="d tabular">&minus;33.1% vs. expected</div></div>
+    <div class="tile"><div class="k">Realised ROI</div><div class="v warn">18.9%</div><div class="d">target is 25%</div></div>
+    <div class="tile"><div class="k">Realised margin</div><div class="v warn">12.0%</div><div class="d">target is 14%</div></div>
+  </div>
+
+  <section>
+    <div class="section-head"><span class="n">01</span><h2>Where the 215 batches ended up</h2></div>
+    <p class="lede">Almost none of the shortfall is "bad products that lost money." It's <strong>slow money</strong> and <strong>unmeasurable money</strong> &mdash; two very different problems needing two different fixes.</p>
+
+    <div class="outcome-chart">
+      <div class="obar-row">
+        <div class="lbl"><span class="dot" style="background:var(--good)"></span>Met target</div>
+        <div class="obar-track"><div class="obar-fill" style="width:3.7%;background:var(--good)"></div></div>
+        <div class="cnt">8</div>
+      </div>
+      <div class="obar-row">
+        <div class="lbl"><span class="dot" style="background:var(--warn)"></span>Missed the 30-day window</div>
+        <div class="obar-track"><div class="obar-fill" style="width:40.0%;background:var(--warn)"></div></div>
+        <div class="cnt">86</div>
+      </div>
+      <div class="obar-row">
+        <div class="lbl"><span class="dot" style="background:var(--critical)"></span>Sold on time, missed ROI/margin</div>
+        <div class="obar-track"><div class="obar-fill" style="width:3.7%;background:var(--critical)"></div></div>
+        <div class="cnt">8</div>
+      </div>
+      <div class="obar-row">
+        <div class="lbl"><span class="dot" style="background:var(--neutral)"></span>Can't be measured yet</div>
+        <div class="obar-track"><div class="obar-fill" style="width:34.9%;background:var(--neutral)"></div></div>
+        <div class="cnt">75</div>
+      </div>
+      <div class="chart-axis"><div></div><div class="scale"><span>0</span><span>215 batches</span></div><div></div></div>
+    </div>
+
+    <p><strong>The biggest single bucket is "missed the 30-day window" (86 batches, 40%)</strong> &mdash; these sold, and most made a real profit, just slower than plan. Only 8 batches (3.7%) actually lost the financial case despite selling on time. And <strong>75 batches (35%) can't be scored at all</strong> &mdash; not because they failed, but because our own records don't let us tell (see Section 4).</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">02</span><h2>The expected sale price is the main problem</h2></div>
+    <p class="lede">Across every batch we can measure, the price actually achieved on Amazon came in below what the VA sheet expected <strong>86% of the time</strong> &mdash; by an average of <strong>&pound;7.80</strong> a unit.</p>
+
+    <div class="tiles">
+      <div class="tile"><div class="k">Batches sold below expected price</div><div class="v critical">64<span style="font-size:16px;color:var(--ink-faint);"> / 74</span></div><div class="d">86%</div></div>
+      <div class="tile"><div class="k">Average price shortfall</div><div class="v critical">&minus;&pound;7.80</div><div class="d">median &minus;&pound;3.61</div></div>
+      <div class="tile"><div class="k">Batches earning less than expected</div><div class="v critical">66<span style="font-size:16px;color:var(--ink-faint);"> / 74</span></div><div class="d">89%, average &minus;28.9% profit</div></div>
+    </div>
+
+    <div class="callout critical">
+      <p><strong>This is the root cause behind Section 1's numbers.</strong> A batch priced to sell at the VA's expected price would clear target ROI on schedule far more often. Instead, the price we actually get is consistently, not occasionally, below plan &mdash; which reads as a <em>forecasting</em> problem on the sheet, not a run of bad luck on individual ASINs.</p>
+    </div>
+
+    <p>Practically: today's Amazon price at the moment of sourcing is a poor predictor of the price several weeks later when stock actually lands and starts selling. The sheet needs to be pricing against something more stable &mdash; a 90-day average or a deliberately conservative haircut &mdash; rather than the live price on the day the lead is written up.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">03</span><h2>Some sourcing methods are pulling their weight &mdash; others aren't</h2></div>
+    <p class="lede">Realised ROI on sold, fully-costed batches, by how the VA found the lead. The line marks our 25% ROI target.</p>
+
+    <div class="roi-chart">
+      <div class="rbar-row"><div class="lbl">Arbisource <span class="n">n=11</span></div><div class="rbar-track"><div class="rbar-fill" style="width:99%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val good">49.5%</div></div>
+      <div class="rbar-row"><div class="lbl">Brand Sourcing <span class="n">n=5</span></div><div class="rbar-track"><div class="rbar-fill" style="width:61%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val good">30.6%</div></div>
+      <div class="rbar-row"><div class="lbl">Online Arbitrage <span class="n">n=15</span></div><div class="rbar-track"><div class="rbar-fill" style="width:60%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val good">30.3%</div></div>
+      <div class="rbar-row"><div class="lbl">Keepa Product Finder <span class="n">n=73</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:44%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val">22.1%</div></div>
+      <div class="rbar-row"><div class="lbl">Keepa Track <span class="n">n=14</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:44%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val">22.1%</div></div>
+      <div class="rbar-row"><div class="lbl">Daily Deals (Amazon) <span class="n">n=18</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:38%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val">19.3%</div></div>
+      <div class="rbar-row"><div class="lbl">Storefront Stalking <span class="n">n=18</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:36%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val">18.0%</div></div>
+      <div class="rbar-row"><div class="lbl">EU A2A <span class="n">n=42</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:33%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val warn">16.5%</div></div>
+      <div class="rbar-row"><div class="lbl">A2A <span class="n">n=17</span></div><div class="rbar-track"><div class="rbar-fill below" style="width:27%"></div><div class="rbar-target" style="left:50.5%"></div></div><div class="val warn">13.7%</div></div>
+      <div class="roi-legend"><span class="swatch"></span> 25% ROI target</div>
+    </div>
+
+    <div class="callout">
+      <p><strong>EU A2A is both our single largest source of purchases (42 batches, the 2nd biggest method) and one of the two weakest performers.</strong> A2A is worse still on ROI, though on smaller volume. Meanwhile Arbisource, Brand Sourcing and Online Arbitrage all clear target ROI comfortably &mdash; on much smaller volume. None of the four best-performing methods hit "Met target" in Section 1 either, but for a different reason: they're ROI-healthy, just slow to sell through (see Section 5).</p>
+    </div>
+    <p>This isn't a case for abandoning EU A2A &mdash; it's still profitable on average, and it's a large share of our pipeline. It's a case for asking <em>why</em> its margin runs thinner: is it being priced too close to the wire, competed away by other resellers on the same routes, or landing on categories/brands with structurally tighter margins? That's worth a dedicated look before deciding how much of the buying budget it should keep.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">04</span><h2>A third of our purchases can't be measured &mdash; that's a process gap, not a buying one</h2></div>
+    <p class="lede">75 of 215 batches (35%) have no reliable link between a VA lead and a real purchase record, so we simply don't know how they performed.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Why it can't be tracked</th><th class="num">Batches</th></tr></thead>
+        <tbody>
+          <tr><td>Same ASIN bought more than once &mdash; can't tell which Buy Sheet order this lead became</td><td class="num">48</td></tr>
+          <tr><td>Purchase happened after our sales data ends &mdash; just needs a fresher upload</td><td class="num">10</td></tr>
+          <tr><td>A return or stock adjustment sits in the ledger and needs a human look</td><td class="num">9</td></tr>
+          <tr><td>No matching Buy Sheet order found for this lead at all</td><td class="num">8</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>The single biggest cause (48 of 75) is repeat purchases of the same ASIN with no way to tell them apart.</strong> This is entirely fixable at the point of purchase: if every Buy Sheet order recorded which VA lead/submission it fulfilled &mdash; even just the lead's row number or date &mdash; this entire 48-batch bucket becomes measurable going forward. Right now we're flying blind on a fifth of everything we buy, purely on a record-keeping gap.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">05</span><h2>How fast we actually sell through</h2></div>
+    <p class="lede">Our target is full sell-through in 30 days. Here's what really happens, for the batches that eventually sold their full original quantity.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Time from purchase</th><th class="num">Batches fully sold</th><th class="num">Units</th><th class="num">Profit in band</th></tr></thead>
+        <tbody>
+          <tr><td>0&ndash;30 days <span class="pill good" style="margin-left:6px;">on target</span></td><td class="num">16</td><td class="num">129</td><td class="num">&pound;838</td></tr>
+          <tr><td>31&ndash;60 days</td><td class="num">15</td><td class="num">92</td><td class="num">&pound;951</td></tr>
+          <tr><td>61&ndash;90 days</td><td class="num">14</td><td class="num">61</td><td class="num">&pound;403</td></tr>
+          <tr><td>90+ days</td><td class="num">1</td><td class="num">13</td><td class="num">&pound;63</td></tr>
+          <tr><td>Still unsold past 90 days <span class="pill critical" style="margin-left:6px;">dead stock</span></td><td class="num">12</td><td class="num">0</td><td class="num">&pound;0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Only <strong>16 of 58</strong> leads that eventually sell through fully do it inside 30 days &mdash; the rest take up to three times as long. That's consistent with Section 3's ROI-healthy-but-slow methods, and with Section 2's overpriced-at-sourcing pattern: a unit priced above the market simply takes longer to move, even if it eventually clears.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">06</span><h2>Stock that never moved</h2></div>
+    <p class="lede">10 purchases, &pound;2,163 of cost, zero units sold after 90+ days on the shelf. Every one of these was rated "Good" or "Ok" by the VA at the time.</p>
+
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>ASIN</th><th>Product</th><th class="num">Qty</th><th class="num">Days unsold</th><th>Method</th><th>VA rating</th></tr></thead>
+        <tbody>
+          <tr><td class="asin">B0G5YHD8VY</td><td>Philips Sonicare 3100 electric toothbrush</td><td class="num">4</td><td class="num">118</td><td>EU A2A</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B0DSQ4LRV6</td><td>HyperX Pulsefire Haste 2 wireless mouse</td><td class="num">2</td><td class="num">131</td><td>EU A2A</td><td><span class="pill neutral">Ok</span></td></tr>
+          <tr><td class="asin">B08H2HR236</td><td>Garmin v&iacute;vofit Jr.3 kids' fitness tracker</td><td class="num">2</td><td class="num">122</td><td>A2A</td><td><span class="pill neutral">Ok</span></td></tr>
+          <tr><td class="asin">B0957QNC6T</td><td>Bissell Pet Hair Eraser cordless vacuum</td><td class="num">2</td><td class="num">122</td><td>EU A2A</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B0CWB662HK</td><td>Garmin Forerunner 165 GPS running watch</td><td class="num">2</td><td class="num">102</td><td>Keepa Product Finder</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B089HFR9CX</td><td>ASUS ROG Strix B550-F gaming motherboard</td><td class="num">3</td><td class="num">105</td><td>Keepa Product Finder</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B0DP5BZZDZ</td><td>ASUS TUF Gaming B850M-Plus motherboard</td><td class="num">1</td><td class="num">104</td><td>Keepa Product Finder</td><td><span class="pill neutral">Review</span></td></tr>
+          <tr><td class="asin">B088HWN8MV</td><td>Makita DMR203 Li-ion radio</td><td class="num">6</td><td class="num">103</td><td>Keepa Product Finder</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B0BQ7KBNZ9</td><td>Brother QL-1100C label printer</td><td class="num">3</td><td class="num">97</td><td>Keepa Product Finder</td><td><span class="pill good">Good</span></td></tr>
+          <tr><td class="asin">B0G5YH4J92</td><td>Philips Sonicare 3100 electric toothbrush (2nd batch)</td><td class="num">3</td><td class="num">96</td><td>Keepa Product Finder</td><td><span class="pill neutral">Ok</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>Half of these are Keepa Product Finder leads</strong> &mdash; our single biggest method by volume, and mid-table on ROI. A "Good" rating clearly isn't catching demand risk on these; every one of them looked fine on paper and simply hasn't sold.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">07</span><h2>The VA's own confidence rating isn't predicting outcomes</h2></div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Rated "Good" (n=122)</div><div class="v">22.5%<span style="font-size:14px;color:var(--ink-faint);"> avg ROI</span></div><div class="d">5 of 122 met target &mdash; 4%</div></div>
+      <div class="tile"><div class="k">Rated "Ok" (n=86)</div><div class="v">22.2%<span style="font-size:14px;color:var(--ink-faint);"> avg ROI</span></div><div class="d">3 of 86 met target &mdash; 3%</div></div>
+    </div>
+    <p>A "Good" lead and an "Ok" lead perform the same, both in ROI and in how often they actually hit target. If the rating isn't separating the two any more, it isn't giving us (or him) a useful signal to prioritise buying decisions with &mdash; the criteria behind "Good" vs "Ok" likely need re-anchoring against these real results, not against gut feel at sourcing time.</p>
+  </section>
+
+  <section>
+    <div class="section-head"><span class="n">08</span><h2>What we'd change</h2></div>
+    <p class="lede">In the order we'd tackle them &mdash; the first two are root causes; the rest compound on top of them.</p>
+
+    <div class="actions">
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Price against a 90-day average, not today's spot price</h3>
+          <p>The VA sheet's expected sale price is the single biggest driver of the &minus;33% profit miss (Section 2). Require a 90-day average or a fixed conservative discount off today's price before a lead is submitted, so the target it's measured against is realistic from day one.</p>
+          <div class="why">Fixes the root cause behind Sections 1, 2 and 5 at once.</div>
+        </div>
+      </div>
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Record which VA lead every Buy Sheet order fulfils</h3>
+          <p>Even just the lead's row number or submission date against the purchase order removes the ambiguity behind 48 of our 75 untrackable batches (Section 4). Without this, a fifth of everything we buy stays permanently unmeasurable.</p>
+          <div class="why">This is pure record-keeping &mdash; no change to what we buy, only to whether we can tell if it worked.</div>
+        </div>
+      </div>
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Look hard at why EU A2A margins run thin</h3>
+          <p>It's our 2nd-largest source of purchases and the weakest ROI (16.5%, Section 3). Before cutting volume, work out whether that's competition on the same routes, categories with structurally tight margins, or pricing sourced too close to the wire &mdash; then decide whether to fix it or reallocate buying budget toward Online Arbitrage, Brand Sourcing and Arbisource, all comfortably above target ROI on smaller volume.</p>
+          <div class="why">Our biggest channel shouldn't also be our worst without a clear reason why.</div>
+        </div>
+      </div>
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Re-anchor the "Good" vs "Ok" rating against real outcomes</h3>
+          <p>They currently predict nothing (Section 7). Walk back through a sample of each with him and agree what should actually separate a "Good" lead from an "Ok" one going forward &mdash; ideally tied to something measurable (sales rank stability, review count, price-drop depth) rather than impression.</p>
+          <div class="why">A rating that doesn't discriminate outcomes isn't helping either of you prioritise.</div>
+        </div>
+      </div>
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Add a 60-day stock check, not just 90</h3>
+          <p>All 10 dead-stock lines (Section 6) were rated Good or Ok and still didn't move. A review trigger at 60 days &mdash; price cut, bundle, or write off &mdash; would catch these a month earlier, while there's still room to recover margin instead of losing it entirely.</p>
+          <div class="why">&pound;2,163 is currently just sitting on a shelf with no plan.</div>
+        </div>
+      </div>
+      <div class="action">
+        <div class="idx"></div>
+        <div>
+          <h3>Clean up the Sourcing Method values</h3>
+          <p>"Keepa Product Finder" and "Keppa Product Finder" are both in the data as separate methods, and "Storefront Stalking" appears twice with slightly different text. Small thing, but it's why Section 3 needed cleaning before it could be trusted &mdash; a fixed dropdown instead of free text would keep it reliable without our having to re-normalise it every time.</p>
+          <div class="why">Also fixes the weekly report, where "Sourcing method used" has come through blank for 100% of this week's 32 submissions.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Purchases through the VA Lead Sheet, matched against Seller Toolkit sales exports covering 09 Sep 2025&ndash;08 Sep 2026 (uploaded 09 Sep 2026). "Met target" = full original quantity sold within 30 days of purchase, at 25%+ allocated ROI or 14%+ allocated margin. Figures cover all-time purchases with usable data; batches awaiting a clean purchase-date match are excluded from ROI/profit figures but counted in Section 1 and Section 4. Source: Atlas &rsaquo; Actual Performance / VA Performance.</p>
+  </footer>
+
+</div>

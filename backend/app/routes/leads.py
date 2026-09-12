@@ -1,3 +1,4 @@
+from app.routes.review_validation import validate_rejection_reason
 import json
 import os
 from datetime import datetime, timezone
@@ -424,6 +425,9 @@ def review_decide(
     atlas_notes: str = Form(""),
     return_to: str = Form("/review"),
 ):
+    if decision == "rejected":
+        reason, reason_category = validate_rejection_reason(reason, reason_category, require_category=False)
+
     db = SessionLocal()
     is_sheet_lead = False
     try:

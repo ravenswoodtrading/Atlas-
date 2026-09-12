@@ -161,6 +161,10 @@
                                     <span class="badge bg-danger" title="Brand is on your Gated Brands list -- a real opportunity, but not currently sellable. See Gated Brand Opportunities.">
                                         <i class="bi bi-shield-lock"></i> GATED
                                     </span>
+                                {% elif r.recommendation == "FREQUENTLY_RETURNED" %}
+                                    <span class="badge bg-danger" title="Amazon's own 'frequently returned item' badge -- excluded from every queue regardless of the numbers.">
+                                        <i class="bi bi-arrow-return-left"></i> FREQUENTLY RETURNED
+                                    </span>
                                 {% else %}
                                     <span class="badge bg-secondary">IGNORE</span>
                                 {% endif %}

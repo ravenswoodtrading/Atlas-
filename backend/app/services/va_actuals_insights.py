@@ -154,6 +154,24 @@ def report_view(batches, buys, selection, as_of, target_days=30):
     unique_ledger = {b['asin']: b.get('ledger') for b in eligible if b.get('ledger')}
     returns = sum((v.get('returns') or 0) for v in unique_ledger.values())
     stock = sum((v.get('ending_balance') or 0) for v in unique_ledger.values())
+    stock_asins = len(unique_ledger)
+
+    # Forecast profit still sitting in unsold ("remaining") stock, at the
+    # VA sheet's own per-unit expected_profit rate, then discounted by the
+    # SAME actual-vs-forecast shortfall already observed on units that HAVE
+    # sold (Tamara, 2026-09-11) -- a raw sheet-rate forecast on remaining
+    # stock would repeat the exact over-optimism Section 2 of the report
+    # already documents (prices/profit consistently coming in below the
+    # sheet's forecast), so it's scaled down to what similar stock has
+    # actually realised rather than taken at face value.
+    expected_sold_profit_total = sum(b['expected_sold_profit'] for b in eligible if b.get('expected_sold_profit') is not None)
+    actual_profit_same_population = sum(b['actual_profit'] for b in eligible if b.get('expected_sold_profit') is not None)
+    forecast_accuracy_pct = (actual_profit_same_population / expected_sold_profit_total - 1) * 100 if expected_sold_profit_total else None
+    remaining_forecast_profit = sum((b.get('expected_profit') or 0) * b['remaining'] for b in eligible)
+    remaining_expected_profit = (
+        remaining_forecast_profit * (1 + forecast_accuracy_pct / 100) if forecast_accuracy_pct is not None else None
+    )
+
     return dict(rows=selected, selection=selection, target_days=target_days,
         sold_cohort=sold_cohort_metrics(selected),
         target_counts={label: sum(b['target_result'] == label for b in selected) for label in
@@ -162,5 +180,7 @@ def report_view(batches, buys, selection, as_of, target_days=30):
         insights=dict(top=top[:10], problems=problems, replens=replens),
         totals=dict(purchases=len(selected), units=sum(b['quantity'] for b in selected), covered=len(eligible),
             sold=sum(b['sold'] for b in eligible), remaining=sum(b['remaining'] for b in eligible),
-            profit=sum(b['actual_profit'] for b in eligible), returns=returns, stock=stock,
+            profit=sum(b['actual_profit'] for b in eligible), returns=returns, stock=stock, stock_asins=stock_asins,
+            forecast_accuracy_pct=forecast_accuracy_pct, remaining_forecast_profit=remaining_forecast_profit,
+            remaining_expected_profit=remaining_expected_profit,
             review=len(selected)-len(eligible)), timing=timing)

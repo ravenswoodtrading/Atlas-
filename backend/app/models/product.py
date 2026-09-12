@@ -287,6 +287,16 @@ class Product:
     # CONSIDER anywhere else (see ProductRepository.is_notable).
     gated: bool = False
 
+    # Amazon's own "frequently returned item" badge on the UK listing
+    # (Keepa's returnRate == 2, see KeepaParser.is_frequently_returned)
+    # -- set in ProductMapper.from_keepa from the UK product's own data,
+    # since that's the listing Atlas actually sells against. Read by
+    # OpportunityEngine.analyse to force recommendation=
+    # "FREQUENTLY_RETURNED" regardless of how good the numbers look,
+    # same override pattern as `gated` above -- a high return rate is a
+    # real demand-quality risk no ROI number captures.
+    frequently_returned: bool = False
+
     hazmat: bool = False
     adult: bool = False
 

@@ -47,6 +47,14 @@ def purchase_rows(lead_rows, buy_rows):
             continue
         asin = str(_value(row, 'asin', 'amazon asin')).strip().upper()
         purchased = _purchase_date(str(_value(row, 'date ordered', 'purchase date')))
+        # Both audit-only columns (va_submission_sync.AUDIT_COLUMNS) -- backfilled
+        # after the fact, not at submission time, so absent on older rows and on
+        # anything not yet audited. price_drop is normalised to a real Yes/No/None
+        # rather than passed through raw: the sheet's own "Price drop (>5%)"
+        # formula depends on a now-dead webhook tunnel, so some cells literally
+        # contain that request's DNS error string instead of an answer.
+        price_drop_raw = str(_value(row, 'price drop (>5%)') or '').strip().lower()
+        price_drop = True if price_drop_raw == 'yes' else False if price_drop_raw == 'no' else None
         result.append(dict(id=index, asin=asin, submitted=submitted, purchased_on=purchased,
             quantity=quantity, title=_value(row, 'title', 'product name', 'product'),
             expected_price=_optional_number(_value(row, 'sale price', 'expected sale price')),
@@ -54,6 +62,8 @@ def purchase_rows(lead_rows, buy_rows):
             cost=_optional_number(_value(row, 'actual cog', 'cog (unit)')),
             rating=_value(row, 'client rating'), comments=_value(row, 'client notes'),
             va_notes=_value(row, 'va notes'), method=_value(row, 'sourcing method used', 'sourcing method'),
+            price_drop=price_drop,
+            buy_box_on_lead_date=_optional_number(_value(row, 'buy box on lead date')),
             issue='Invalid purchased quantity' if not quantity.is_integer() else 'Missing ASIN' if not asin else 'Submission date unavailable' if not submitted else ''))
     # Resolve missing purchase dates by treating each ASIN's repeat VA leads
     # and Buy Sheet orders as one FIFO queue (Tamara, 2026-09-10): "If the

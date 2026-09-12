@@ -415,62 +415,10 @@ def competitors_page(request: Request, tab: str = "opportunities", view: str = "
 
 @router.get("/competitors/opportunity/{asin}")
 def competitors_opportunity_detail(request: Request, asin: str):
-    """
-    Detail drawer content for ONE Competitor Watch opportunity --
-    reuses ReviewQueueService.get_queue_item(asin) UNCHANGED (the exact
-    same merged-item shape /review-queue/item/{asin} already returns;
-    no new merge/priority logic here, Review Queue's own service/
-    template are untouched). Rendered through a Competitor-Watch-
-    specific partial (not Review Queue's own detail partial) so its
-    Next Action buttons can differ -- Find Source/Google for an
-    unconfirmed OA item vs Buy/Watch for a currently-buyable one --
-    without adding OA-specific branching into Review Queue's template.
-    """
-    item = ReviewQueueService.get_queue_item(asin)
+    """Use the canonical review panel, including sourcing tools and actions."""
+    from app.routes.review_queue import review_queue_item_detail
 
-    competitor_source = None
-    if item:
-        # "oa_investigate" added 2026-09-05 (Review Queue OA view) --
-        # get_queue_item now tags an OA/unclear listing with its own
-        # distinct source value instead of "competitor" (see
-        # ReviewQueueService._oa_investigate_lead_dict's own docstring
-        # for why), but it's still the SAME dict shape (sourcing_tag,
-        # reasoning, etc. via _competitor_lead_dict underneath) this
-        # drawer and its OA-specific Next Action branch already expect
-        # -- matching both source values here keeps that branch working
-        # exactly as before, just reading it under its new label.
-        competitor_source = next(
-            (s for s in item["source_items"] if s["source"] in ("competitor", "oa_investigate")), None,
-        )
-
-    # EAN isn't a field on the merged Review Queue item (never needed
-    # there) -- read straight off the ProductRecord, same cheap lookup
-    # build_opportunities_context already does per-row.
-    db = SessionLocal()
-    try:
-        record = (
-            db.query(ProductRecord)
-            .filter(ProductRecord.asin == asin)
-            .order_by(ProductRecord.scanned_at.desc())
-            .first()
-        )
-        ean = record.ean if record else ""
-    finally:
-        db.close()
-
-    google_urls = _google_search_url_variants(item.get("title", "") if item else "", ean, asin)
-
-    return templates.TemplateResponse(
-        request=request,
-        name="_competitor_opportunity_detail.html",
-        context={
-            "request": request,
-            "item": item,
-            "asin": asin,
-            "competitor_source": competitor_source,
-            "google_urls": google_urls,
-        }
-    )
+    return review_queue_item_detail(request, asin)
 
 
 @router.post("/competitors/find-source")

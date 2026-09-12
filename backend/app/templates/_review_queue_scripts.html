@@ -1,0 +1,305 @@
+<script>
+// Shared Review Queue and Competitor Watch interactions.
+document.addEventListener('DOMContentLoaded', function () {
+    // Real bug, 2026-09-05: if bootstrap.bundle.min.js fails to load
+    // for any reason (flaky CDN, offline, blocked) these two
+    // constructors throw "bootstrap is not defined" -- and since that
+    // was previously unguarded, it aborted the REST of this handler
+    // before the click/submit listeners below ever got registered,
+    // silently turning every button on the page into a native (non-
+    // AJAX) form submission -- e.g. clicking Avoid landed on a raw JSON
+    // page instead of showing the toast. panel/toast are already
+    // treated as optional everywhere below (openAsin/showUndo/
+    // showAlreadyResolved all no-op when null), so catching this here
+    // is enough to keep the actual click/submit handling alive even
+    // when bootstrap itself is unavailable.
+    var panel = null, toast = null;
+    try {
+        var panelEl = document.getElementById('qi-detail-panel');
+        panel = panelEl ? new bootstrap.Offcanvas(panelEl) : null;
+        var toastEl = document.getElementById('qi-toast');
+        toast = toastEl ? new bootstrap.Toast(toastEl, {delay: 6000}) : null;
+    } catch (err) {
+        console.error('Review Queue: bootstrap components failed to initialize -- detail panel/toast disabled, but Buy/Watch/Avoid actions still work.', err);
+    }
+    var body = document.getElementById('qi-detail-body');
+    var toastBody = document.getElementById('qi-toast-body');
+    var toastUndoBtn = document.getElementById('qi-toast-undo');
+
+    function openAsin(asin, focusReason) {
+        if (!panel || !body) return;
+        body.innerHTML = '<div class="text-muted">Loading...</div>';
+        panel.show();
+        fetch('/review-queue/item/' + encodeURIComponent(asin))
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                body.innerHTML = html;
+                if (focusReason) {
+                    var field = body.querySelector('[name="reason_category"]');
+                    if (field) { field.scrollIntoView({block: 'center'}); field.focus(); }
+                }
+            })
+            .catch(function () { body.innerHTML = '<div class="text-danger">Could not load this item.</div>'; });
+    }
+
+    // Real bug found live, 2026-09-07 (Tamara: "the buying decisions are
+    // feeding through ... but notes still aren't") -- the ROW-level
+    // quick Buy/Reject buttons below (.qi-buy-btn/.qi-quickreject-btn)
+    // call resolve() with no atlasNotes argument at all, by design (the
+    // row has no note field of its own). But the detail panel DOES have
+    // one, and it's entirely plausible to open the panel, write a note,
+    // then decide via the row's own quick button instead of scrolling
+    // to the panel's own decision buttons at the bottom -- silently
+    // dropping whatever was just typed even though the decision itself
+    // goes through fine. This reads any note sitting in the panel's own
+    // form, but ONLY if that panel is currently open for this SAME
+    // asin (never guesses/borrows a note meant for a different item).
+    function noteFromOpenPanel(asin) {
+        var form = body ? body.querySelector('.qi-detail-actions-form') : null;
+        if (!form) return '';
+        var asinField = form.querySelector('[name="asin"]');
+        if (!asinField || asinField.value !== asin) return '';
+        var noteField = form.querySelector('[name="atlas_notes"]');
+        return noteField ? noteField.value.trim() : '';
+    }
+
+    function resolve(asin, decision, reasonCategory, reason, purchasedQty, atlasNotes, alsoExclude) {
+        var params = new URLSearchParams({
+            asin: asin, decision: decision,
+            reason: reason || '', reason_category: reasonCategory || '',
+            purchased_qty: purchasedQty || '', atlas_notes: atlasNotes || '',
+            also_exclude: alsoExclude ? '1' : '',
+        });
+        fetch('/review-queue/resolve', {method: 'POST', body: params})
+            .then(function (r) {
+                return r.json().then(function (data) {
+                    if (!r.ok || !data.ok) throw new Error(data.detail || 'Could not save this decision -- please try again.');
+                    return data;
+                });
+            })
+            .then(function (data) {
+                document.querySelectorAll('[data-row-asin="' + asin + '"]').forEach(function (el) { el.remove(); });
+                if (panel) panel.hide();
+                if (data.already_resolved) {
+                    showAlreadyResolved();
+                } else {
+                    showUndo(asin, data.resolved, decision);
+                }
+            })
+            .catch(function (err) { alert(err.message || 'Could not save this decision -- please try again.'); });
+    }
+
+    // Real bug fix, 2026-09-04: a row can still be showing after
+    // something else (another tab, an automated recheck) already
+    // resolved the same ASIN -- clicking Buy/Reject on it used to come
+    // back "ok" and show this SAME success/Undo toast, implying the
+    // click had just done something it hadn't (there's nothing to
+    // Undo -- this click changed nothing). Removes the stale row (it's
+    // genuinely not outstanding any more) but says so honestly instead
+    // of claiming success.
+    function showAlreadyResolved() {
+        if (!toast) { return; }
+        toastBody.textContent = 'Already resolved elsewhere -- removed from your list.';
+        toastUndoBtn.style.display = 'none';
+        toast.show();
+    }
+
+    function showUndo(asin, resolved, decision) {
+        if (!toast) { return; }
+        var label = decision === 'approved' ? 'Marked BUY.' : decision === 'rejected' ? 'Rejected.' : 'Reviewed.';
+        toastBody.textContent = label;
+        toastUndoBtn.style.display = '';
+        toastUndoBtn.onclick = function () {
+            var params = new URLSearchParams({
+                asin: asin,
+                scan: resolved.scan ? '1' : '',
+                competitor: (resolved.competitor || []).join(','),
+                lead: (resolved.lead || []).join(','),
+            });
+            fetch('/review-queue/undo', {method: 'POST', body: params}).then(function () { location.reload(); });
+        };
+        toast.show();
+    }
+
+    document.addEventListener('click', function (e) {
+        // Copy ASIN is nested inside .qi-open-btn's clickable area (2026-
+        // 09-04 fix) -- must be checked FIRST and just return (not
+        // e.stopPropagation(), which would also block base.html's own
+        // delegated .copy-asin-btn listener from ever seeing the click,
+        // the actual bug: the button had onclick="event.stopPropagation()"
+        // before, which silently broke copying entirely on this page).
+        if (e.target.closest('.copy-asin-btn')) { return; }
+
+        var openBtn = e.target.closest('.qi-open-btn');
+        if (openBtn) { e.preventDefault(); openAsin(openBtn.dataset.asin); return; }
+
+        var rejectBtn = e.target.closest('.qi-reject-btn');
+        if (rejectBtn) { e.preventDefault(); openAsin(rejectBtn.dataset.asin, true); return; }
+        var watchBtn = e.target.closest('.qi-watch-btn');
+        if (watchBtn) { e.preventDefault(); resolve(watchBtn.dataset.asin, 'watch', null, '', '', noteFromOpenPanel(watchBtn.dataset.asin)); return; }
+
+        var buyBtn = e.target.closest('.qi-buy-btn');
+        if (buyBtn) { resolve(buyBtn.dataset.asin, 'approved', null, '', '', noteFromOpenPanel(buyBtn.dataset.asin)); return; }
+
+        var saveNoteBtn = e.target.closest('.qi-save-note-btn');
+        if (saveNoteBtn) {
+            e.preventDefault();
+            var noteForm = saveNoteBtn.closest('form');
+            var noteAsin = noteForm.querySelector('[name="asin"]').value;
+            var noteField = noteForm.querySelector('[name="atlas_notes"]');
+            var noteText = noteField ? noteField.value.trim() : '';
+            if (!noteText) { alert('Write a note first.'); if (noteField) noteField.focus(); return; }
+            saveNoteBtn.disabled = true;
+            fetch('/review-queue/save-note', {method: 'POST', body: new URLSearchParams({asin: noteAsin, atlas_notes: noteText})})
+                .then(function (r) { return r.json(); })
+                .then(function () {
+                    saveNoteBtn.disabled = false;
+                    saveNoteBtn.innerHTML = '<i class="bi bi-check-lg"></i> Saved';
+                    setTimeout(function () { saveNoteBtn.innerHTML = '<i class="bi bi-chat-left-text"></i> Save note (no decision yet)'; }, 2000);
+                })
+                .catch(function () { saveNoteBtn.disabled = false; alert('Could not save the note -- please try again.'); });
+            return;
+        }
+
+        var qrBtn = e.target.closest('.qi-quickreject-btn');
+        if (qrBtn) {
+            e.preventDefault();
+            var reason = qrBtn.dataset.reason;
+            // "Other" must still capture free text (2026-09-04 -- a
+            // reject reason is useful information, not just a category
+            // tick) -- the other quick-reject reasons are already
+            // specific enough on their own.
+            if (reason === 'OTHER') {
+                var note = window.prompt('Why are you rejecting this? (required)');
+                if (!note || !note.trim()) { return; }
+                resolve(qrBtn.dataset.asin, 'rejected', reason, note.trim(), '', noteFromOpenPanel(qrBtn.dataset.asin));
+                return;
+            }
+            resolve(qrBtn.dataset.asin, 'rejected', reason, '', '', noteFromOpenPanel(qrBtn.dataset.asin));
+            return;
+        }
+
+        // OA to Investigate classification correction (see
+        // _review_queue_item_detail.html's own comment) -- writes
+        // straight to SellerNewListing.sourcing_tag, then re-opens the
+        // SAME panel so the corrected badge/button state shows
+        // immediately (mirrors the OA "Save source" form's own re-open
+        // pattern just below). Does NOT resolve/remove the row -- a
+        // reclassify to EU/UK A2A drops it out of this view on its own
+        // next page load (the OA to Investigate query is scoped to
+        // sourcing_tag=="OA / unclear"), not via any client-side removal.
+        var reclassifyBtn = e.target.closest('.qi-reclassify-btn');
+        if (reclassifyBtn) {
+            e.preventDefault();
+            var group = reclassifyBtn.closest('.qi-reclassify-group');
+            var rAsin = group.dataset.asin;
+            var tag = reclassifyBtn.dataset.tag;
+            fetch('/review-queue/reclassify', {method: 'POST', body: new URLSearchParams({asin: rAsin, sourcing_tag: tag})})
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (!data.ok) { alert('Could not save this classification -- please try again.'); return; }
+                    openAsin(rAsin);
+                })
+                .catch(function () { alert('Could not save this classification -- please try again.'); });
+            return;
+        }
+    });
+
+    // Reason free-text box only shown for "Other" (2026-09-07, Tamara)
+    // -- delegated 'change' since the detail panel is injected after
+    // this listener is already attached (same reasoning as the submit
+    // listener just below). Clears any leftover text when hiding, so a
+    // note typed for "Other" can never survive un-noticed once a
+    // different category is picked.
+    document.addEventListener('change', function (e) {
+        var select = e.target.closest('[name="reason_category"]');
+        if (!select) return;
+        var form = select.closest('.qi-detail-actions-form');
+        if (!form) return;
+        var reasonField = form.querySelector('.qi-reason-other');
+        if (!reasonField) return;
+        if (select.value === 'OTHER') {
+            reasonField.hidden = false;
+        } else {
+            reasonField.hidden = true;
+            reasonField.value = '';
+        }
+    });
+
+    // Detail panel's own Review Actions form (see
+    // _review_queue_item_detail.html) -- delegated here since that
+    // partial is injected after this listener is already attached.
+    document.addEventListener('submit', function (e) {
+        var form = e.target.closest('.qi-detail-actions-form');
+        if (!form) return;
+        e.preventDefault();
+        var asin = form.querySelector('[name="asin"]').value;
+        var decision = e.submitter ? e.submitter.value : form.querySelector('[name="decision"]').value;
+        var note = form.querySelector('[name="reason"]');
+        var categorySelect = form.querySelector('[name="reason_category"]');
+        var category = categorySelect ? categorySelect.value : '';
+        var atlasNotesField = form.querySelector('[name="atlas_notes"]');
+        var alsoExcludeBox = form.querySelector('[name="also_exclude"]');
+
+        // Avoid must always carry a reason (2026-09-04) -- a bare
+        // rejection with no category was useful information lost for
+        // good; "past rejections of this ASIN" elsewhere in this same
+        // panel reads exactly this reason back later. Only enforced for
+        // 'rejected' -- Buy/Watch/Unsure don't need a reason the same way.
+        if (decision === 'rejected') {
+            if (!category) {
+                alert('Please choose a reason before rejecting this item.');
+                if (categorySelect) categorySelect.focus();
+                return;
+            }
+            if (category === 'OTHER' && (!note || !note.value.trim())) {
+                alert('Please add a note explaining "Other".');
+                if (note) note.focus();
+                return;
+            }
+        }
+
+        // VA Lead Sheet purchased quantity (2026-09-05) -- Lead Sheet has
+        // its own "Purchased Qty" column, asked for here so it can be
+        // pushed straight back alongside the decision (see
+        // google_sheets_lead_sync.push_decision_to_sheet). Only for a
+        // sheet-sourced lead being approved, never guessed otherwise.
+        var purchasedQty = '';
+        if (decision === 'approved' && form.dataset.leadSubsource === 'sheet') {
+            var qtyInput = prompt('How many units did you purchase?');
+            if (qtyInput === null) return;  // cancelled
+            var qtyNum = parseFloat(qtyInput);
+            if (!qtyInput.trim() || isNaN(qtyNum) || qtyNum <= 0) {
+                alert('Please enter a valid quantity purchased.');
+                return;
+            }
+            purchasedQty = qtyNum;
+        }
+
+        resolve(asin, decision, category || null, note ? note.value : '', purchasedQty, atlasNotesField ? atlasNotesField.value : '', alsoExcludeBox ? alsoExcludeBox.checked : false);
+    });
+
+    // OA workbench "Save source" form (see _review_queue_item_detail.html)
+    // -- deliberately does NOT call resolve()/reload the row list: saving
+    // a source only persists it and recomputes economics (see
+    // OaSourceDiscoveryService.save_manual_source), it never resolves
+    // the item. Re-opens the SAME panel afterwards so the "Source Found"
+    // status and the pre-filled form reflect what was just saved.
+    document.addEventListener('submit', function (e) {
+        var form = e.target.closest('.qi-oa-save-source-form');
+        if (!form) return;
+        e.preventDefault();
+        var asin = form.querySelector('[name="asin"]').value;
+        var params = new URLSearchParams(new FormData(form));
+        fetch('/review-queue/oa/save-source', {method: 'POST', body: params})
+            .then(function (r) {
+                return r.json().then(function (data) {
+                    if (!r.ok || !data.ok) throw new Error('Could not save source');
+                    return data;
+                });
+            })
+            .then(function () { openAsin(asin); })
+            .catch(function () { alert('Could not save this source -- please try again.'); });
+    });
+});
+</script>

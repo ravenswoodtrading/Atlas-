@@ -78,8 +78,16 @@ class ProductRepository:
         at all instead of IGNORE), and the whole point of the tier is
         "the composite score is weak, look at the actual score factors
         before trusting it", not full-trust-star-buy treatment.
+
+        FREQUENTLY_RETURNED (2026-09-11, Tamara: "exclude leads from
+        any queue that have the frequently returned badge") is excluded
+        the same way as GATED -- Amazon's own return-rate signal is a
+        real demand-quality risk no ROI number captures, so a product
+        carrying it must never count toward is_notable/the Review
+        Queue/Discord/the Dashboard BUY-CONSIDER counters regardless of
+        how good its numbers otherwise look.
         """
-        if recommendation in ("IGNORE", "GATED", "LOW_CONFIDENCE", "LOW_SCORE"):
+        if recommendation in ("IGNORE", "GATED", "LOW_CONFIDENCE", "LOW_SCORE", "FREQUENTLY_RETURNED"):
             return False
 
         has_sales_evidence = monthly_sales > 0 or sales_drops_30d >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD

@@ -1,3 +1,4 @@
+from app.routes.review_validation import validate_rejection_reason
 from datetime import date, datetime, timezone
 import time
 from urllib.parse import urlencode
@@ -487,7 +488,11 @@ def review_queue_item_detail(request: Request, asin: str):
     google_urls = None
     oa_search_urls = None
     source_finder_url = None
-    manual_candidate = None
+    manual_candidate = (
+        OaSourceDiscoveryService.get_manual_candidate(asin)
+        if item and (item.get("oa_price_guide") or {"competitor", "oa_investigate"}.intersection(item.get("sources", [])))
+        else None
+    )
     ean = ""
     if item and item.get("oa_price_guide"):
         db = SessionLocal()
@@ -502,7 +507,6 @@ def review_queue_item_detail(request: Request, asin: str):
         finally:
             db.close()
 
-        manual_candidate = OaSourceDiscoveryService.get_manual_candidate(asin)
         mpn = manual_candidate.mpn if manual_candidate else ""
 
         google_urls = _google_search_url_variants(item.get("title", ""), ean, asin)
@@ -632,6 +636,9 @@ def review_queue_resolve(
     something it hadn't. The frontend uses this flag to tell the two
     cases apart honestly instead of always claiming success.
     """
+    if decision == "rejected":
+        reason, reason_category = validate_rejection_reason(reason, reason_category, require_category=True)
+
     # Atlas Notes (2026-09-05, VA Lead Sheet sync) -- written directly
     # onto any outstanding sheet-sourced lead(s) for this ASIN BEFORE
     # resolving, so push_decision_to_sheet (called inside resolve_item

@@ -171,6 +171,24 @@ class InsightTests(unittest.TestCase):
         view = report_view(batches, [], date_selection('month', month='2026-05'), D('2026-06-30'))
         self.assertEqual(view['totals']['sold'], 2)
         self.assertEqual(view['totals']['purchases'], 1)
+    def test_remaining_stock_forecast_scaled_by_realised_accuracy(self):
+        # Tamara, 2026-09-11: forecast the profit still sitting in unsold
+        # stock at the sheet's own expected_profit rate, then scale it by
+        # however accurate that same forecast has ACTUALLY been on units
+        # that have already sold -- not taken at face value.
+        from app.services.va_actuals_insights import date_selection, report_view
+        sold_batch = purchase(2, 10, '2026-04-01')   # fully sold below plan
+        unsold_batch = purchase(3, 10, '2026-04-03')  # untouched -- all 10 remain
+        batches = allocate_sales([sold_batch, unsold_batch], [sale(2, 10)], D('2026-04-01'), D('2026-06-30'))
+        totals = report_view(batches, [], date_selection(), D('2026-06-30'))['totals']
+        self.assertEqual(totals['sold'], 10)
+        self.assertEqual(totals['remaining'], 10)
+        # expected_profit=3/unit * 10 sold = 30 forecast vs 2/unit * 10 = 20
+        # actual -> realised at 2/3 of forecast (-33.3%).
+        self.assertAlmostEqual(totals['forecast_accuracy_pct'], -33.33, places=1)
+        self.assertEqual(totals['remaining_forecast_profit'], 30.0)
+        self.assertEqual(totals['remaining_expected_profit'], 20.0)
+
     def test_top_problem_and_replen_evidence(self):
         from app.services.va_actuals_insights import date_selection, report_view
         p = purchase(); p['expected_price'] = 9

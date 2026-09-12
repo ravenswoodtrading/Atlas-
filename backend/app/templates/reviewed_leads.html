@@ -100,6 +100,8 @@
                             <span class="badge" style="background:#96660a;color:#fff;">PEAK (risky)</span>
                         {% elif row.recommendation == "GATED" %}
                             <span class="badge bg-danger">GATED</span>
+                        {% elif row.recommendation == "FREQUENTLY_RETURNED" %}
+                            <span class="badge bg-danger">FREQUENTLY RETURNED</span>
                         {% elif row.recommendation %}
                             <span class="badge bg-secondary">{{ row.recommendation }}</span>
                         {% else %}

@@ -1,0 +1,57 @@
+{% set mc = manual_candidate %}
+{% set has_source = mc and mc.retailer_price_gbp is not none %}
+<div class="mb-3" id="qi-known-source">
+    {% if mc and mc.price_source == 'manual' %}
+    <div class="alert alert-success py-2 small">
+        <strong>{{ 'Confirmed source' if mc.source_confidence == 'High' else 'Saved source' }}:</strong>
+        {{ mc.retailer_domain or mc.retailer_url }}
+        {% if mc.source_confidence and mc.source_confidence != 'High' %}({{ mc.source_confidence }} confidence){% endif %}
+    </div>
+    {% endif %}
+    <div class="text-uppercase text-muted small fw-bold mb-1">{{ "Update source" if has_source else "Know where they bought it? Save the source" }}</div>
+    <p class="small text-muted mb-2">Enter the retailer and price, then choose High — confirmed if you know this is where the competitor bought it.</p>
+    <form class="qi-oa-save-source-form p-2 rounded border">
+        <input type="hidden" name="asin" value="{{ item.asin }}">
+        <div class="row g-2">
+            <div class="col-12">
+                <input type="text" name="retailer_domain" class="form-control form-control-sm" placeholder="Retailer (e.g. argos.co.uk)" value="{{ mc.retailer_domain if mc else '' }}">
+            </div>
+            <div class="col-12">
+                <input type="url" name="retailer_url" class="form-control form-control-sm" placeholder="Product URL" value="{{ mc.retailer_url if mc else '' }}">
+            </div>
+            <div class="col-6">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">&pound;</span>
+                    <input type="number" step="0.01" min="0" name="retailer_price_gbp" class="form-control" placeholder="Price" value="{{ '%.2f'|format(mc.retailer_price_gbp) if has_source else '' }}" required>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">&pound;</span>
+                    <input type="number" step="0.01" min="0" name="delivery_gbp" class="form-control" placeholder="Delivery" value="{{ '%.2f'|format(mc.delivery_gbp or 0) if mc else '0.00' }}">
+                </div>
+            </div>
+            <div class="col-12">
+                <input type="text" name="notes" class="form-control form-control-sm" placeholder="Evidence / notes (how you know this is the source)" value="{{ mc.notes if mc else '' }}">
+            </div>
+            {# Confidence factor (2026-09-07, Tamara: "manually adding the
+               source store with confidence factor so we can get a
+               picture of where competitors are sourcing") -- reuses the
+               same High/Medium/Low scale the automated OA path already
+               populates on OaSourceCandidate.source_confidence, see
+               save_manual_source's own docstring for why this is a
+               separate question from product-match confidence. #}
+            <div class="col-12">
+                <select name="source_confidence" class="form-select form-select-sm" title="How sure are you this is really where they bought it?">
+                    <option value="" {{ 'selected' if not (mc.source_confidence if mc else '') }}>Confidence this is the real source...</option>
+                    <option value="High" {{ 'selected' if mc and mc.source_confidence == 'High' }}>High -- confirmed (order history, screenshot, etc.)</option>
+                    <option value="Medium" {{ 'selected' if mc and mc.source_confidence == 'Medium' }}>Medium -- likely match, not fully confirmed</option>
+                    <option value="Low" {{ 'selected' if mc and mc.source_confidence == 'Low' }}>Low -- a plausible guess</option>
+                </select>
+            </div>
+            <div class="col-12 d-grid">
+                <button type="submit" class="btn btn-sm btn-dark"><i class="bi bi-save"></i> Save source</button>
+            </div>
+        </div>
+    </form>
+</div>

@@ -1,3 +1,4 @@
+from app.routes.review_validation import validate_rejection_reason
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, Form
@@ -90,10 +91,8 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     (and vice versa: reviewing it there already updates the same
     ProductRecord this route updates, via SellerWatchService.set_review).
 
-    reason: optional free-text "why not" (2026-08-23) -- the Review
-    Queue's reject button prompts for this and submits it here; other
-    callers (Products/Discovery/Watchlist thumbs, the up/oos buttons)
-    simply don't send one, which is fine, see ProductRecord.review_reason.
+    A down verdict requires a reason or a recognized reason category.
+    Other requires explanatory text. Up/OOS and clearing a review do not.
 
     reason_category: optional structured reason (atlas-review-queue-
     backend-v1.md section 5, see review_queue_service.
@@ -114,6 +113,9 @@ def review_set(asin: str = Form(...), verdict: str = Form(""), listing_id: int =
     Atlas's own last scan record for this ASIN (no extra Keepa lookup
     needed here).
     """
+    if verdict == "down":
+        reason, reason_category = validate_rejection_reason(reason, reason_category, require_category=False)
+
     ProductRepository.set_review(asin, verdict or None, reason=reason or None, reason_category=reason_category or None)
 
     if listing_id:

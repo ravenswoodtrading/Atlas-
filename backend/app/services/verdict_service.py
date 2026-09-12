@@ -769,6 +769,13 @@ class VerdictService:
             "category_name": category_name,
             "ean": product.ean,
 
+            # Amazon's own "frequently returned item" badge (Tamara,
+            # 2026-09-11: "exclude leads from any queue that have the
+            # frequently returned badge") -- see Product.frequently_returned
+            # and generate_verdict's own use of this key to force AVOID
+            # the same way brand_gating does, regardless of the numbers.
+            "frequently_returned": product.frequently_returned,
+
             # EU A2A buyability -- None for OA/unknown-source leads.
             "source_check": source_check,
 

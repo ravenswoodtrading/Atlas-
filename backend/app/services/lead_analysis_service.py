@@ -192,6 +192,20 @@ class LeadAnalysisService:
                 LeadAnalysisService._record_failure(db, lead, f"Analysis error: {exc}")
                 return
 
+            # Deterministic override, not left to the AI's own judgment
+            # (Tamara, 2026-09-11: "exclude leads from any queue that
+            # have the frequently returned badge") -- a high return rate
+            # is an objective Amazon-reported fact, not a risk assessment
+            # to weigh like brand_gating, so it forces AVOID outright
+            # rather than just being mentioned in the prompt. Mirrors
+            # OpportunityEngine's product.frequently_returned override
+            # for the scan/competitor pipeline. Still shows up on the VA
+            # queue's own "all leads regardless of rating" view -- this
+            # only keeps it out of the BUY-eligible queue.
+            if metrics.get('frequently_returned'):
+                verdict = "AVOID"
+                rationale = "Frequently returned item (Amazon's own return-rate flag) -- excluded regardless of the numbers. " + rationale
+
             LeadAnalysisService._save_if_current(db, lead, {
                 'verdict': verdict, 'rationale': rationale, 'status': 'analyzed'
             })

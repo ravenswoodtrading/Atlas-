@@ -82,6 +82,7 @@ class ProductMapper:
 
             hazmat=parser.is_hazmat(),
             adult=False,
+            frequently_returned=parser.is_frequently_returned(),
         )
 
     @staticmethod

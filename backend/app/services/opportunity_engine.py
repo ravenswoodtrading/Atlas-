@@ -185,6 +185,16 @@ class OpportunityEngine:
             # anywhere else (see ProductRepository.is_notable).
             recommendation = "GATED"
 
+        elif product.frequently_returned:
+            # Amazon's own "frequently returned item" badge (see
+            # Product.frequently_returned) -- a real demand-quality
+            # risk no ROI/profit number captures, so this wins over
+            # every viability tier below exactly like `gated` above.
+            # Score/confidence/trend are still computed as normal;
+            # this only overrides the final recommendation (see
+            # ProductRepository.is_notable).
+            recommendation = "FREQUENTLY_RETURNED"
+
         elif (
             effective_profit < OpportunityEngine.MIN_VIABLE_PROFIT_GBP
             or effective_roi < OpportunityEngine.MIN_VIABLE_ROI

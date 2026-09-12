@@ -10,6 +10,10 @@
     This item is no longer outstanding -- it may have just been reviewed (from another tab, or a moment ago).
 </div>
 {% else %}
+{% if item.oa_price_guide or 'competitor' in item.sources or 'oa_investigate' in item.sources %}
+<a href="#qi-known-source" class="btn btn-sm btn-outline-primary mb-3">Record known source</a>
+{% endif %}
+
 
 <!-- PRODUCT (section 14) -->
 <div class="d-flex align-items-start mb-3" style="gap:.75rem;">
@@ -44,7 +48,7 @@
              free-text retailer NAME) -- Tamara asked for these to be
              visible without digging through the rest of the panel. -->
         <div class="mt-1">
-            <a href="https://www.amazon.co.uk/dp/{{ item.asin }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary py-0 px-2"><i class="bi bi-box-arrow-up-right"></i> Amazon UK</a>
+            <a href="https://www.amazon.co.uk/dp/{{ item.asin }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-primary"><i class="bi bi-box-arrow-up-right"></i> Open Amazon UK listing</a>
             {% from "_source_listing_link.html" import source_listing_link %}
             {{ source_listing_link(item, manual_candidate) }}
         </div>
@@ -558,61 +562,11 @@
             </span>
         </div>
         {% endif %}
-        <div class="small text-muted mt-1">Manually confirmed{% if mc.created_at %} &middot; {{ mc.created_at | ago }}{% endif %}</div>
+        <div class="small text-muted mt-1">Manually entered{% if mc.created_at %} &middot; {{ mc.created_at | ago }}{% endif %}</div>
     </div>
     {% endif %}
 
-    <!-- Manual source entry -- Tamara's own spec: Retailer/URL/Price/
-         Delivery/Notes/Save. Saving computes effective cost + profit/
-         ROI via the existing FeeEngine economics and persists it (see
-         OaSourceDiscoveryService.save_manual_source), but does NOT
-         resolve the item or auto-decide BUY -- the Review Actions form
-         below remains the one decision path. -->
-    <div class="text-uppercase text-muted small fw-bold mb-1">{{ "Update source" if has_source else "Found it yourself? Save the source" }}</div>
-    <form class="qi-oa-save-source-form p-2 rounded border">
-        <input type="hidden" name="asin" value="{{ item.asin }}">
-        <div class="row g-2">
-            <div class="col-12">
-                <input type="text" name="retailer_domain" class="form-control form-control-sm" placeholder="Retailer (e.g. argos.co.uk)" value="{{ mc.retailer_domain if mc else '' }}">
-            </div>
-            <div class="col-12">
-                <input type="url" name="retailer_url" class="form-control form-control-sm" placeholder="Product URL" value="{{ mc.retailer_url if mc else '' }}">
-            </div>
-            <div class="col-6">
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text">&pound;</span>
-                    <input type="number" step="0.01" min="0" name="retailer_price_gbp" class="form-control" placeholder="Price" value="{{ '%.2f'|format(mc.retailer_price_gbp) if has_source else '' }}" required>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="input-group input-group-sm">
-                    <span class="input-group-text">&pound;</span>
-                    <input type="number" step="0.01" min="0" name="delivery_gbp" class="form-control" placeholder="Delivery" value="{{ '%.2f'|format(mc.delivery_gbp or 0) if mc else '0.00' }}">
-                </div>
-            </div>
-            <div class="col-12">
-                <input type="text" name="notes" class="form-control form-control-sm" placeholder="Notes (optional)" value="{{ mc.notes if mc else '' }}">
-            </div>
-            {# Confidence factor (2026-09-07, Tamara: "manually adding the
-               source store with confidence factor so we can get a
-               picture of where competitors are sourcing") -- reuses the
-               same High/Medium/Low scale the automated OA path already
-               populates on OaSourceCandidate.source_confidence, see
-               save_manual_source's own docstring for why this is a
-               separate question from product-match confidence. #}
-            <div class="col-12">
-                <select name="source_confidence" class="form-select form-select-sm" title="How sure are you this is really where they bought it?">
-                    <option value="" {{ 'selected' if not (mc.source_confidence if mc else '') }}>Confidence this is the real source...</option>
-                    <option value="High" {{ 'selected' if mc and mc.source_confidence == 'High' }}>High -- confirmed (order history, screenshot, etc.)</option>
-                    <option value="Medium" {{ 'selected' if mc and mc.source_confidence == 'Medium' }}>Medium -- likely match, not fully confirmed</option>
-                    <option value="Low" {{ 'selected' if mc and mc.source_confidence == 'Low' }}>Low -- a plausible guess</option>
-                </select>
-            </div>
-            <div class="col-12 d-grid">
-                <button type="submit" class="btn btn-sm btn-dark"><i class="bi bi-save"></i> Save source</button>
-            </div>
-        </div>
-    </form>
+
 </div>
 {% endif %}
 
@@ -894,6 +848,10 @@
     </div>
     {% endfor %}
 </div>
+
+{% if item.oa_price_guide or 'competitor' in item.sources or 'oa_investigate' in item.sources %}
+{% include "_review_known_source.html" %}
+{% endif %}
 
 <!-- REVIEW ACTIONS (section 19) -->
 <div class="mb-2">

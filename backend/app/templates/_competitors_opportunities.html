@@ -139,7 +139,7 @@
                 </div>
                 <div class="text-muted small">
                     {{ listing.asin }}
-                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ listing.asin }}" title="Copy ASIN" onclick="event.stopPropagation();"><i class="bi bi-clipboard"></i></button>
+                    <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ listing.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
                     &middot; via {{ seller.nickname or seller.seller_id }}
                     &middot; {{ listing.detected_at.strftime("%d %b") if listing.detected_at else "" }}
                 </div>
@@ -237,7 +237,7 @@
                     </div>
                     <button type="button" class="btn btn-sm btn-outline-danger qi-reject-btn" data-asin="{{ listing.asin }}"><i class="bi bi-x-lg"></i> Reject</button>
                 {% endif %}
-                <button type="button" class="btn btn-sm btn-outline-secondary qi-open-btn" data-asin="{{ listing.asin }}"><i class="bi bi-three-dots"></i></button>
+                <button type="button" class="btn btn-sm btn-outline-primary qi-open-btn" data-asin="{{ listing.asin }}"><i class="bi bi-info-circle"></i> More info</button>
             </div>
         </div>
     </div>

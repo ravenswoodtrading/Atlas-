@@ -1282,6 +1282,11 @@ class SellerWatchService:
                 .filter(SellerNewListing.dismissed == False)
                 .filter(SellerNewListing.review.is_(None))
                 .filter(ProductRecord.review.is_(None))
+                # Not gated on is_notable (see docstring above) but a
+                # frequently-returned item is excluded here too (Tamara,
+                # 2026-09-11) -- the demand-quality risk is timeless, not
+                # tied to today's price the way is_notable's ROI bar is.
+                .filter(ProductRecord.recommendation != "FREQUENTLY_RETURNED")
                 .order_by(SellerNewListing.detected_at.desc())
                 .limit(limit)
                 .all()
@@ -1410,6 +1415,10 @@ class SellerWatchService:
                 .filter(SellerNewListing.review.is_(None))
                 .filter(ProductRecord.review.is_(None))
                 .filter(ProductRecord.buy_box_now > 0)
+                # A frequently-returned item is excluded here too (Tamara,
+                # 2026-09-11) -- see list_historical_a2a_not_buyable's own
+                # comment on why this isn't left to is_notable alone.
+                .filter(ProductRecord.recommendation != "FREQUENTLY_RETURNED")
                 .order_by(SellerNewListing.detected_at.desc())
                 .limit(max(limit * 3, limit))  # over-fetch: not every row clears breakeven, trimmed below
                 .all()

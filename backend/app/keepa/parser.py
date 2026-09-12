@@ -1073,3 +1073,13 @@ class KeepaParser:
 
     def is_hazmat(self) -> bool:
         return bool(self.product.get("isHazMat", False))
+
+    def is_frequently_returned(self) -> bool:
+        """
+        Amazon's own "frequently returned item" badge, via Keepa's
+        returnRate field (null/unavailable, 1 = low, 2 = high). Part of
+        the base product payload on every existing product() call --
+        no stats/offers/rating add-on needed, so reading this costs no
+        extra Keepa tokens beyond what Atlas already spends per ASIN.
+        """
+        return self.product.get("returnRate") == 2
