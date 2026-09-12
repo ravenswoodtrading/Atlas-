@@ -1418,6 +1418,31 @@ class ReviewQueueService:
                 source_marketplace = va_item.get("best_source_marketplace")
                 source_cost_gbp = va_item.get("best_source_cost_gbp")
 
+        # A merged item's own headline (displayed) profit must never
+        # earn BUY_NOW on the strength of a DIFFERENT number entirely --
+        # found live, 2026-09-12 (Tamara: two real Buy Now items were
+        # actively losing money today). One qualified only via its
+        # 90-day-average ROI (OpportunityLensService's "effective"
+        # profit/roi is the better of today's/90d) while today's price
+        # was falling on an active, competition-driven crash; the other
+        # was the scan engine's own PEAK_WINDOW tier -- already flagged
+        # as riskier, never-full-trust -- pulled into Buy Now purely
+        # because a separate VA lead on the same ASIN said BUY. Either
+        # way, if what's actually shown to the user as "profit" is a
+        # real loss, this can never be a confident buy-now signal;
+        # demote it back to whatever other views it still earns (e.g.
+        # VA_TO_REVIEW) rather than silently keeping BUY_NOW because
+        # some OTHER figure/source looked fine.
+        display_profit = display.get("profit")
+        buy_now_demoted = (
+            QUEUE_PRIORITY_BUY_NOW in views and display_profit is not None and display_profit < 0
+        )
+        if buy_now_demoted:
+            views = views - {QUEUE_PRIORITY_BUY_NOW}
+            queue_priority = min(views, key=lambda v: _PRIORITY_RANK[v]) if views else QUEUE_PRIORITY_NEEDS_ATTENTION
+
+        lens = display.get("lens") or {}
+
         return {
             "asin": asin,
             "category": ATTENTION_CATEGORY_SOURCING,
@@ -1456,14 +1481,28 @@ class ReviewQueueService:
             # BUY/WATCH/AVOID vocabulary, not run through this lens) --
             # the template falls back to va_info's own verdict/rationale
             # in that case, same as it already does for score/confidence.
-            "action": (display.get("lens") or {}).get("action"),
-            "action_label": (display.get("lens") or {}).get("action_label"),
-            "action_description": (display.get("lens") or {}).get("action_description"),
-            "value": (display.get("lens") or {}).get("value"),
-            "good": (display.get("lens") or {}).get("good"),
-            "evidence": (display.get("lens") or {}).get("evidence"),
-            "risk": (display.get("lens") or {}).get("risk"),
-            "freshness_caption": (display.get("lens") or {}).get("freshness_caption"),
+            # Demoted to the same HISTORICAL_RECURRING vocabulary
+            # PEAK_WINDOW already uses ("was a real, evidenced
+            # opportunity -- not currently verified as buyable right
+            # now") rather than leaving the stale BUY-flavoured label
+            # from `lens` in place once buy_now_demoted has pulled the
+            # view itself -- a badge that still said "BUY NOW" on an
+            # item no longer in that tab would be exactly the
+            # confusing half-fix this exists to avoid.
+            "action": lens_service.ACTION_HISTORICAL_RECURRING if buy_now_demoted else lens.get("action"),
+            "action_label": (
+                lens_service.ACTION_LABELS[lens_service.ACTION_HISTORICAL_RECURRING] if buy_now_demoted
+                else lens.get("action_label")
+            ),
+            "action_description": (
+                lens_service.ACTION_DESCRIPTIONS[lens_service.ACTION_HISTORICAL_RECURRING] if buy_now_demoted
+                else lens.get("action_description")
+            ),
+            "value": lens.get("value"),
+            "good": lens.get("good"),
+            "evidence": lens.get("evidence"),
+            "risk": lens.get("risk"),
+            "freshness_caption": lens.get("freshness_caption"),
             "title": display.get("title") or primary.get("title"),
             "brand": display.get("brand") or primary.get("brand"),
             # "" for a VA-only item (VA leads never captured a Keepa

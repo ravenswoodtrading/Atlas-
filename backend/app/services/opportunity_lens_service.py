@@ -417,6 +417,17 @@ def compute(lead: dict) -> dict:
         val = value_tier(max(eff_profit, peak_profit), max(eff_roi, peak_roi))
         value["tier"] = val
         action = ACTION_HISTORICAL_RECURRING
+    elif recommendation == "LOW_SCORE" and eff_profit < SOLID_PROFIT:
+        # Found live, 2026-09-12 (Tamara: several Buy Now items were
+        # "not great" -- thin margin, LOW_SCORE, evidence resting only
+        # on a handful of Keepa rank drops). LOW_SCORE already means
+        # "the composite score is weak, look at the actual factors
+        # before trusting it" (see ProductRepository.is_notable's own
+        # exclusion of this tier); a real ROI% on a SOLID_PROFIT-or-more
+        # base can still be worth the generic notable path below, but
+        # under that floor a single return wipes the entire margin, so
+        # this never earns Buy Now on ROI% alone -- Borderline instead.
+        action = ACTION_WATCH
     else:
         notable = recommendation == "BUY" or (eff_roi > IS_NOTABLE_ROI and ev != "INSUFFICIENT")
 
