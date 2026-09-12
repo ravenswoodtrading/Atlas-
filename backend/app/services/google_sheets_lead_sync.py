@@ -28,6 +28,8 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
+from sqlalchemy import text
+
 from app.database.database import SessionLocal
 from app.database.models import Lead, SheetLeadSyncState
 from app.services.google_sheets_client import open_sheet
@@ -104,6 +106,27 @@ def pull_and_ingest_va_leads() -> dict:
     db = SessionLocal()
     baselined = ingested = decisions_applied = skipped_unchanged = notes_backfilled = 0
     try:
+        # Real duplication bug found live, 2026-09-12 (Tamara: leads
+        # reviewed on the sheet weren't showing as reviewed in Atlas):
+        # traced to ~2,175 duplicate Lead rows built up over weeks,
+        # matching a pattern of two overlapping calls to this function
+        # both reading "is this row new?" against the SAME pre-write
+        # SheetLeadSubmission snapshot, then both inserting -- SQLite
+        # allows two concurrent INSERTs of unrelated rows just fine, so
+        # nothing here previously stopped it. Most likely source: the
+        # self-healing launcher (start_atlas_loop.bat) restarting
+        # uvicorn without confirming the previous process actually
+        # exited first, given process kills are already documented as
+        # unreliable in this environment -- two live processes each
+        # running their own copy of this hourly scheduler tick would
+        # produce exactly this. BEGIN IMMEDIATE forces any second,
+        # overlapping caller (another process, another thread, a manual
+        # run while the scheduler is also mid-tick) to block until this
+        # one's commit/close releases the lock, so it re-reads the
+        # FRESH post-write state instead of a stale pre-write one --
+        # same fix already used for the analogous sheet_lead_webhook
+        # vs. sync race (see that route's own comment).
+        db.execute(text("BEGIN IMMEDIATE"))
         # ---- PASS 1: new/changed row ingestion ----
         # Keyed by content_hash, NOT asin -- see SheetLeadSyncState's own
         # docstring for the two real incidents that happened keying this
