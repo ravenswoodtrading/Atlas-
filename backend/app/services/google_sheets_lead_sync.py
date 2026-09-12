@@ -171,6 +171,31 @@ def pull_and_ingest_va_leads() -> dict:
         ingested = submission_counts['ingested']
         skipped_unchanged = submission_counts['skipped_unchanged']
 
+        # Circuit breaker, 2026-09-12 (Tamara: leads reviewed on the
+        # sheet weren't showing as reviewed -- traced to a duplication
+        # bug that silently created thousands of duplicate Lead rows
+        # over time via a mechanism not yet fully root-caused; the
+        # concurrency fix above closes ONE way this happens, but isn't
+        # proven to be the only one). A single normal day's real VA
+        # activity is a handful of new leads -- never a meaningful
+        # fraction of the whole sheet. If "new" ever balloons to most
+        # of the sheet at once, that's the signature of the ASIN
+        # already being ingested before under a different, unmatched
+        # identity, not genuine new demand. Refuse to write rather than
+        # silently duplicate: roll back and raise so the caller (the
+        # scheduler's own try/except, or a manual run) sees a loud
+        # failure instead of a quiet mass-duplication. Threshold is
+        # deliberately generous (50 rows AND 5% of the sheet) so it
+        # never fires on real bulk VA activity.
+        if ingested > 50 and ingested > 0.05 * len(payloads):
+            db.rollback()
+            raise RuntimeError(
+                f"Refusing to sync: {ingested} of {len(payloads)} rows would be ingested as "
+                "\"new\" in one pass -- almost certainly duplicate-identity matching failing "
+                "at scale, not genuine new leads. No changes written; investigate before "
+                "re-running (see this function's own 2026-09-12 comment)."
+            )
+
         # Real bug found live, 2026-09-08 (Tamara: "I have VA leads
         # added today on the sheet that aren't showing") -- this used
         # to be a bare db.flush(), which sends Pass 1's writes to the
