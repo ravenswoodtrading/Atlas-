@@ -290,6 +290,22 @@ def _stk_cogs_due():
     return datetime.now(timezone.utc) - run["run_at"].replace(tzinfo=timezone.utc) >= timedelta(days=7)
 
 
+def _amazon_listing_upload_failures():
+    """
+    Count of Buy Sheet rows the automatic Amazon listing upload
+    (2026-09-12) couldn't resolve on its own -- most commonly, Amazon's
+    catalog has no product-type classification for that ASIN yet, which
+    the automatic path can't work around (see amazon_listing_upload_
+    service.py's own docstring). These need the same manual Seller
+    Central handling the whole process used before this was automated;
+    Atlas leaves their "Listing Uploader (Y)" flag untouched so they
+    aren't lost, and flags them here rather than only in the DB where
+    nobody would think to look.
+    """
+    from app.services.amazon_listing_upload_service import recent_failures
+    return len(recent_failures())
+
+
 def _keepa_tokens_remaining():
     """
     Current Keepa token balance, read from the cached client's own
@@ -474,6 +490,7 @@ def dashboard(request: Request):
             "stats": stats,
             "scan_tier_review_count": len(pending_reviews()),
             "stk_cogs_due": _stk_cogs_due(),
+            "amazon_listing_upload_failures": _amazon_listing_upload_failures(),
             "sheet_leads_waiting": sheet_leads_waiting,
             "manual_leads_waiting": manual_leads_waiting,
             "keepa_tokens_remaining": _keepa_tokens_remaining(),

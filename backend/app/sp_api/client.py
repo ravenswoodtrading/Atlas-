@@ -895,6 +895,168 @@ class SPAPIClient:
 
         return results
 
+    def get_product_types(self, asins: list[str], marketplace: str = "UK") -> dict | None:
+        """
+        Returns {asin: productType} via the Catalog Items API's
+        includedData=productTypes -- the one piece of information
+        putListingsItem needs that isn't derivable from anything Tamara's
+        Buy Sheet/Listing Uploader tabs already carry (Amazon Listing
+        Upload, 2026-09-12). Every attribute the flat-file upload used
+        (condition, price, fulfillment channel, country of origin) has a
+        direct sheet source; productType does not, because the classic
+        flat-file format never required a seller to state it explicitly
+        the way the JSON Listings API does.
+
+        VERIFIED AGAINST A LIVE CALL (2026-09-12): confirmed for 3 real
+        ASINs from today's actual pending Listing Uploader rows --
+        B093FBGG5S -> BREAST_PUMP, B0F8WTXRXY -> CHARGING_ADAPTER,
+        B004YJLVI8 -> LABEL. Response shape (items[].productTypes[].
+        productType) matches Amazon's published Catalog Items API
+        2022-04-01 docs exactly, unlike search_catalog_items' own
+        still-unverified salesRanks/dimensions parsing above.
+
+        Returns None (not {}) if the call itself failed outright -- same
+        None-vs-real-dict convention as every other method in this file.
+        An ASIN absent from the returned dict means Amazon's catalog had
+        no productType for it (a real answer: that ASIN can't be listed
+        via putListingsItem until Amazon's catalog resolves one), not a
+        failure.
+        """
+        if not asins:
+            return {}
+
+        asins = asins[: self.CATALOG_ITEMS_BATCH_SIZE]
+
+        marketplace_id = MARKETPLACE_IDS.get(marketplace)
+        if not marketplace_id:
+            return None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                access_token = self._get_access_token()
+            except Exception as exc:
+                print(f"SP-API token refresh failed: {exc}")
+                return None
+
+            self._pace(self.CATALOG_MIN_REQUEST_INTERVAL_SECONDS)
+
+            try:
+                resp = requests.get(
+                    f"{EU_ENDPOINT}/catalog/2022-04-01/items",
+                    headers={"x-amz-access-token": access_token, "Content-Type": "application/json"},
+                    params={
+                        "identifiers": ",".join(asins),
+                        "identifiersType": "ASIN",
+                        "marketplaceIds": marketplace_id,
+                        "includedData": "productTypes",
+                    },
+                    timeout=15,
+                )
+            except Exception as exc:
+                print(f"SP-API getProductTypes request failed for {len(asins)} ASINs/{marketplace}: {exc}")
+                return None
+
+            if resp.status_code == 429:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+
+            if resp.status_code != 200:
+                return None
+
+            body = resp.json()
+            results = {}
+            for item in body.get("items", []):
+                asin = item.get("asin")
+                types = item.get("productTypes") or []
+                if asin and types:
+                    results[asin] = types[0].get("productType")
+            return results
+
+        return None
+
+    def put_listing_item(self, sku: str, product_type: str, attributes: dict, marketplace: str = "UK") -> dict:
+        """
+        Calls the Listings Items API's putListingsItem with
+        requirements=LISTING_OFFER_ONLY -- creates/updates SKU's own
+        offer against an EXISTING catalog ASIN (Amazon Listing Upload,
+        2026-09-12: replaces the manual "download the Listing
+        Uploader/Amazon uploader tab as a file, upload it to Seller
+        Central" step Tamara's team did by hand for every Buy Sheet row
+        marked "Listing Uploader (Y)"). LISTING_OFFER_ONLY is the
+        offer-only mode -- no images/bullets/title required, matching
+        the sheet's own flat-file template, which only ever supplied a
+        merchant-suggested ASIN plus offer/compliance fields, never full
+        catalog listing content.
+
+        `attributes` is the caller's fully-built attribute dict (see
+        amazon_listing_upload_service.py for exactly which ones this
+        account's sheet-driven flow always sends) -- this method owns
+        only the HTTP call, not attribute construction, same division of
+        labour delete_listing_item already has with InventoryCleanup
+        Service.
+
+        Returns {"success": bool, "error": str, "issues": list} -- never
+        raises. success=True means Amazon ACCEPTED the submission for
+        processing (issues may still list WARNING/INFO-level notes,
+        which do not fail the call); an ERROR-severity issue always sets
+        success=False even on an HTTP 200/202, since Amazon's own docs
+        say ERROR issues mean the listing was NOT actually updated
+        despite the 2xx. Amazon's processing is otherwise asynchronous
+        (same caveat delete_listing_item's own docstring gives) -- a
+        rare accepted-but-failed-downstream case isn't caught here.
+
+        Requires self.seller_id, same as delete_listing_item.
+
+        UNVERIFIED AGAINST A LIVE CALL as of writing -- confirm on one
+        real, low-stakes pending row first (print the raw response) per
+        this file's own established practice before trusting this for
+        the full automatic queue.
+        """
+        marketplace_id = MARKETPLACE_IDS.get(marketplace)
+        if not marketplace_id:
+            return {"success": False, "error": f"Unknown marketplace: {marketplace}", "issues": []}
+
+        if not self.seller_id:
+            return {"success": False, "error": "SP_API_SELLER_ID not configured in .env", "issues": []}
+
+        try:
+            access_token = self._get_access_token()
+        except Exception as exc:
+            return {"success": False, "error": f"Token refresh failed: {exc}", "issues": []}
+
+        self._pace(self.LISTINGS_MIN_REQUEST_INTERVAL_SECONDS)
+
+        body = {
+            "productType": product_type,
+            "requirements": "LISTING_OFFER_ONLY",
+            "attributes": attributes,
+        }
+
+        try:
+            resp = requests.put(
+                f"{EU_ENDPOINT}/listings/2021-08-01/items/{self.seller_id}/{sku}",
+                headers={"x-amz-access-token": access_token, "Content-Type": "application/json"},
+                params={"marketplaceIds": marketplace_id, "issueLocale": "en_GB"},
+                json=body,
+                timeout=30,
+            )
+        except Exception as exc:
+            return {"success": False, "error": f"Request failed: {exc}", "issues": []}
+
+        try:
+            resp_body = resp.json()
+        except Exception:
+            resp_body = {}
+
+        issues = resp_body.get("issues") or []
+        error_issues = [i for i in issues if (i.get("severity") or "").upper() == "ERROR"]
+
+        if resp.status_code not in (200, 202) or error_issues:
+            message = "; ".join(i.get("message", "") for i in error_issues) or f"HTTP {resp.status_code}: {resp.text[:500]}"
+            return {"success": False, "error": message, "issues": issues}
+
+        return {"success": True, "error": "", "issues": issues}
+
     def delete_listing_item(self, sku: str, marketplace: str = "UK") -> dict:
         """
         Calls the Listings Items API's deleteListingsItem -- REMOVES the

@@ -27,6 +27,7 @@ from app.services.verdict_run_service import VerdictRunService
 from app.services.eu_a2a_freshness_service import recheck_pending_eu_a2a
 from app.services.inventory_cleanup_service import InventoryCleanupService
 from app.services.storage_fee_service import StorageFeeService
+from app.services import amazon_listing_upload_service
 
 from app.database.base import Base
 from app.database.database import engine
@@ -469,6 +470,40 @@ async def _eu_a2a_freshness_scheduler():
 INVENTORY_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 
+# How often Atlas checks the Buy Sheet's own "Listing Uploader (Y)"
+# column for rows ready to submit to Amazon (Amazon Listing Upload,
+# 2026-09-12, Tamara: "fully automatic" -- replaces the manual "download
+# the file, upload it to Seller Central, then clear the flag by hand"
+# step). 30 minutes: prompt enough that a row marked Y doesn't sit
+# waiting for an hour, without hammering the Listings/Catalog APIs on a
+# process that's naturally bursty (a handful of rows at a time, not
+# continuous). No day/hour gating unlike the VA lead sync -- there's no
+# reason a real Amazon listing can't be created outside business hours,
+# unlike that scheduler's "leads should wait for a human to review them
+# at a sane hour" reasoning.
+AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS = 30 * 60
+
+
+async def _amazon_listing_upload_scheduler():
+    while True:
+        try:
+            # run_pending_uploads makes blocking Google Sheets + SP-API
+            # HTTP calls -- run it off the event loop, same reason as
+            # every other scheduler here.
+            result = await asyncio.to_thread(amazon_listing_upload_service.run_pending_uploads)
+            summary = (
+                f"{result['succeeded']} listed, {result['failed']} failed"
+                if (result["succeeded"] or result["failed"]) else "no pending rows"
+            )
+            await asyncio.to_thread(
+                ActivityLog.mark_tick, "amazon_listing_upload", AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS, summary,
+            )
+        except Exception as exc:
+            print(f"Amazon listing upload tick failed: {exc}")
+
+        await asyncio.sleep(AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS)
+
+
 async def _inventory_cleanup_scheduler():
     while True:
         try:
@@ -544,6 +579,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_signal_scheduler()),
             asyncio.create_task(_eu_a2a_freshness_scheduler()),
             asyncio.create_task(_inventory_cleanup_scheduler()),
+            asyncio.create_task(_amazon_listing_upload_scheduler()),
             asyncio.create_task(_storage_fee_scheduler()),
         ]
     else:

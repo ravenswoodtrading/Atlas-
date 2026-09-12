@@ -2254,6 +2254,33 @@ class StkCogsRun(Base):
     unresolved_json: Mapped[str] = mapped_column(String, default="[]")
 
 
+class AmazonListingUpload(Base):
+    """
+    History of automatic Amazon listing submissions (2026-09-12) --
+    replaces the manual "download Listing Uploader tab, upload to Seller
+    Central" step: Atlas now watches Buy Sheet's own "Listing Uploader
+    (Y)" column and submits each marked row to Amazon directly via the
+    Listings Items API. One row per attempt (kept as history, not a
+    single latest-row, so a failed SKU's past attempts stay visible for
+    diagnosis and the Command Centre can flag anything still failing).
+
+    sku is NOT unique -- Amazon's putListingsItem is a PUT, so the same
+    SKU can legitimately be resubmitted (e.g. a retry after a transient
+    failure, or the Buy Sheet's own known duplicate-row quirk); only
+    `status` distinguishes which attempt actually stuck.
+    """
+    __tablename__ = "amazon_listing_uploads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    sku: Mapped[str] = mapped_column(String, index=True)
+    asin: Mapped[str] = mapped_column(String, default="")
+    price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    buy_sheet_row: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String, default="")  # "succeeded" | "failed"
+    error: Mapped[str] = mapped_column(String, default="")
+
+
 class AmazonInventoryLedgerLine(Base):
     """One row from Amazon's FBA Inventory Ledger Detailed View."""
     __tablename__ = "amazon_inventory_ledger_lines"
