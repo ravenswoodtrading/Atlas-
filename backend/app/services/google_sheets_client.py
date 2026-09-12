@@ -20,6 +20,7 @@ Credentials, both gitignored, never committed:
 """
 import os
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -49,10 +50,29 @@ def get_credentials(interactive: bool = False) -> Credentials:
         return creds
 
     if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "w", encoding="utf-8") as f:
-            f.write(creds.to_json())
-        return creds
+        try:
+            creds.refresh(Request())
+            with open(TOKEN_PATH, "w", encoding="utf-8") as f:
+                f.write(creds.to_json())
+            return creds
+        except RefreshError:
+            # Refresh token itself expired/revoked (Google-side, e.g.
+            # 6 months unused, or access was revoked) -- not just an
+            # expired access token. Real incident, 2026-09-12: this used
+            # to propagate straight out of get_credentials, which meant
+            # even run_first_time_authorization.py (interactive=True)
+            # could never reach the interactive login below -- it hit
+            # this same crash before ever getting the chance to open a
+            # browser window. Falling through instead lets a bad token
+            # be replaced by a fresh interactive login in one run,
+            # rather than needing the stale token file manually moved
+            # aside first.
+            if not interactive:
+                raise RuntimeError(
+                    "Google Sheets authorization has expired or been revoked. Run "
+                    "run_first_time_authorization.py to log in again."
+                )
+            creds = None
 
     if not interactive:
         raise RuntimeError(

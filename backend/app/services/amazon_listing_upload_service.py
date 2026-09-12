@@ -114,10 +114,28 @@ def pending_rows():
 
 
 def build_attributes(asin, price, marketplace_id):
-    """The fixed attribute set every Buy-Sheet-driven listing sends --
+    """
+    The fixed attribute set every Buy-Sheet-driven listing sends --
     matches exactly what Listing Uploader/Amazon uploader already
     populate today (traced live, 2026-09-12): merchant-suggested ASIN,
-    New condition, FBA fulfilment, offer price, and Country of Origin."""
+    New condition, FBA fulfilment, offer price, and Country of Origin.
+
+    batteries_required and supplier_declared_dg_hz_regulation added
+    2026-09-12 after a real second batch failed on both ("'Dangerous
+    Goods Regulations' is required but missing" / "'Are batteries
+    required?' is required but missing") for product types the first
+    batch never happened to include (TEA, SECURITY_CAMERA, CONTROLLER,
+    FIGURINE vs. the first batch's BREAST_PUMP/CHARGING_ADAPTER/etc,
+    which didn't require either). Both attribute names and their valid
+    values confirmed against the live Product Type Definitions schema
+    for TEA and FIGURINE -- not guessed. Both match the flat file's own
+    existing hardcoded defaults exactly (Listing Uploader's
+    batteries_required column is always "FALSE"; Amazon uploader's
+    Dangerous Goods Regulations column is always "Not Applicable"), so
+    sending them universally, not just when a schema demands them,
+    matches what this team's process already assumed true for every
+    product it lists.
+    """
     return {
         "merchant_suggested_asin": [{"value": asin, "marketplace_id": marketplace_id}],
         "condition_type": [{"value": "new_new", "marketplace_id": marketplace_id}],
@@ -127,6 +145,8 @@ def build_attributes(asin, price, marketplace_id):
             "our_price": [{"schedule": [{"value_with_tax": price}]}],
         }],
         "country_of_origin": [{"value": DEFAULT_COUNTRY_OF_ORIGIN, "marketplace_id": marketplace_id}],
+        "batteries_required": [{"value": False, "marketplace_id": marketplace_id}],
+        "supplier_declared_dg_hz_regulation": [{"value": "not_applicable", "marketplace_id": marketplace_id}],
     }
 
 
