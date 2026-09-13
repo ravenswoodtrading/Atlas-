@@ -197,9 +197,23 @@ def normalize_client_rating(value) -> str | None:
     rejected are reasonable-but-not-explicitly-confirmed interpretations
     (flagged to Tamara) -- everything else here was either directly
     confirmed or is an unambiguous synonym (Good ~ Ok, OOS -> Atlas's
-    own "oos" decision). "Review" and anything unrecognized/blank
-    deliberately return None -- left pending for a human on either
-    side, never guessed at.
+    own "oos" decision).
+
+    "Review" -> "watch" (changed 2026-09-13, Tamara: "review counts as
+    reviewed so we shouldn't be surfacing these in Atlas only blank
+    decisions") -- reverses the original 2026-09-05 call that treated
+    "Review" as not-yet-decided. A real backlog of 42 old "Review"-rated
+    leads (some from May 2026) sitting permanently in VA_TO_REVIEW is
+    what surfaced the mismatch: the VA/client uses "Review" to mean
+    "looked at it, not confident, watching" -- an actual completed
+    judgement, not a placeholder. "watch" is the closest existing
+    decision to that meaning (already auto-adds the ASIN to the
+    Watchlist, same as "oos" -- see apply_lead_decision), and matches
+    this same function's own DECISION_TO_CLIENT_RATING reverse mapping
+    in google_sheets_lead_sync.py, which already writes "watch" back to
+    the sheet as "Review". Anything else unrecognized/blank still
+    deliberately returns None -- left pending for a human, never guessed
+    at.
     """
     if value is None:
         return None
@@ -210,6 +224,8 @@ def normalize_client_rating(value) -> str | None:
         return "approved"
     if text == "oos":
         return "oos"
+    if text == "review":
+        return "watch"
     return None
 
 
