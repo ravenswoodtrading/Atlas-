@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Automations - Atlas{% endblock %}
+{% block content %}
+<div class="container-fluid p-4" style="max-width:1100px">
+<h1 class="h2">Automations</h1>
+<p class="text-muted">Everything Atlas does on its own, and everything it does for you once you upload or trigger something. One place to check "does Atlas already do this" instead of remembering which chat built it.</p>
+
+<div class="card mb-4">
+<div class="card-body">
+<h2 class="h5">Runs automatically</h2>
+<div class="table-responsive">
+<table class="table align-middle">
+<thead><tr><th>Automation</th><th>What it does</th><th>Last run</th></tr></thead>
+<tbody>
+{% for a in automations %}
+<tr>
+  <td><a href="{{ a.link }}">{{ a.label }}</a></td>
+  <td class="small">{{ a.description }}</td>
+  <td class="small text-muted">{{ a.last_ago or 'Never yet' }}{% if a.last_summary %}<br>{{ a.last_summary }}{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div class="card">
+<div class="card-body">
+<h2 class="h5">You trigger it, Atlas does the rest</h2>
+<div class="table-responsive">
+<table class="table align-middle">
+<thead><tr><th>Process</th><th>What it does</th><th>Cadence</th></tr></thead>
+<tbody>
+{% for p in on_demand %}
+<tr>
+  <td><a href="{{ p.link }}">{{ p.label }}</a></td>
+  <td class="small">{{ p.description }}</td>
+  <td class="small text-muted">{{ p.cadence }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</div>
+{% endblock %}

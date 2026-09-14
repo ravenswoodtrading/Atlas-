@@ -40,7 +40,7 @@ from app.routes import (
     verdict, leads, signals, oa_source_discovery, help as help_route,
     token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
     scan_intelligence, reports, actual_performance, va_performance,
-    amazon_listing_uploads,
+    amazon_listing_uploads, automations,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -662,6 +662,7 @@ app.include_router(shortlist.router)
 app.include_router(inventory_cleanup.router)
 app.include_router(storage_fee_watch.router)
 app.include_router(amazon_listing_uploads.router)
+app.include_router(automations.router)
 
 
 @app.get("/opportunities/{brand}")
