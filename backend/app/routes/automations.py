@@ -40,7 +40,7 @@ AUTOMATIONS = [
     dict(name="inventory_cleanup", label="Out of Stock Cleanup", link="/inventory-cleanup",
          description="Detects FBA SKUs that appear permanently out of stock. Detection only -- deleting a listing always needs your approval on that page."),
     dict(name="amazon_listing_upload", label="Amazon Listing Upload", link="/automation/amazon-listings",
-         description="Submits Buy Sheet rows marked \"Listing Uploader (Y)\" directly to Amazon, once a day, and updates the sheet's flags on success."),
+         description="Submits Buy Sheet rows marked \"Listing Uploader (Y)\" directly to Amazon at 9am and 9pm each day, and updates the sheet's flags on success."),
     dict(name="storage_fee_watch", label="Storage Fee Watch", link="/storage-fee-watch",
          description="Tracks FBA storage fee charges and long-term storage risk."),
 ]

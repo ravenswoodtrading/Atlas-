@@ -471,38 +471,70 @@ async def _eu_a2a_freshness_scheduler():
 INVENTORY_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60
 
 
-# How often Atlas checks the Buy Sheet's own "Listing Uploader (Y)"
-# column for rows ready to submit to Amazon (Amazon Listing Upload,
-# 2026-09-12, Tamara: "fully automatic" -- replaces the manual "download
-# the file, upload it to Seller Central, then clear the flag by hand"
-# step). Reduced from every 30 minutes to once a day (Tamara, 2026-09-12)
-# -- rows sit for at most a day rather than needing near-real-time
-# turnaround, and a daily cadence matches the once-a-day batch summary
-# now shown on /automation/amazon-listings. No day/hour gating unlike
+# Fixed local-time hours Atlas checks the Buy Sheet's own "Listing
+# Uploader (Y)" column for rows ready to submit to Amazon (Amazon
+# Listing Upload, 2026-09-12, Tamara: "fully automatic" -- replaces the
+# manual "download the file, upload it to Seller Central, then clear
+# the flag by hand" step). Changed 2026-09-16 (Tamara: "add another
+# upload for 9am every day so this runs twice in 24 hours") from a
+# fixed "24h after last run" cadence -- that produced an unpredictable
+# time of day (whatever time the server last happened to (re)start),
+# which caused real confusion: a row sitting in its normal wait window
+# looked like a missed/broken upload with no way to know when it would
+# actually run. Two fixed hours, evenly spaced, are checked on a short
+# poll so a restart still lands within a few minutes of either target,
+# not up to a full day late. No day/hour gating on WHICH days unlike
 # the VA lead sync -- there's no reason a real Amazon listing can't be
-# created outside business hours, unlike that scheduler's "leads should
-# wait for a human to review them at a sane hour" reasoning.
-AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS = 24 * 60 * 60
+# created on a weekend, unlike that scheduler's "leads should wait for
+# a human to review them at a sane hour" reasoning.
+AMAZON_LISTING_UPLOAD_HOURS = (9, 21)
+AMAZON_LISTING_UPLOAD_POLL_SECONDS = 5 * 60
+
+
+def _amazon_listing_upload_should_run_now() -> bool:
+    now_local = datetime.now()
+    if now_local.hour not in AMAZON_LISTING_UPLOAD_HOURS:
+        return False
+    from app.database.database import SessionLocal
+    from app.database.models import SchedulerStatus
+    db = SessionLocal()
+    try:
+        status = db.get(SchedulerStatus, "amazon_listing_upload")
+        if not status or not status.last_tick_at:
+            return True
+        last_utc = status.last_tick_at
+        if last_utc.tzinfo is None:
+            last_utc = last_utc.replace(tzinfo=timezone.utc)
+        last_local = last_utc.astimezone()
+        # Already ticked during THIS SAME target-hour slot today -- skip
+        # so a 5-minute poll doesn't refire repeatedly through the hour.
+        return not (last_local.date() == now_local.date() and last_local.hour == now_local.hour)
+    finally:
+        db.close()
 
 
 async def _amazon_listing_upload_scheduler():
     while True:
         try:
-            # run_pending_uploads makes blocking Google Sheets + SP-API
-            # HTTP calls -- run it off the event loop, same reason as
-            # every other scheduler here.
-            result = await asyncio.to_thread(amazon_listing_upload_service.run_pending_uploads)
-            summary = (
-                f"{result['succeeded']} listed, {result['failed']} failed"
-                if (result["succeeded"] or result["failed"]) else "no pending rows"
-            )
-            await asyncio.to_thread(
-                ActivityLog.mark_tick, "amazon_listing_upload", AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS, summary,
-            )
+            if _amazon_listing_upload_should_run_now():
+                # run_pending_uploads makes blocking Google Sheets + SP-API
+                # HTTP calls -- run it off the event loop, same reason as
+                # every other scheduler here.
+                result = await asyncio.to_thread(amazon_listing_upload_service.run_pending_uploads)
+                summary = (
+                    f"{result['succeeded']} listed, {result['failed']} failed"
+                    if (result["succeeded"] or result["failed"]) else "no pending rows"
+                )
+                # interval_seconds here is only a rough hint for the
+                # unused "next due" estimate elsewhere -- 12h matches the
+                # real spacing between the two fixed daily runs.
+                await asyncio.to_thread(
+                    ActivityLog.mark_tick, "amazon_listing_upload", 12 * 60 * 60, summary,
+                )
         except Exception as exc:
             print(f"Amazon listing upload tick failed: {exc}")
 
-        await asyncio.sleep(AMAZON_LISTING_UPLOAD_INTERVAL_SECONDS)
+        await asyncio.sleep(AMAZON_LISTING_UPLOAD_POLL_SECONDS)
 
 
 async def _inventory_cleanup_scheduler():
