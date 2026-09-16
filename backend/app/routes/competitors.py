@@ -165,6 +165,23 @@ def build_opportunities_context(view: str = "all", source: str = "all", q: str =
     needs_attention = SellerWatchService.list_historical_a2a_not_buyable(limit=300)
     oa_worth = SellerWatchService.list_oa_worth_investigating(limit=300)
 
+    # Real gap found live, 2026-09-16 (Tamara, re: B0F1YS92S2): the
+    # unified Review Queue already demotes a "BUY" out of its own
+    # BUY_NOW view when TODAY's actual profit is negative (2026-09-12,
+    # "Stop Buy Now from surfacing loss-making... leads") -- but that
+    # fix only touched review_queue_service._build_merged_item, not
+    # this page's own independent buy_now_pool split, so the same
+    # loss-making listing kept showing as Buy Now here. buy_now and
+    # strong_consider are BOTH drawn from list_notable_buyable() (see
+    # this function's own docstring: both map onto the unified queue's
+    # one BUY_NOW view), so the exclusion applies to the whole pool
+    # before the BUY-vs-CONSIDER label split below, not just the
+    # literal "BUY" half of it.
+    buy_now_pool = [
+        e for e in buy_now_pool
+        if not (e["record"] and e["record"].profit is not None and e["record"].profit < 0)
+    ]
+
     buy_now = [e for e in buy_now_pool if e["record"] and e["record"].recommendation == "BUY"]
     strong_consider = [e for e in buy_now_pool if not (e["record"] and e["record"].recommendation == "BUY")]
 
