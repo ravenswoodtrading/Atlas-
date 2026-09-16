@@ -467,6 +467,7 @@
             Atlas classified this as
             {% if item.oa_investigate_manually_classified %}<span class="badge bg-light text-dark border" title="You've corrected this -- future automated rechecks won't overwrite it"><i class="bi bi-person-check"></i> Manually set</span>{% endif %}
         </div>
+        <div class="small text-muted mb-1">See a different source here? Click below to reclassify it -- this updates the record immediately and Atlas won't overwrite your correction.</div>
         <div class="btn-group btn-group-sm qi-reclassify-group" data-asin="{{ item.asin }}" role="group">
             {% for tag in ["EU A2A", "UK A2A", "Wholesale (likely)", "OA / unclear"] %}
             <button type="button" class="btn qi-reclassify-btn {{ 'btn-secondary' if item.oa_investigate_sourcing_tag == tag else 'btn-outline-secondary' }}" data-tag="{{ tag }}">{{ tag }}</button>
@@ -587,6 +588,7 @@
         Atlas classified this as
         {% if item.competitor_manually_classified %}<span class="badge bg-light text-dark border" title="You've corrected this -- future automated rechecks won't overwrite it"><i class="bi bi-person-check"></i> Manually set</span>{% endif %}
     </div>
+    <div class="small text-muted mb-1">See a different source here? Click below to reclassify it -- this updates the record immediately and Atlas won't overwrite your correction.</div>
     <div class="btn-group btn-group-sm qi-reclassify-group" data-asin="{{ item.asin }}" role="group">
         {% for tag in ["EU A2A", "UK A2A", "Wholesale (likely)", "OA / unclear"] %}
         <button type="button" class="btn qi-reclassify-btn {{ 'btn-secondary' if item.competitor_sourcing_tag == tag else 'btn-outline-secondary' }}" data-tag="{{ tag }}">{{ tag }}</button>
