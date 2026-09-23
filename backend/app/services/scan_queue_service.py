@@ -36,6 +36,17 @@ TICK_INTERVAL_SECONDS = 60
 # negative) disables it. Override with SCAN_QUEUE_DAILY_TOKEN_CEILING in .env -- no code change.
 SCAN_QUEUE_DAILY_TOKEN_CEILING = int(os.getenv("SCAN_QUEUE_DAILY_TOKEN_CEILING", "30000"))
 
+# Tokens the Scan Queue never spends into, so every other Keepa user (lead analysis, Verdict,
+# Competitor Watch, Signals, weekly rechecks, Replen) always finds a balance (2026-09-24, Tamara:
+# "make sure these never take priority over other things"). Until then only a 30-token reserve
+# stood between a 60s tick and an empty balance, and the ceiling above was the real headroom --
+# raising the ceiling alone would have let the queue drain the balance all day. Holding a floor
+# costs the queue nothing: Keepa refills at a flat rate (62/min on this plan, bucket ~1 hour of
+# refill, checked 2026-09-24) whatever the balance, so tokens are only lost when the bucket is FULL.
+# Replen's same-day need (ReplenA2AService.token_reserve_needed) is held back on top of this.
+# Override with SCAN_QUEUE_TOKEN_RESERVE in .env.
+SCAN_QUEUE_TOKEN_RESERVE = int(os.getenv("SCAN_QUEUE_TOKEN_RESERVE", "1500"))
+
 class ScanQueueService:
     """
     Manages the automated scan queue: brands (optionally category-
@@ -307,9 +318,10 @@ class ScanQueueService:
         db.commit()
         ScanCoordinator.progress(f"Scan Queue: {item.brand}, catalogue page {item.next_page + 1}")
         try:
-            # Also hold back whatever Replen still needs for today's batch (0 once it's done) --
-            # see ReplenA2AService.token_reserve_needed.
-            reserve = max(WEEKLY_SAFETY_NET_RESERVE, ReplenA2AService.token_reserve_needed())
+            # The standing floor for everything else (SCAN_QUEUE_TOKEN_RESERVE), plus whatever Replen
+            # still needs for today's batch (0 once it's done) -- see ReplenA2AService.token_reserve_needed.
+            reserve = (max(WEEKLY_SAFETY_NET_RESERVE, SCAN_QUEUE_TOKEN_RESERVE)
+                       + ReplenA2AService.token_reserve_needed())
             scanner = BrandScanService(token_reserve=reserve, usage_category="scan_queue")
             result = scanner.scan(item.brand, limit=10, page=item.next_page, category_ids=category_ids, already_checked=checked)
         except Exception as exc:

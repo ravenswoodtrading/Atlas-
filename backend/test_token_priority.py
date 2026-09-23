@@ -201,15 +201,30 @@ class ScanQueueReserveWiringTests(unittest.TestCase):
             sqs.ScanQueueService._execute_scan_for_item(db, item)
         return scanner_class.call_args.kwargs
 
-    def test_scan_queue_keeps_replen_s_tokens_off_limits_while_replen_has_work(self):
-        kwargs = self.scan_with_reserve(needed=610)
-        self.assertEqual(kwargs["token_reserve"], 610)
+    def test_scan_queue_keeps_replen_s_tokens_off_limits_on_top_of_the_standing_floor(self):
+        with patch.object(sqs, "SCAN_QUEUE_TOKEN_RESERVE", 1500):
+            kwargs = self.scan_with_reserve(needed=610)
+        self.assertEqual(kwargs["token_reserve"], 1500 + 610)
         self.assertEqual(kwargs["usage_category"], "scan_queue")
 
-    def test_scan_queue_falls_back_to_its_old_reserve_once_replen_is_done(self):
+    def test_scan_queue_keeps_the_standing_floor_once_replen_is_done(self):
+        with patch.object(sqs, "SCAN_QUEUE_TOKEN_RESERVE", 1500):
+            self.assertEqual(self.scan_with_reserve(needed=0)["token_reserve"], 1500)
+
+    def test_floor_never_drops_below_the_old_safety_net_reserve(self):
         from app.services.brand_scan_service import WEEKLY_SAFETY_NET_RESERVE
-        self.assertEqual(self.scan_with_reserve(needed=0)["token_reserve"], WEEKLY_SAFETY_NET_RESERVE)
-        self.assertEqual(self.scan_with_reserve(needed=5)["token_reserve"], WEEKLY_SAFETY_NET_RESERVE)
+        with patch.object(sqs, "SCAN_QUEUE_TOKEN_RESERVE", 0):
+            self.assertEqual(self.scan_with_reserve(needed=0)["token_reserve"], WEEKLY_SAFETY_NET_RESERVE)
+
+    def test_brand_scan_stops_rather_than_spend_into_the_floor(self):
+        from app.services.brand_scan_service import BrandScanService, MIN_TOKEN_BUFFER
+        scanner = BrandScanService(token_reserve=1500, usage_category="scan_queue")
+        self.assertEqual(scanner._min_tokens, MIN_TOKEN_BUFFER + 1500)
+        scanner.product_service = MagicMock()
+        scanner.product_service.api.tokens_left = 1200   # below the floor: must refresh, then refuse
+        scanner.product_service.api.update_status = MagicMock()
+        self.assertLessEqual(scanner._current_tokens(), scanner._min_tokens)
+        scanner.product_service.api.update_status.assert_called_once()
 
 
 if __name__ == "__main__":

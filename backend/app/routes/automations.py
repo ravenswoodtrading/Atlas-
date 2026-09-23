@@ -18,13 +18,14 @@ from fastapi.templating import Jinja2Templates
 
 from app.services.activity_log import ActivityLog
 from app.routes.dashboard import _format_ago
+from app.services.scan_queue_service import SCAN_QUEUE_DAILY_TOKEN_CEILING, SCAN_QUEUE_TOKEN_RESERVE
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 AUTOMATIONS = [
     dict(name="scan_queue", label="Scan Queue", link="/scan-queue",
-         description="Rotates through tracked brands, searching for new sourcing opportunities. Capped at 30,000 Keepa tokens per rolling 24 hours (SCAN_QUEUE_DAILY_TOKEN_CEILING in .env) so the higher-yield jobs never run dry -- when the cap is hit it says so here and resumes as older spend ages out."),
+         description=f"Rotates through tracked brands, searching for new sourcing opportunities. Capped at {SCAN_QUEUE_DAILY_TOKEN_CEILING:,} Keepa tokens per rolling 24 hours (SCAN_QUEUE_DAILY_TOKEN_CEILING in .env), and never spends the last {SCAN_QUEUE_TOKEN_RESERVE:,} tokens of the balance (SCAN_QUEUE_TOKEN_RESERVE), so every other job always has tokens -- when the cap is hit it says so here and resumes as older spend ages out."),
     dict(name="seller_watch", label="Competitor Watch", link="/competitors/sellers",
          description="Checks tracked competitor sellers for new listings, 3 times a day (whenever the last successful pass is 8 hours old -- a restart doesn't reset it). Highest priority for tokens: brand scans and the safety nets stand aside while it waits for its turn."),
     dict(name="weekly_recheck", label="Watchlist safety net", link="/review-queue",
