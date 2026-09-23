@@ -6,6 +6,10 @@ from app.database.models import Lead, SheetLeadSubmission
 from app.routes.leads import ingest_sheet_lead_row
 
 AUDIT_COLUMNS = {'buy box on lead date', 'price drop (>5%)'}
+# See the guard in sync_submissions: more than this many known submissions missing from one read of the sheet
+# (and more than this share of them) means the read was bad, not that the rows were deleted.
+MAX_MISSING_ROWS = 50
+MAX_MISSING_FRACTION = 0.25
 
 
 def normalized(payload):
@@ -68,6 +72,19 @@ def sync_submissions(db, payloads):
         return counts
     previous = [json.loads(s.payload) for s in states]
     matches, new, ambiguous, missing = match_rows(previous, payloads)
+    # Guard, 2026-09-21: every stored submission had been flagged inactive (the only thing that ever does so is
+    # the loop at the bottom of this function), so the next sync saw all 843 sheet rows as new and the
+    # ingestion circuit breaker refused, leaving VA leads unsynced. The likeliest way in is one bad read of the
+    # sheet (empty or partial) whose rows match almost nothing: every stored submission looks "gone" and is
+    # deactivated, and that deactivation is committed. A real sheet never loses a large share of its rows in one
+    # hour, so refuse instead -- raising here happens before anything is applied, and the caller's session rolls
+    # back. Same shape as the ingestion breaker in google_sheets_lead_sync (an absolute AND a relative bar).
+    if len(missing) > MAX_MISSING_ROWS and len(missing) > MAX_MISSING_FRACTION * len(states):
+        raise RuntimeError(
+            f"Refusing to sync: {len(missing)} of {len(states)} known lead submissions are missing from this "
+            "read of the sheet -- almost certainly a bad or partial read, not the VA deleting that many rows. "
+            "No changes written; nothing was deactivated."
+        )
     for ni, oi in matches.items():
         state, p = states[oi], payloads[ni]
         if normalized(previous[oi]) == normalized(p):

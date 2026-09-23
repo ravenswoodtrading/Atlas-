@@ -1,4 +1,5 @@
 import json
+import time
 from datetime import datetime, timezone
 
 from app.database.database import SessionLocal
@@ -26,6 +27,18 @@ MAX_ANALYSIS_ATTEMPTS = 3
 # a judgment threshold like a profitability bar -- so it's a plain
 # "> 0", not a number invented to tune sensitivity.
 INVENTORY_FLAG_MIN_UNITS = 1
+
+# The FBA stock snapshot is now the FULL inventory (every page, ~28 SP-API requests / ~30s --
+# see SPAPIClient.get_inventory_summaries, fixed 2026-09-20; it used to read only the first
+# 50 SKUs), and this service ticks every LEAD_ANALYSIS_INTERVAL_SECONDS (30s) whenever a lead
+# is queued. Without a cache that would be a permanent 30-second pull loop against SP-API.
+# 30 minutes is plenty for an "are we already holding stock" fact check on a lead; a failed
+# refresh falls back to the last good snapshot for up to INVENTORY_SNAPSHOT_MAX_STALE_SECONDS
+# rather than silently dropping the flag from every lead analysed in the meantime.
+INVENTORY_SNAPSHOT_TTL_SECONDS = 30 * 60
+INVENTORY_SNAPSHOT_MAX_STALE_SECONDS = 6 * 60 * 60
+INVENTORY_SNAPSHOT_RETRY_SECONDS = 5 * 60
+_inventory_snapshot_cache = {"at": None, "data": {}, "retry_at": None}
 
 
 class LeadAnalysisService:
@@ -71,19 +84,40 @@ class LeadAnalysisService:
         success -- unconfigured SP-API, a failed call, or an empty
         catalog -- so a lead is simply not flagged rather than the
         whole batch failing because inventory couldn't be checked.
+        Cached (see INVENTORY_SNAPSHOT_TTL_SECONDS); a failed refresh
+        reuses the last good snapshot while it's under
+        INVENTORY_SNAPSHOT_MAX_STALE_SECONDS old.
         """
+        cache = _inventory_snapshot_cache
+        now = time.monotonic()
+        age = (now - cache["at"]) if cache["at"] is not None else None
+
+        if age is not None and age < INVENTORY_SNAPSHOT_TTL_SECONDS:
+            return cache["data"]
+
+        stale = cache["data"] if age is not None and age < INVENTORY_SNAPSHOT_MAX_STALE_SECONDS else {}
+
+        # After a failed refresh, wait before trying again -- a tick every 30s would otherwise
+        # re-run a slow failing call continuously.
+        if cache.get("retry_at") is not None and now < cache["retry_at"]:
+            return stale
+
+        def failed():
+            cache["retry_at"] = now + INVENTORY_SNAPSHOT_RETRY_SECONDS
+            return stale
+
         sp_client = get_sp_api_client()
         if not sp_client:
-            return {}
+            return failed()
 
         try:
             summaries = sp_client.get_inventory_summaries()
         except Exception as exc:
             print(f"Inventory snapshot fetch failed: {exc}")
-            return {}
+            return failed()
 
         if not summaries:
-            return {}
+            return failed()
 
         by_asin: dict[str, dict] = {}
         for info in summaries.values():
@@ -96,6 +130,7 @@ class LeadAnalysisService:
             if existing is None or fulfillable > (existing.get("fulfillable") or 0):
                 by_asin[asin] = info
 
+        cache["at"], cache["data"], cache["retry_at"] = time.monotonic(), by_asin, None
         return by_asin
 
     @staticmethod

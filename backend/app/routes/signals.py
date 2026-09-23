@@ -7,7 +7,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.product_repository import ProductRepository
-from app.services.signal_service import SignalService
+from app.services.signal_service import SignalService, EU_PRICE_DROP
+from app.services.eu_drop_scan_service import EU_DROP_CATEGORY_PRESETS, MARKETPLACES
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.opportunity_engine import OpportunityEngine
 
@@ -15,12 +16,16 @@ router = APIRouter()
 
 templates = Jinja2Templates(directory="app/templates")
 
+# Types that produce SignalMatch rows for the /signals feed. eu_price_drop does not -- its leads go
+# to the Review Queue, and its runs are summarised on the Keepa Searches page instead.
 SIGNAL_TYPES = ["stock_out", "price_spike", "ceiling_recheck"]
+QUERY_SIGNAL_TYPES = SIGNAL_TYPES + [EU_PRICE_DROP]
 
 SIGNAL_TYPE_LABELS = {
     "stock_out": "Stock-out",
     "price_spike": "Price spike",
     "ceiling_recheck": "Ceiling cleared",
+    EU_PRICE_DROP: "EU price drop",
 }
 
 # Icon + colour per signal type -- matches the badge styling approach
@@ -31,6 +36,7 @@ SIGNAL_TYPE_BADGE = {
     "stock_out": {"icon": "bi-exclamation-octagon", "bg": "#fdeee0", "fg": "#b3541e"},
     "price_spike": {"icon": "bi-graph-up-arrow", "bg": "#e6e9fb", "fg": "#3a3fc4"},
     "ceiling_recheck": {"icon": "bi-arrow-up-circle", "bg": "#e6f6ea", "fg": "#1e7a41"},
+    EU_PRICE_DROP: {"icon": "bi-graph-down-arrow", "bg": "#e3f4fb", "fg": "#0b6a94"},
 }
 
 SORT_OPTIONS = {
@@ -227,11 +233,21 @@ def build_signal_queries_context(check_result: str = "") -> dict:
     caller now -- Leads Hub used to be a second caller (removed
     2026-09-04, Navigation redesign).
     """
+    import json as _json
+    ProductRepository.fail_stale_signal_runs(SignalService.STALE_RUN_MINUTES)
     return {
         "queries": ProductRepository.list_signal_queries(),
-        "signal_types": SIGNAL_TYPES,
+        "signal_types": QUERY_SIGNAL_TYPES,
         "signal_type_labels": SIGNAL_TYPE_LABELS,
         "check_result": check_result,
+        "latest_runs": ProductRepository.latest_signal_run_by_query(),
+        "recent_runs": [
+            (run, _json.loads(run.summary_json) if run.summary_json else {})
+            for run in ProductRepository.list_signal_runs(15)
+        ],
+        "queries_by_id": {q.id: q for q in ProductRepository.list_signal_queries()},
+        "category_presets": EU_DROP_CATEGORY_PRESETS,
+        "marketplaces": MARKETPLACES,
     }
 
 
@@ -255,15 +271,40 @@ def signal_queries_page(request: Request, check_result: str = ""):
 
 @router.post("/signals/queries/add")
 def signal_query_add(name: str = Form(...), signal_type: str = Form(...),
-                      category_ids: str = Form("")):
-    if signal_type not in SIGNAL_TYPES:
-        return RedirectResponse(
-            url=f"/signals/queries?check_result={quote('Unknown signal type.')}", status_code=303
-        )
+                      category_ids: str = Form(""), marketplace: str = Form("DE"),
+                      min_price: int = Form(20), max_price: int = Form(150),
+                      drop30_pct: int = Form(20), drop90_pct: int = Form(15),
+                      min_rank_drops30: int = Form(10), per_run_cap: int = Form(60)):
+    def back(message):
+        return RedirectResponse(url=f"/signals/queries?check_result={quote(message)}", status_code=303)
+
+    if signal_type not in QUERY_SIGNAL_TYPES:
+        return back("Unknown signal type.")
 
     cleaned_ids = ",".join(c.strip() for c in category_ids.split(",") if c.strip())
-    ProductRepository.create_signal_query(name.strip(), signal_type, cleaned_ids)
 
+    if signal_type != EU_PRICE_DROP:
+        ProductRepository.create_signal_query(name.strip(), signal_type, cleaned_ids)
+        return RedirectResponse(url="/signals/queries", status_code=303)
+
+    if marketplace not in MARKETPLACES:
+        return back(f"Pick a marketplace: {', '.join(MARKETPLACES)}.")
+    if not cleaned_ids or not all(c.isdigit() for c in cleaned_ids.split(",")):
+        return back("An EU price-drop search needs the marketplace's Keepa category ID(s) -- numbers only.")
+    if not (1 <= min_price < max_price):
+        return back("Price band: the minimum must be at least 1 and below the maximum.")
+    if not (1 <= drop30_pct <= 90 and 1 <= drop90_pct <= 90):
+        return back("Drop thresholds must be between 1 and 90 percent.")
+    if not (0 <= min_rank_drops30 <= 1000):
+        return back("Minimum sales-rank drops must be between 0 and 1000.")
+    if not (1 <= per_run_cap <= 100):
+        return back("Per-run cap must be between 1 and 100 candidates (each one costs roughly 12 Keepa tokens).")
+
+    ProductRepository.create_signal_query(
+        name.strip(), signal_type, cleaned_ids, marketplace=marketplace, min_price=min_price,
+        max_price=max_price, drop30_pct=drop30_pct, drop90_pct=drop90_pct,
+        min_rank_drops30=min_rank_drops30, per_run_cap=per_run_cap,
+    )
     return RedirectResponse(url="/signals/queries", status_code=303)
 
 
@@ -289,6 +330,13 @@ def signal_run(query_id: int = Form(...), return_to: str = Form("/signals")):
     now"), so the background scan-queue scheduler can't sneak a tick
     in mid-run and start competing for the same token budget.
     """
+    query = ProductRepository.get_signal_query(query_id)
+    if query is not None and query.signal_type == EU_PRICE_DROP:
+        # Runs for minutes, on a background thread that takes the manual-scan
+        # lock itself around the paid scan only -- see SignalService.
+        _started, message = SignalService.start_eu_price_drop_run(query_id)
+        return RedirectResponse(url=f"{return_to}?check_result={quote(message)}", status_code=303)
+
     ScanCoordinator.acquire_for_manual_scan()
 
     try:

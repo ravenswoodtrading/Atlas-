@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% from "_signal_queries_content.html" import signal_queries_content %}
 
-{% block title %}Signal Queries - Atlas{% endblock %}
+{% block title %}Keepa Searches - Atlas{% endblock %}
 
 {% block content %}
-{{ signal_queries_content(queries, signal_types, signal_type_labels, check_result) }}
+{{ signal_queries_content(queries, signal_types, signal_type_labels, check_result, latest_runs, recent_runs, queries_by_id, category_presets, marketplaces) }}
 {% endblock %}

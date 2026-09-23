@@ -331,6 +331,73 @@ class DiscordNotifier:
         return True
 
     @staticmethod
+    def notify_replen_buy_more(fields: dict) -> bool:
+        """
+        Replen page alert (2026-09-20) -- an EU A2A ASIN we've bought before just
+        flipped to "Buy more" (see ReplenA2AService). Deliberately does NOT go
+        through notify_opportunity's per-ASIN NotifiedOpportunity cooldown: that
+        table is shared with fresh-find pings, so using it here could silence a
+        genuine new-opportunity alert for the same ASIN (or vice versa). The caller
+        owns the re-alert cooldown (ReplenA2AItem.alerted_at). Never raises; returns
+        True only if the message was actually posted.
+
+        Same two-message shape as notify_opportunity (mention ping first, then the
+        bare ASIN as plain content so mobile "Copy Text" returns only the ASIN).
+        """
+        asin = fields.get("asin") or ""
+
+        if not asin or not WEBHOOK_URL:
+            return False
+
+        title = (fields.get("title") or asin)[:200]
+        uk_url = _amazon_url(asin, "UK")
+        source_marketplace = fields.get("source_marketplace") or ""
+        source_url = _amazon_url(asin, source_marketplace)
+        source_cost = fields.get("source_cost")
+        paid = fields.get("last_cost")
+        roi = fields.get("roi")
+
+        if MENTION_USER_ID:
+            try:
+                requests.post(
+                    WEBHOOK_URL,
+                    json={"content": f"<@{MENTION_USER_ID}> Replen - buy more: {title}"},
+                    timeout=10,
+                ).raise_for_status()
+            except Exception as exc:
+                print(f"Discord replen ping message failed for {asin}: {exc}")
+
+        embed = {
+            "title": title,
+            "url": uk_url,
+            "color": DISCORD_COLOR_BUY,
+            "description": fields.get("reason") or "",
+            "fields": [
+                {"name": "ROI now", "value": f"{roi:.0f}%" if roi is not None else "-", "inline": True},
+                {
+                    "name": "Source now",
+                    "value": (
+                        f"[{source_marketplace} £{source_cost:.2f}]({source_url})"
+                        if source_url and source_cost is not None else "-"
+                    ),
+                    "inline": True,
+                },
+                {"name": "Last paid", "value": f"£{paid:.2f}" if paid is not None else "-", "inline": True},
+                {"name": "In stock", "value": str(fields.get("stock", "?")), "inline": True},
+                {"name": "Sold (30d)", "value": str(fields.get("units_30d", "?")), "inline": True},
+                {"name": "Amazon UK", "value": f"[View listing]({uk_url})" if uk_url else "-", "inline": True},
+            ],
+        }
+
+        try:
+            requests.post(WEBHOOK_URL, json={"content": asin, "embeds": [embed]}, timeout=10).raise_for_status()
+        except Exception as exc:
+            print(f"Discord replen notification failed for {asin}: {exc}")
+            return False
+
+        return True
+
+    @staticmethod
     def send_test_ping() -> dict:
         """
         Sends one sample message so the webhook/mention setup can be

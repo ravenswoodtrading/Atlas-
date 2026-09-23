@@ -14,10 +14,12 @@ from app.services.category_survey_service import CategorySurveyService
 from app.services.scan_queue_service import ScanQueueService, TICK_INTERVAL_SECONDS
 from app.services.seller_watch_service import SellerWatchService, RECLASSIFY_DAILY_CAP
 from app.services.watchlist_service import WatchlistService
-from app.services.replen_service import ReplenService
+from app.services.price_sweep_service import PriceSweepService
+from app.services.replen_a2a_service import ReplenA2AService, RUN_DUE_HOURS as REPLEN_A2A_DUE_HOURS, SCHEDULER_NAME as REPLEN_A2A_NAME
 from app.services.review_queue_service import ReviewQueueService
 from app.services.revisit_pool_service import RevisitPoolService
 from app.services.scan_coordinator import ScanCoordinator
+from app.services.keepa_priority import KeepaPriority, ScanBusyError, BATCH_WAIT_SECONDS
 from app.services.lead_analysis_service import LeadAnalysisService
 from app.services.discord_notifier import DiscordNotifier
 from app.services.product_repository import ProductRepository
@@ -27,6 +29,7 @@ from app.services.verdict_run_service import VerdictRunService
 from app.services.eu_a2a_freshness_service import recheck_pending_eu_a2a
 from app.services.inventory_cleanup_service import InventoryCleanupService
 from app.services.storage_fee_service import StorageFeeService
+from app.services.restriction_service import RestrictionService
 from app.services import amazon_listing_upload_service
 
 from app.database.base import Base
@@ -40,7 +43,7 @@ from app.routes import (
     verdict, leads, signals, oa_source_discovery, help as help_route,
     token_usage, criteria, shortlist, inventory_cleanup, storage_fee_watch,
     scan_intelligence, reports, actual_performance, va_performance,
-    amazon_listing_uploads, automations,
+    amazon_listing_uploads, automations, price_sweep, eligibility,
 )
 
 # How often the background scan-queue scheduler makes one tick of
@@ -107,33 +110,47 @@ async def _scan_queue_scheduler():
 # docstring for the real bug this closed.
 SELLER_WATCH_INTERVAL_SECONDS = 8 * 60 * 60
 
+# Competitor Watch is the best-yielding thing Atlas spends tokens on (2026-09-20: ~25 notable finds
+# per 100k tokens vs ~0.6 for brand scans), so it gets priority over the Scan Queue and the safety
+# nets, and it must actually run 3x a day. It didn't: the old loop made ONE non-blocking grab of the
+# scan lock and, if the 60-second Scan Queue happened to hold it, slept the full 8 hours -- and its
+# timer restarted with every server restart. Measured: some days had a single pass, with 16-17 hour
+# gaps. Now: (1) it runs when the last SUCCESSFUL pass is 8h old (restart-proof); (2) it takes a
+# priority slot -- automated ticks stand down and any in-flight scan yields within one chunk while
+# it waits; (3) if it still can't get the lock it retries in 5 minutes, not 8 hours.
+SELLER_WATCH_POLL_SECONDS = 15 * 60
+SELLER_WATCH_BUSY_RETRY_SECONDS = 5 * 60
+SELLER_WATCH_FAILURE_RETRY_SECONDS = 30 * 60
+
+
+def _run_competitor_pass() -> dict:
+    with KeepaPriority.priority_slot(timeout=BATCH_WAIT_SECONDS):
+        return SellerWatchService.run_check()
+
 
 async def _seller_watch_scheduler():
     while True:
+        wait_seconds = await asyncio.to_thread(
+            _seconds_until_due, "seller_watch", SELLER_WATCH_INTERVAL_SECONDS / 3600,
+        )
+        if wait_seconds > 0:
+            await asyncio.sleep(min(wait_seconds, SELLER_WATCH_POLL_SECONDS))
+            continue
+
+        delay = SELLER_WATCH_POLL_SECONDS
         try:
-            # Same non-blocking "skip this tick if a manual scan is
-            # already running" priority rule ScanQueueService's
-            # automated tick uses (see ScanCoordinator) -- manual,
-            # user-initiated scans (Discovery, Replen, Watchlist, or a
-            # manual "Check now" on the Competitors page itself) always
-            # win; this just tries again next interval instead of
-            # competing with them for tokens.
-            if ScanCoordinator.try_acquire_for_automated_tick():
-                try:
-                    # SellerWatchService.run_check() makes blocking Keepa
-                    # calls -- run it off the event loop, same reason as
-                    # the scan queue tick above.
-                    result = await asyncio.to_thread(SellerWatchService.run_check)
-                    summary = f"{result.get('checked', 0)} seller(s), {result.get('new_listings', 0)} new"
-                    await asyncio.to_thread(
-                        ActivityLog.mark_tick, "seller_watch", SELLER_WATCH_INTERVAL_SECONDS, summary,
-                    )
-                finally:
-                    ScanCoordinator.release_after_automated_tick()
+            # run_check() makes blocking Keepa calls (and the slot wait blocks) -- off the event loop.
+            result = await asyncio.to_thread(_run_competitor_pass)
+            summary = f"{result.get('checked', 0)} seller(s), {result.get('new_listings', 0)} new"
+            await asyncio.to_thread(ActivityLog.mark_tick, "seller_watch", SELLER_WATCH_INTERVAL_SECONDS, summary)
+        except ScanBusyError as exc:
+            print(f"Competitor pass couldn't get the scan lock in time, retrying shortly: {exc}")
+            delay = SELLER_WATCH_BUSY_RETRY_SECONDS
         except Exception as exc:
             print(f"Seller watch check failed: {exc}")
+            delay = SELLER_WATCH_FAILURE_RETRY_SECONDS
 
-        await asyncio.sleep(SELLER_WATCH_INTERVAL_SECONDS)
+        await asyncio.sleep(delay)
 
 
 # How often the weekly safety-net scheduler ticks -- DAILY, not
@@ -150,11 +167,53 @@ WEEKLY_RECHECK_STALE_HOURS = 24 * 7
 OA_ARCHIVE_STALE_DAYS = 14
 
 
-REPLEN_RECHECK_STALE_HOURS = 24  # Proven A2A replen stock is checked daily; other safety-net checks remain weekly.
+# Replen (EU A2A) used to be checked here (import_uploaded_actuals + ReplenService.
+# check_stale, every server start). Moved 2026-09-20 to its own scheduler below --
+# see _replen_a2a_scheduler for why it must not re-run at every restart.
+
+
+# The weekly job used to run its whole body at EVERY server start (a first-iteration run before
+# any sleep), holding the scan lock for an hour and spending ~3,500 Keepa tokens each time --
+# about ten restarts in one day (2026-09-20) meant ~35,000 tokens, ~40% of a day's refill, on
+# re-checking things that had been checked hours earlier. It now only runs when its last
+# SUCCESSFUL run is at least WEEKLY_RECHECK_MIN_HOURS old. last_tick_at is only written when a run
+# completes, so a run that failed or was killed part-way by a restart is still due and retries.
+WEEKLY_RECHECK_MIN_HOURS = 20
+WEEKLY_RECHECK_WAIT_POLL_SECONDS = 60 * 60
+
+
+def _seconds_until_due(name: str, min_hours: float) -> float:
+    """
+    0 if scheduler `name` has never completed a run or its last successful run is at least
+    `min_hours` old; otherwise the seconds left until it is due. Reads SchedulerStatus, whose
+    last_tick_at only moves when a run actually succeeds (see ActivityLog.mark_tick callers).
+    """
+    from app.database.database import SessionLocal
+    from app.database.models import SchedulerStatus
+    db = SessionLocal()
+    try:
+        status = db.get(SchedulerStatus, name)
+        if not status or not status.last_tick_at:
+            return 0.0
+        last = status.last_tick_at
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        remaining = (last + timedelta(hours=min_hours) - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, remaining)
+    finally:
+        db.close()
 
 
 async def _weekly_recheck_scheduler():
     while True:
+        # Not due yet (e.g. the server just restarted an hour after the last run): sleep, at
+        # most an hour at a time, and check again -- do NOT run the job. See
+        # WEEKLY_RECHECK_MIN_HOURS above.
+        wait_seconds = await asyncio.to_thread(_seconds_until_due, "weekly_recheck", WEEKLY_RECHECK_MIN_HOURS)
+        if wait_seconds > 0:
+            await asyncio.sleep(min(wait_seconds, WEEKLY_RECHECK_WAIT_POLL_SECONDS))
+            continue
+
         retry_delay = WEEKLY_RECHECK_TICK_SECONDS
         try:
             # Same non-blocking "skip if a manual scan is already
@@ -168,11 +227,6 @@ async def _weekly_recheck_scheduler():
             if acquired:
                 try:
                     watch_result = await asyncio.to_thread(WatchlistService.check_stale, WEEKLY_RECHECK_STALE_HOURS)
-                    try:
-                        await asyncio.to_thread(ReplenService.import_uploaded_actuals)
-                    except Exception:
-                        print('STK replen import unavailable; continuing scheduled checks of existing items.')
-                    replen_result = await asyncio.to_thread(ReplenService.check_stale, REPLEN_RECHECK_STALE_HOURS)
                     # Added 2026-09-04, same scheduler/window -- see
                     # ReviewQueueService.recheck_stale_items' own
                     # docstring for the full reasoning (Tamara's own
@@ -232,7 +286,6 @@ async def _weekly_recheck_scheduler():
                     )
                     summary = (
                         f"watchlist: {watch_result.get('checked', 0)}/{watch_result.get('stale', 0)} stale, "
-                        f"replen: {replen_result.get('checked', 0)}/{replen_result.get('stale', 0)} stale, "
                         f"review queue: {review_recheck_result.get('rechecked', 0)}/{review_recheck_result.get('stale_found', 0)} stale, "
                         f"{review_recheck_result.get('expired', 0)} expired, "
                         f"weak leads: {weak_lead_result.get('rechecked', 0)}/{weak_lead_result.get('weak_found', 0)} rechecked, "
@@ -585,6 +638,127 @@ async def _storage_fee_scheduler():
         await asyncio.sleep(STORAGE_FEE_WATCH_INTERVAL_SECONDS)
 
 
+# Asks Amazon (free SP-API Listings Restrictions call, ~0.5s each, no Keepa
+# tokens, no ScanCoordinator lock) whether this seller account may list each
+# ASIN waiting in Atlas for a human decision, so the Review Queue can hide
+# the gated ones -- see RestrictionService. Steady state is a handful of new
+# ASINs per sweep; the first sweeps after a restart work through the backlog.
+RESTRICTION_SWEEP_INTERVAL_SECONDS = 10 * 60
+
+
+async def _restriction_sweep_scheduler():
+    while True:
+        try:
+            result = await asyncio.to_thread(
+                RestrictionService.sweep_review_candidates, limit=150, budget_seconds=120,
+            )
+            summary = (
+                f"{result['waiting']} waiting, {result['checked']} newly checked "
+                f"({result['restricted']} gated), {result['already_known']} already known"
+                + (f", {result['still_to_check']} still to check" if result["still_to_check"] else "")
+                + (f", {result['couldnt_check']} couldn't be checked" if result["couldnt_check"] else "")
+            )
+            await asyncio.to_thread(
+                ActivityLog.mark_tick, "restriction_sweep", RESTRICTION_SWEEP_INTERVAL_SECONDS, summary,
+            )
+        except Exception as exc:
+            print(f"Restriction sweep failed: {exc}")
+
+        await asyncio.sleep(RESTRICTION_SWEEP_INTERVAL_SECONDS)
+
+
+# Replen (EU A2A), 2026-09-20 -- see ReplenA2AService. Its own scheduler rather than a
+# step in _weekly_recheck_scheduler, for two reasons: (1) that one runs its whole body at
+# EVERY server start and holds the scan lock for an hour, so ~10 restarts in a day meant
+# ~10 full re-price passes (project_restart_triggers_daily_recheck); this one only runs when
+# the last SUCCESSFUL run is REPLEN_A2A_DUE_HOURS old, so a restart costs nothing. (2) it
+# needs a "last ran / what happened" line of its own on /automations.
+#
+# Each run re-prices ~25% of the list (about 60 ASINs of ~245), so every ASIN is priced about
+# every four days. The free half (Buy Sheet, FBA stock, 30-day sales) runs without the scan
+# lock; only the Keepa half takes it, non-blocking. A run only counts as done -- and only
+# updates last_tick_at -- if nothing failed and it wasn't deferred/cut short; otherwise it
+# retries, but no sooner than REPLEN_A2A_RETRY_SECONDS so a persistent failure (Sheets down,
+# say) can't burn a fresh Keepa batch every poll.
+REPLEN_A2A_POLL_SECONDS = 15 * 60
+REPLEN_A2A_DEFERRED_RETRY_SECONDS = 5 * 60
+REPLEN_A2A_RETRY_SECONDS = 2 * 60 * 60
+
+
+def _replen_a2a_is_due() -> bool:
+    return _seconds_until_due(REPLEN_A2A_NAME, REPLEN_A2A_DUE_HOURS) <= 0
+
+
+def _replen_a2a_run_succeeded(result: dict) -> bool:
+    if result.get("deferred"):
+        return False
+    if "error" in result.get("sync", {}) or result.get("stock", {}).get("error"):
+        return False
+    stock = result.get("stock", {})
+    # Stock on hand is required; the 30-day sales report is not (it's the slow, flaky call --
+    # a failure keeps yesterday's numbers and shows as "sales FAILED" on /automations).
+    if "skipped" not in stock and not stock.get("stock"):
+        return False
+    check = result.get("check")
+    return not (check and check.get("stopped_early"))
+
+
+async def _replen_a2a_scheduler():
+    while True:
+        delay = REPLEN_A2A_POLL_SECONDS
+        try:
+            if await asyncio.to_thread(_replen_a2a_is_due):
+                # Blocking Sheets + SP-API + Keepa calls -- off the event loop, same as
+                # every other scheduler here.
+                result = await asyncio.to_thread(ReplenA2AService.run_daily)
+                summary = ReplenA2AService.summarise(result)
+                if _replen_a2a_run_succeeded(result):
+                    await asyncio.to_thread(ActivityLog.mark_tick, REPLEN_A2A_NAME, 24 * 60 * 60, summary)
+                else:
+                    print(f"Replen A2A run incomplete, will retry: {summary}")
+                    delay = REPLEN_A2A_DEFERRED_RETRY_SECONDS if result.get("deferred") else REPLEN_A2A_RETRY_SECONDS
+        except Exception as exc:
+            print(f"Replen A2A tick failed: {exc}")
+            delay = REPLEN_A2A_RETRY_SECONDS
+
+        await asyncio.sleep(delay)
+
+
+# Free price sweep (2026-09-21) -- see PriceSweepService. Asks SP-API (free, no Keepa tokens, no
+# ScanCoordinator lock) for live UK + EU prices of the Watchlist / near misses / UK-recovery products and every
+# Replen item, and records whether each would be a lead at today's prices. MONITORING ONLY for now: nothing acts
+# on the results, they are compared with Keepa's last scan on /price-sweep. Free, so unlike the weekly job it is
+# fine for it to run straight away after a restart.
+PRICE_SWEEP_NAME = "price_sweep"
+PRICE_SWEEP_INTERVAL_SECONDS = 30 * 60
+
+
+def _price_sweep_succeeded(result: dict) -> bool:
+    """A batch that only got failed calls (SP-API down, token refresh failing) must NOT tick, so a frozen
+    last_tick_at on /automations means a real ongoing failure. An empty population or an unconfigured client
+    is not a failure of the sweep itself."""
+    if result.get("skipped"):
+        return False
+    return not (result["checked"] == 0 and result["failed"] > 0)
+
+
+async def _price_sweep_scheduler():
+    while True:
+        try:
+            result = await asyncio.to_thread(PriceSweepService.run_batch)
+            if _price_sweep_succeeded(result):
+                await asyncio.to_thread(
+                    ActivityLog.mark_tick, PRICE_SWEEP_NAME, PRICE_SWEEP_INTERVAL_SECONDS,
+                    PriceSweepService.summarise(result),
+                )
+            else:
+                print(f"Price sweep batch not counted as a success: {PriceSweepService.summarise(result)}")
+        except Exception as exc:
+            print(f"Price sweep tick failed: {exc}")
+
+        await asyncio.sleep(PRICE_SWEEP_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # A Verdict Checker bulk batch runs in a daemon thread, so a
@@ -614,7 +788,29 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_inventory_cleanup_scheduler()),
             asyncio.create_task(_amazon_listing_upload_scheduler()),
             asyncio.create_task(_storage_fee_scheduler()),
+            asyncio.create_task(_restriction_sweep_scheduler()),
+            asyncio.create_task(_replen_a2a_scheduler()),
+            asyncio.create_task(_price_sweep_scheduler()),
         ]
+        # Command Centre's purchasing numbers read three tabs of a Google workbook (4-7s). Build them in the
+        # background now so the first page load after a restart doesn't wait for it -- see dashboard._purchasing_snapshot.
+        try:
+            dashboard._refresh_purchasing_snapshot_in_background()
+        except Exception as exc:
+            print(f"Purchasing snapshot pre-warm failed (non-fatal): {exc}")
+        # Same for Scan Intelligence's three heavy roll-ups (~13s cold) -- see scan_intelligence._INTEL_BUNDLE.
+        try:
+            scan_intelligence.prewarm_intel_bundle()
+        except Exception as exc:
+            print(f"Scan Intelligence pre-warm failed (non-fatal): {exc}")
+        # And the two Google Sheets reads the VA report and Amazon listings pages show (1-3s each, cached for 2 minutes and
+        # then refreshed in the background) -- see StaleCache.
+        try:
+            reports._VA_SHEET_CACHE.refresh_in_background("rows", reports._read_sheet_rows)
+            amazon_listing_uploads._PENDING_COUNT.refresh_in_background(
+                "count", lambda: len(amazon_listing_upload_service.pending_rows()))
+        except Exception as exc:
+            print(f"Sheets pre-warm failed (non-fatal): {exc}")
     else:
         print("Atlas preview mode: background automation is paused.")
     yield
@@ -637,6 +833,12 @@ Base.metadata.create_all(bind=engine)
 from app.database.reporting_schema import migrate_reporting_schema
 migrate_reporting_schema(engine)
 amazon_listing_upload_service.migrate_schema(engine)
+from app.services import product_repository as product_repository_module
+product_repository_module.migrate_schema(engine)
+from app.services.signal_service import migrate_signal_schema
+migrate_signal_schema(engine)
+from app.services.seller_watch_service import migrate_seller_schema
+migrate_seller_schema(engine)
 
 
 @app.middleware("http")
@@ -695,6 +897,8 @@ app.include_router(inventory_cleanup.router)
 app.include_router(storage_fee_watch.router)
 app.include_router(amazon_listing_uploads.router)
 app.include_router(automations.router)
+app.include_router(price_sweep.router)
+app.include_router(eligibility.router)
 
 
 @app.get("/opportunities/{brand}")

@@ -3,7 +3,28 @@
 {% block content %}
 <div class="container-fluid p-4" style="max-width:1100px">
 <h1 class="h2">Amazon Listing Uploads</h1>
-<p class="text-muted">Runs once a day. Submits every Buy Sheet row marked "Listing Uploader (Y)" directly to Amazon and updates the sheet's flags on success — no manual Seller Central upload needed.</p>
+<p class="text-muted">Runs automatically at 9am and 9pm daily. Submits every Buy Sheet row marked "Listing Uploader (Y)" directly to Amazon and updates the sheet's flags on success — no manual Seller Central upload needed.</p>
+
+<div class="card mb-4">
+<div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-3">
+<div>
+  <div class="fw-semibold">
+    {% if pending_count is none %}
+    <span class="text-muted">Couldn't check the Buy Sheet for pending rows right now.</span>
+    {% elif pending_count == 0 %}
+    Nothing pending right now.
+    {% else %}
+    {{ pending_count }} row{{ 's' if pending_count != 1 }} flagged "Listing Uploader (Y)", waiting for the next run.
+    {% endif %}
+  </div>
+  <div class="small text-muted">Runs the exact same upload the 9am/9pm schedule uses — safe to run anytime, including right next to a scheduled run.</div>
+</div>
+<form method="post" action="/automation/amazon-listings/run-now"
+      onsubmit="return confirm('Submit every pending Buy Sheet row to Amazon now? This creates/updates real live listings.');">
+  <button class="btn btn-primary" {{ 'disabled' if pending_count == 0 }}>Run now</button>
+</form>
+</div>
+</div>
 
 <div class="card">
 <div class="card-body">

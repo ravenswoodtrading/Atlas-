@@ -256,7 +256,45 @@ def _explain(lane: str, tier: int, brand: str, t: dict | None, econ: dict | None
     return ""
 
 
+_CACHE_TTL_SECONDS = 300
+_cache = None
+_cache_built_at = 0.0
+
+
 def get_attention_candidates(use_cache: bool = True) -> list:
+    """
+    Thin cache wrapper (2026-09-17, site-wide slowness investigation)
+    around _compute_attention_candidates -- this function's own
+    docstring used to claim it was "cached internally", but it never
+    actually was: it calls economics_service.get_brand_economics(
+    brands=list(candidates), ...), and THAT function's own docstring
+    says passing an explicit `brands` list deliberately bypasses ITS
+    cache (meant for one-off single-brand lookups, not a hot page-load
+    path) -- confirmed live, every /scan-intelligence load recomputed
+    from scratch, ~2.75s every time, cache or no cache. Same TTL as
+    the scan_economics_service/discovery_intelligence_service caches
+    this already depends on, for consistency. use_cache=False (see
+    scan_schedule_service's own caller) still always computes fresh --
+    that caller needs a guaranteed-current answer, not a cached one.
+    """
+    global _cache, _cache_built_at
+    import time as _time
+
+    if use_cache:
+        now = _time.monotonic()
+        if _cache is not None and (now - _cache_built_at) < _CACHE_TTL_SECONDS:
+            return _cache
+
+    result = _compute_attention_candidates(use_cache=use_cache)
+
+    if use_cache:
+        _cache = result
+        _cache_built_at = _time.monotonic()
+
+    return result
+
+
+def _compute_attention_candidates(use_cache: bool = True) -> list:
     """
     Read-only. Returns one dict per candidate brand:
     {brand, category, tier(Discovery HIGH/MEDIUM/LOW/UNRANKED),

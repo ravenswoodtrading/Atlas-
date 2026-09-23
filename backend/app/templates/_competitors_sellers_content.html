@@ -1,6 +1,6 @@
 {% from "_help.html" import help_button, help_modal %}
 
-{% macro competitors_sellers_content(sellers, stats, check_result) %}
+{% macro competitors_sellers_content(sellers, stats, check_result, types) %}
 
 {% if check_result %}
 <div class="alert alert-info alert-dismissible fade show py-2">
@@ -22,7 +22,7 @@
 </div>
 
 <div class="alert alert-secondary py-2 small mb-4">
-    <i class="bi bi-info-circle"></i> Their storefronts are checked for new listings whenever you click "Check now" above, or automatically once the background scheduler runs (every 2h). New detections show up on the <a href="/competitors">Detections page</a>.
+    <i class="bi bi-info-circle"></i> Their storefronts are checked for new listings automatically three times a day (the last pass is always at least 8 hours old, and a server restart doesn't reset it), or whenever you click "Check now" above. New detections show up on the <a href="/competitors">Detections page</a>.
 </div>
 
 <div class="card metric p-4 mb-4">
@@ -44,6 +44,29 @@
     </form>
 </div>
 
+{# Seller-type chips. Some sellers do BOTH, so "Does EU A2A" and "Does OA / Wholesale" overlap on purpose. #}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    {% for value, label, count, active in types.chips %}
+    <a class="btn btn-sm {{ 'btn-dark' if active else 'btn-outline-secondary' }}"
+       href="/competitors/sellers{{ '?stype=' ~ value if value }}">
+        {{ label }} <span class="badge {{ 'bg-light text-dark' if active else 'bg-secondary' }}">{{ count }}</span>
+    </a>
+    {% endfor %}
+    {% if types.suggestable %}
+    <form method="post" action="/competitors/apply-suggested-types" class="ms-auto"
+          onsubmit="return confirm('Sort {{ types.suggestable }} not-yet-sorted seller(s) from the evidence? Sellers you have already sorted are never changed, and you can change any of them afterwards.');">
+        <input type="hidden" name="return_to" value="{{ types.return_to }}">
+        <button class="btn btn-sm btn-outline-success" type="submit">
+            <i class="bi bi-magic"></i> Sort {{ types.suggestable }} not-yet-sorted from the evidence
+        </button>
+    </form>
+    {% endif %}
+</div>
+<div class="small text-muted mb-3">
+    Some sellers do both, so <strong>Does EU A2A</strong> and <strong>Does OA / Wholesale</strong> overlap: an
+    <em>OA / Wholesale + A2A</em> seller is in each.
+</div>
+
 {% if sellers %}
 <div class="card metric p-3">
     <div class="table-responsive">
@@ -51,6 +74,8 @@
             <thead>
                 <tr>
                     <th>Nickname</th>
+                    <th>Type</th>
+                    <th>What the evidence says</th>
                     <th>Seller ID</th>
                     <th>Status</th>
                     <th>Last checked</th>
@@ -62,8 +87,51 @@
             <tbody>
                 {% for seller in sellers %}
                 {% set s = stats.get(seller.id, {"total": 0, "last_24h": 0}) %}
+                {% set sug = types.suggestions.get(seller.id, {}) %}
+                {% set sig = sug.get("signals", {}) %}
                 <tr>
                     <td class="fw-semibold">{{ seller.nickname or "(no nickname)" }}</td>
+
+                    <td>
+                        <form method="post" action="/competitors/set-type">
+                            <input type="hidden" name="tracked_seller_id" value="{{ seller.id }}">
+                            <input type="hidden" name="return_to" value="{{ types.return_to }}">
+                            <select class="form-select form-select-sm {{ 'border-warning' if not seller.seller_type }}" name="seller_type"
+                                    onchange="this.form.submit()" style="min-width:11.5rem;">
+                                <option value="">Not sorted</option>
+                                {% for key, label in types.options %}
+                                <option value="{{ key }}" {{ 'selected' if seller.seller_type == key }}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                    </td>
+
+                    <td class="small" style="max-width:300px;">
+                        {% if sug.get("type") %}
+                            {% if seller.seller_type == sug.type %}
+                                <span class="text-success"><i class="bi bi-check-circle"></i> Matches the evidence</span>
+                            {% else %}
+                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                    <span title="{{ sug.reason }}">Suggests <strong>{{ types.labels[sug.type] }}</strong></span>
+                                    <form method="post" action="/competitors/set-type" class="d-inline">
+                                        <input type="hidden" name="tracked_seller_id" value="{{ seller.id }}">
+                                        <input type="hidden" name="seller_type" value="{{ sug.type }}">
+                                        <input type="hidden" name="return_to" value="{{ types.return_to }}">
+                                        <button class="btn btn-sm btn-outline-secondary py-0" type="submit">Use</button>
+                                    </form>
+                                </div>
+                            {% endif %}
+                            <div class="text-muted">
+                                {{ ((sig.eu / sig.tagged) * 100)|round|int }}% EU A2A &middot;
+                                {{ (((sig.oa + sig.wholesale) / sig.tagged) * 100)|round|int }}% OA/Wholesale
+                                {% if sig.titled %}&middot; {{ ((sig.plug / sig.titled) * 100)|round|int }}% plug/electrical{% endif %}
+                                &middot; {{ sig.tagged }} classified
+                            </div>
+                        {% else %}
+                            <span class="text-muted" title="{{ sug.get('reason', '') }}">Not enough data yet ({{ sig.get('tagged', 0) }} classified)</span>
+                        {% endif %}
+                    </td>
+
                     <td class="small text-muted">{{ seller.seller_id }}</td>
                     <td>
                         {% if seller.active %}
@@ -106,6 +174,10 @@
         </table>
     </div>
 </div>
+{% elif types.stype %}
+<div class="alert alert-secondary">
+    No tracked sellers in this group. <a href="/competitors/sellers">Show all sellers</a>
+</div>
 {% else %}
 <div class="alert alert-info">
     No sellers tracked yet -- add one above to get started.
@@ -114,15 +186,29 @@
 
 {% call help_modal("competitors-sellers", "Tracked Sellers") %}
 <p>
-    The seller IDs Atlas checks every couple of hours for new listings, feeding the
+    The seller IDs Atlas checks for new listings, three times a day, feeding the
     <a href="/competitors">Competitor Storefront Watch</a> page. Nothing here surfaces NEW
     sellers to track automatically -- you add each one manually (by Amazon seller ID), usually
     after spotting them as a competitor on an ASIN you already know.
 </p>
+<p><strong>Seller types</strong> -- how a competitor sources, so you can look at EU A2A sellers and OA sellers separately:</p>
+<ul>
+    <li><strong>EU A2A</strong> -- mostly buys from Amazon DE/FR/ES/IT and resells in the UK.</li>
+    <li><strong>OA / Wholesale + A2A</strong> -- does both: a real share of EU A2A alongside online arbitrage and wholesale.</li>
+    <li><strong>OA / Wholesale</strong> and <strong>OA</strong> -- sources from UK retailers and trade suppliers.</li>
+</ul>
+<p>
+    Some products can <em>never</em> be EU A2A: anything with a mains plug (hoovers, kettles, electricals),
+    laptops. A seller whose range is full of them has to be sourced OA whatever the EU price data says,
+    so the suggestion counts how much of a seller's range looks like plug/electrical items. A seller that
+    has lots of those <em>and</em> real EU A2A on the rest is suggested as "does both".
+</p>
 <p class="mb-0">
-    "Check now" forces an immediate re-check of every tracked seller's current listings, rather
-    than waiting for the next automatic cycle -- useful right after adding a new seller so you
-    don't wait for its first scheduled check.
+    The suggestion is only a suggestion -- it comes from the sourcing tags Atlas has already given each
+    seller's detections, and a seller needs at least 20 classified detections before it makes one. You
+    choose the type; the "Sort ... from the evidence" button fills in only sellers you haven't sorted yet
+    and never overrides one you have. Because some sellers do both, the <em>Does EU A2A</em> and
+    <em>Does OA / Wholesale</em> views overlap: a mixed seller appears in each.
 </p>
 {% endcall %}
 

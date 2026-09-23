@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_
@@ -11,6 +12,7 @@ from app.database.models import (
 from app.services.activity_log import ActivityLog
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
+from app.services.restriction_service import RestrictionService
 from app.services.seller_watch_service import SellerWatchService
 from app.services.sourcing_classifier import SourcingClassifier
 from app.services import opportunity_lens_service as lens_service
@@ -939,7 +941,7 @@ class ReviewQueueService:
         # reasoning already persisted at classification time) rather than
         # only for OA_INVESTIGATE items, since it's meaningful for ANY
         # competitor-sourced tag, not just "OA / unclear".
-        brand_pattern = SellerWatchService.brand_sourcing_pattern(record.brand)
+        brand_pattern = SellerWatchService.brand_sourcing_pattern_cached(record.brand)
         certainty = SourcingClassifier.assess_certainty(
             record.category_name, listing.sourcing_tag, reasoning, brand_pattern=brand_pattern,
         )
@@ -1814,6 +1816,31 @@ class ReviewQueueService:
         return merged
 
     @staticmethod
+    def _drop_listing_restricted(items: list) -> list:
+        """
+        Hides items Amazon says this account can't list (approval required /
+        not eligible -- see RestrictionService; answers are cached, so this is
+        one small DB read, memoised for a minute). A leftover pre-existing
+        queue entry and a fresh one are treated the same: nothing gated should
+        wait on a human. Two deliberate exceptions to "hide everything":
+        VA-sheet leads stay (a VA submitted that row and Atlas writes the
+        decision back to their sheet -- hiding it would leave it forever
+        undecided there), and any failure to read the cache leaves the queue
+        untouched (an unknown answer never hides a lead).
+        """
+        try:
+            restricted = RestrictionService.restricted_asin_set()
+        except Exception as error:
+            print(f"[review-queue] restriction filter skipped: {error}")
+            return items
+
+        if not restricted:
+            return items
+
+        return [item for item in items
+                if item.get("asin") not in restricted or "lead" in (item.get("sources") or [])]
+
+    @staticmethod
     def list_queue_items(sort: str = "when_desc", latest_records: list = None) -> list:
         """
         The unified, deduplicated Review Queue -- BUY_NOW/VA_TO_REVIEW/
@@ -1835,7 +1862,7 @@ class ReviewQueueService:
             ReviewQueueService.list_leads(sort=sort, latest_records=latest_records)
             + ReviewQueueService.list_consider_leads(sort=sort, latest_records=latest_records)
         )
-        items = ReviewQueueService.merge_by_asin(leads)
+        items = ReviewQueueService._drop_listing_restricted(ReviewQueueService.merge_by_asin(leads))
 
         # "Ever bought / ever on VA sheet before" badges (2026-09-07) --
         # see _batch_historical_flags' own docstring. One pair of batch
@@ -1877,7 +1904,7 @@ class ReviewQueueService:
             ReviewQueueService.list_leads(latest_records=latest_records)
             + ReviewQueueService.list_consider_leads(latest_records=latest_records)
         )
-        items = ReviewQueueService.merge_by_asin(raw_leads)
+        items = ReviewQueueService._drop_listing_restricted(ReviewQueueService.merge_by_asin(raw_leads))
 
         counts = {p: 0 for p in QUEUE_PRIORITIES}
         for item in items:
@@ -1998,12 +2025,29 @@ class ReviewQueueService:
         # google_sheets_lead_sync.push_decision_to_sheet's own docstring).
         # Best-effort: a Sheets API hiccup must never block the Atlas-side
         # decision itself, which has already been committed above.
-        for lead_id in sheet_leads_to_push:
-            try:
+        #
+        # Backgrounded, not awaited (2026-09-18, Tamara: "clicked avoid...
+        # it is slow ... can we speed it up") -- push_decision_to_sheet
+        # does a full Lead Sheet get_all_values() read PLUS up to several
+        # separate update_cell() writes, all real Google Sheets API round
+        # trips; this was previously running IN LINE before resolve_item
+        # returned, so every Buy/Watch/Avoid click on a sheet-sourced lead
+        # paid that latency synchronously even though "best-effort... must
+        # never block" was already this code's own stated intent -- it
+        # just wasn't actually implemented as non-blocking. The Atlas-side
+        # decision is already committed by this point (see apply_lead_
+        # decision's db2.commit() above), so running the sheet push after
+        # the response has gone back changes nothing about correctness,
+        # only about how long the click waits.
+        if sheet_leads_to_push:
+            def _push_sheet_leads(lead_ids_to_push):
                 from app.services.google_sheets_lead_sync import push_decision_to_sheet
-                push_decision_to_sheet(lead_id)
-            except Exception as exc:
-                print(f"push_decision_to_sheet failed for lead {lead_id}: {exc}")
+                for lead_id in lead_ids_to_push:
+                    try:
+                        push_decision_to_sheet(lead_id)
+                    except Exception as exc:
+                        print(f"push_decision_to_sheet failed for lead {lead_id}: {exc}")
+            threading.Thread(target=_push_sheet_leads, args=(sheet_leads_to_push,), daemon=True).start()
 
         # "oos"/"watch" on the SCAN side ALSO auto-adds to Watchlist,
         # mirroring /review/set's own existing single-item behaviour

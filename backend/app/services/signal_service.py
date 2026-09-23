@@ -1,5 +1,13 @@
 import json
+import re
+import threading
+from datetime import datetime, timezone
 
+from sqlalchemy import func, inspect, text
+
+from app.database.database import SessionLocal
+from app.database.models import TokenUsageEvent
+from app.services.eu_drop_scan_service import EuDropScanService
 from app.services.product_finder import ProductFinder
 from app.services.product_service import ProductService
 from app.services.product_mapper import ProductMapper
@@ -10,6 +18,38 @@ from app.services.category_survey_service import get_category_names
 from app.config.exclusions import is_excluded, is_gated
 from app.config.fees import DEFAULT_REFERRAL_RATE, REFERRAL_RATE_BY_CATEGORY_NAME
 from app.services.activity_log import ActivityLog
+
+EU_PRICE_DROP = "eu_price_drop"
+
+# Columns added to signal_queries for eu_price_drop (2026-09-20). create_all()
+# only creates MISSING tables, so an existing signal_queries needs these added.
+_SIGNAL_QUERY_NEW_COLUMNS = {
+    "marketplace": "VARCHAR DEFAULT 'UK'",
+    "min_price": "INTEGER DEFAULT 20",
+    "max_price": "INTEGER DEFAULT 150",
+    "drop30_pct": "INTEGER DEFAULT 20",
+    "drop90_pct": "INTEGER DEFAULT 15",
+    "min_rank_drops30": "INTEGER DEFAULT 10",
+    "per_run_cap": "INTEGER DEFAULT 60",
+}
+
+
+def migrate_signal_schema(engine):
+    """Same additive pattern as reporting_schema.py / amazon_listing_upload_service.migrate_schema."""
+    tables = inspect(engine).get_table_names()
+    if "signal_queries" in tables:
+        existing = {c["name"] for c in inspect(engine).get_columns("signal_queries")}
+        for column, ddl in _SIGNAL_QUERY_NEW_COLUMNS.items():
+            if column not in existing:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE signal_queries ADD COLUMN {column} {ddl}"))
+    # signal_runs was created (by create_all) one day before it gained these columns.
+    if "signal_runs" in tables:
+        existing = {c["name"] for c in inspect(engine).get_columns("signal_runs")}
+        for column, ddl in (("stage", "VARCHAR DEFAULT ''"), ("restricted_dropped", "INTEGER DEFAULT 0")):
+            if column not in existing:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE signal_runs ADD COLUMN {column} {ddl}"))
 
 
 class SignalService:
@@ -78,6 +118,128 @@ class SignalService:
     # rather than a handful of ASINs hogging every click forever.
     CEILING_RECHECK_BATCH_SIZE = 50
 
+    # An eu_price_drop run still "running" after this long is from a server
+    # that restarted mid-run (a normal run takes 2-10 minutes).
+    STALE_RUN_MINUTES = 45
+
+    # One eu_price_drop run at a time: they hold the shared Keepa token
+    # budget and the manual-scan lock for minutes.
+    _eu_run_lock = threading.Lock()
+
+    @classmethod
+    def start_eu_price_drop_run(cls, query_id: int):
+        """
+        "Run now" for an eu_price_drop query. Returns (started, message).
+        The run itself happens on a background thread -- it takes minutes
+        (a free SP-API price check per candidate, then the paid scan), far
+        too long to hold a web request -- and reports through a SignalRun
+        row the Keepa Searches page displays. Deliberately NOT called with
+        the manual-scan lock held: run_category takes that lock itself,
+        only around the paid scan, so the free pre-check doesn't block the
+        Scan Queue.
+        """
+        query = ProductRepository.get_signal_query(query_id)
+
+        if query is None or query.signal_type != EU_PRICE_DROP:
+            return False, "No such EU price-drop search."
+        if not query.enabled:
+            return False, "This search is disabled -- enable it first."
+        if not (query.category_ids or "").strip():
+            return False, "This search has no category ID to look in."
+
+        if not cls._eu_run_lock.acquire(blocking=False):
+            return False, "Another Keepa search is still running -- wait for it to finish."
+
+        try:
+            ProductRepository.fail_stale_signal_runs(cls.STALE_RUN_MINUTES)
+            run_id = ProductRepository.create_signal_run(query_id)
+            threading.Thread(target=cls._eu_worker, args=(query_id, run_id), daemon=True).start()
+        except Exception:
+            cls._eu_run_lock.release()
+            raise
+
+        return True, (f"Started '{query.name}' in the background -- it takes a few minutes. "
+                      "Refresh this page to see the result under Recent runs.")
+
+    @classmethod
+    def _eu_worker(cls, query_id: int, run_id: int):
+        try:
+            cls._execute_eu_price_drop(query_id, run_id)
+        except Exception as exc:
+            print(f"EU price-drop search {query_id} failed: {exc}")
+            ProductRepository.finish_signal_run(
+                run_id, "failed", summary_json=json.dumps({"error": f"{type(exc).__name__}: {exc}"}),
+            )
+        finally:
+            cls._eu_run_lock.release()
+
+    @staticmethod
+    def _tokens_spent_since(started: datetime) -> float:
+        """Real Keepa spend (from TokenUsageEvent, not a balance difference
+        that refills and other features also move) by the eu_drop_scan
+        category since `started` (naive UTC). SP-API-saved rows are
+        estimates of tokens NOT spent, so excluded."""
+        db = SessionLocal()
+
+        try:
+            total = (
+                db.query(func.sum(TokenUsageEvent.tokens))
+                .filter(TokenUsageEvent.category == "eu_drop_scan",
+                        TokenUsageEvent.call_type != "sp_api_saved",
+                        TokenUsageEvent.occurred_at >= started)
+                .scalar()
+            )
+            return float(total or 0.0)
+
+        finally:
+            db.close()
+
+    @classmethod
+    def _execute_eu_price_drop(cls, query_id: int, run_id: int):
+        query = ProductRepository.get_signal_query(query_id)
+        started = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        try:
+            previously_examined = set(json.loads(query.last_match_snapshot or "[]"))
+        except (ValueError, TypeError):
+            previously_examined = set()
+
+        slug = re.sub(r"[^a-z0-9]+", "-", query.name.lower()).strip("-") or f"q{query.id}"
+        row = EuDropScanService.run_category(
+            query.marketplace, [c for c in query.category_ids.split(",") if c], query.name, slug,
+            per_category=query.per_run_cap, min_price=query.min_price, max_price=query.max_price,
+            drop30_pct=query.drop30_pct, drop90_pct=query.drop90_pct,
+            min_rank_drops30=query.min_rank_drops30, skip_asins=previously_examined,
+            progress=lambda stage: ProductRepository.set_signal_run_stage(run_id, stage),
+        )
+
+        examined = row.pop("examined_asins", None)
+        finder_failed = row.get("error") == "Product Finder request failed"
+        # An error with nothing scanned (Finder down, or the scan lock never freed up) is a failed
+        # run, not a quiet "0 leads" one.
+        nothing_scanned_because_of_error = bool(row.get("error")) and not row.get("asins_scanned")
+
+        if not finder_failed and examined is not None:
+            # This run's examined set REPLACES the snapshot (not unions with
+            # it): an ASIN whose price drop has ended falls out of the
+            # Finder's results, drops out of the snapshot, and counts as new
+            # again if it drops a second time.
+            ProductRepository.update_signal_query_snapshot(query.id, json.dumps(examined))
+
+        precheck = row.get("precheck") or {}
+        leads = sum((row.get("by_recommendation") or {}).get(rec, 0) for rec in ("BUY", "CONSIDER"))
+        ProductRepository.finish_signal_run(
+            run_id, "failed" if (finder_failed or nothing_scanned_because_of_error) else "done",
+            candidates_found=row.get("finder_results", 0), fresh_candidates=row.get("fresh_candidates", 0),
+            precheck_dropped=precheck.get("dropped_low_ratio", 0), plug_dropped=row.get("plug_risk_dropped", 0),
+            restricted_dropped=row.get("restricted_dropped", 0),
+            sent_to_scan=row.get("sent_to_scan", 0), saved=row.get("saved", 0), leads=leads,
+            tokens_spent=cls._tokens_spent_since(started), summary_json=json.dumps(row),
+        )
+
+        if not finder_failed:
+            ActivityLog.record("signal_check", f"{query.name} ({EU_PRICE_DROP}): {leads} lead(s) found")
+
     def __init__(self):
         self.finder = ProductFinder()
         self.product_service = ProductService()
@@ -95,6 +257,9 @@ class SignalService:
             result = self._run_ceiling_recheck(query)
         elif query.signal_type in ("stock_out", "price_spike"):
             result = self._run_product_finder_signal(query)
+        elif query.signal_type == EU_PRICE_DROP:
+            return {"signal_query_id": query.id,
+                    "error": "EU price-drop searches run in the background -- use Run now on the Keepa Searches page."}
         else:
             return {"signal_query_id": query.id, "error": f"Unknown signal_type: {query.signal_type}"}
 

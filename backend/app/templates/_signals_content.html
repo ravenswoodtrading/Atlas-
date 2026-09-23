@@ -9,7 +9,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Opportunity Signals ({{ total_count }})</h4>
-    <a href="/signals/queries" class="btn btn-outline-dark btn-sm"><i class="bi bi-sliders"></i> Manage signal queries</a>
+    <a href="/signals/queries" class="btn btn-outline-dark btn-sm"><i class="bi bi-sliders"></i> Keepa searches</a>
 </div>
 
 <div class="alert alert-secondary py-2 small mb-4">
@@ -21,7 +21,7 @@
 
 {% if not queries %}
 <div class="alert alert-warning py-2 small mb-4">
-    <i class="bi bi-exclamation-triangle"></i> No signal queries set up yet -- nothing will appear here until you <a href="/signals/queries">create one</a> and click "Run now".
+    <i class="bi bi-exclamation-triangle"></i> No Keepa searches set up yet -- nothing will appear here until you <a href="/signals/queries">create one</a> and click "Run now".
 </div>
 {% endif %}
 
@@ -153,12 +153,12 @@
 </div>
 {% elif queries %}
 <div class="alert alert-secondary py-2 small">
-    <i class="bi bi-info-circle"></i> No matches yet for your current filters. Head to <a href="/signals/queries">Manage signal queries</a> and click "Run now" on a query to check for new candidates.
+    <i class="bi bi-info-circle"></i> No matches yet for your current filters. Head to <a href="/signals/queries">Keepa searches</a> and click "Run now" on a query to check for new candidates.
 </div>
 {% endif %}
 
 <div class="mt-3 small text-muted">
-    <i class="bi bi-gear"></i> "Manage signal queries" (top right) is where you turn signals on/off per category. Stock-out and ceiling-cleared checks already run automatically every 2 hours in the background -- "Run now" just forces an immediate check instead of waiting. Price-spike checks are still manual-only for now.
+    <i class="bi bi-gear"></i> "Keepa searches" (top right) is where you turn signals on/off per category and set up EU price-drop searches (those send leads to the Review Queue instead of this page). Stock-out and ceiling-cleared checks already run automatically every 2 hours in the background -- "Run now" just forces an immediate check instead of waiting. Price-spike checks are still manual-only for now.
 </div>
 
 {% endmacro %}

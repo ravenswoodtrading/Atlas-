@@ -397,6 +397,77 @@ class ScanQueuePage(Base):
     completed_asins: Mapped[str] = mapped_column(String, default="[]")
 
 
+class ScanSkipMemory(Base):
+    """
+    One ASIN the Scan Queue already paid Keepa tokens to look up and then
+    dropped (2026-09-20) -- no EU source in any of the 4 markets, dead
+    listing, excluded category, unprofitable ceiling, or no current
+    price. None of these leave a ProductRecord, and the 48h rescan
+    cooldown is built from ProductRecords, so before this table every
+    lap of a brand re-paid the UK (and often all 4 EU) lookups for the
+    same dead ASINs: roughly 46% of a week's lookups on the bounded-list
+    brands. `revisit_after` is when the Scan Queue may look at it again
+    (see BrandScanService.SKIP_MEMORY_DAYS); an expired row is simply
+    ignored and refreshed by the next lookup, never needs cleanup.
+    Scan Queue only -- Discovery/Watchlist/Replen/Competitor Watch never
+    read or write this.
+    """
+    __tablename__ = "scan_skip_memory"
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+    reason: Mapped[str] = mapped_column(String, index=True)
+    remembered_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    revisit_after: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class ListingRestriction(Base):
+    """
+    Cached answer to "can this seller account list this ASIN?" from
+    SP-API's Listings Restrictions API (2026-09-20) -- free (no Keepa
+    tokens) but ~0.5s a call, and restrictions change rarely, so results
+    are reused (see RestrictionService for the TTLs). One row per
+    (asin, marketplace). restricted covers ANY restriction reason, not
+    just APPROVAL_REQUIRED. A failed call is never stored: "couldn't
+    check" is not an answer.
+    """
+    __tablename__ = "listing_restrictions"
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+    marketplace: Mapped[str] = mapped_column(String, primary_key=True, default="UK")
+    restricted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    reason_code: Mapped[str] = mapped_column(String, default="")
+    message: Mapped[str] = mapped_column(String, default="")
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class PriceSweepResult(Base):
+    """
+    Latest FREE price check per ASIN (2026-09-21) -- see PriceSweepService. Live UK + EU Buy Box
+    prices from SP-API's getItemOffers (no Keepa tokens) run through the product's own stored fee
+    model, so we learn "would this be a lead at today's prices?" without re-scanning it. One row per
+    ASIN, overwritten each check; a check that FAILED (call errors, not "no offer") never overwrites
+    a real earlier answer. Monitoring only for now: nothing acts on these rows automatically, and
+    ref_roi (what Keepa's last full scan said) is kept beside est_roi so accuracy can be measured.
+    """
+    __tablename__ = "price_sweep_results"
+    asin: Mapped[str] = mapped_column(String, primary_key=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    scopes: Mapped[str] = mapped_column(String, default="")
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    # LEAD / CLOSE / BELOW / NO_UK_PRICE / NO_EU_PRICE / NO_MODEL
+    status: Mapped[str] = mapped_column(String, default="", index=True)
+    uk_price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    eu_prices_gbp: Mapped[str] = mapped_column(String, default="")  # JSON {"DE": 12.3, ...}; only markets with a price
+    best_market: Mapped[str] = mapped_column(String, default="")
+    best_cost_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    est_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # The last full (Keepa) scan of this ASIN, for comparison.
+    ref_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    ref_cost_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    ref_uk_price: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    ref_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # First check in the current unbroken run of LEAD results that Keepa's last scan did not already call a lead.
+    hit_since: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+
 class ScanQueueRun(Base):
     __tablename__ = "scan_queue_runs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -522,6 +593,87 @@ class ReplenItem(Base):
     current_source_marketplace: Mapped[str] = mapped_column(String, default="")
 
     notes: Mapped[str] = mapped_column(String, default="")
+
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ReplenA2AItem(Base):
+    """
+    One row per ASIN we have EVER bought EU A2A (Buy Sheet Store =
+    Amazon.de/.fr/.es/.it) -- the redone Replen page (2026-09-20, Tamara:
+    "an item that wasn't profitable first time round may now be a winner").
+    Unlike the old ReplenItem list this is NOT gated on proven sales
+    history: every EU A2A purchase is tracked, and STATUS answers "should
+    we buy this again, and if not, why not" from three live inputs -- the
+    Buy Sheet (what we paid / planned to sell for), SP-API (stock on hand
+    and units shipped in the last 30 days) and a rolling Keepa re-price
+    (today's EU source cost, UK Buy Box, ROI).
+
+    Populated/refreshed only by ReplenA2AService. The purchase columns are
+    always overwritten from the sheet; the stock and Keepa columns are kept
+    when a source fails (None means "never obtained", not "zero").
+    """
+    __tablename__ = "replen_a2a_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    asin: Mapped[str] = mapped_column(String, unique=True, index=True)
+    title: Mapped[str] = mapped_column(String, default="")
+    brand: Mapped[str] = mapped_column(String, default="")
+    category: Mapped[str] = mapped_column(String, default="")
+
+    # Purchase history -- EU A2A rows only, de-duplicated on (date, SKU, qty).
+    first_bought_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    last_bought_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    times_bought: Mapped[int] = mapped_column(Integer, default=0)
+    total_units_bought: Mapped[int] = mapped_column(Integer, default=0)
+    # The most recent purchase specifically: what we paid per unit (GBP), the
+    # sale price we planned, and the quantity -- the baseline "cost went up"
+    # and "price went down" are judged against.
+    last_qty: Mapped[int] = mapped_column(Integer, default=0)
+    last_cost_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    last_sale_price_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    last_source_store: Mapped[str] = mapped_column(String, default="")
+    last_sku: Mapped[str] = mapped_column(String, default="")
+
+    # Live FBA position (SP-API) -- None until the first successful refresh.
+    stock_total: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    stock_fulfillable: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    stock_inbound: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    stock_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    units_30d: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    last_sale_date: Mapped[str] = mapped_column(String, default="")
+
+    # Latest Keepa re-price -- None until first checked.
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None, index=True)
+    current_source_marketplace: Mapped[str] = mapped_column(String, default="")
+    current_source_cost_gbp: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    buy_box_now: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    buy_box_90d: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    offers_now: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    monthly_sales: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # Today's ROI, NOT max(today, 90d) -- the old page's optimistic mix.
+    current_roi: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    current_roi_90d: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    current_profit: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    gated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Why the scan dropped it (dead_listing, excluded_category,
+    # unprofitable_ceiling) or "" -- see BrandScanService.scan.
+    filtered_reason: Mapped[str] = mapped_column(String, default="")
+    # True when the last check returned no record for this ASIN at all.
+    no_keepa_data: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Verdict -- see ReplenA2AService.classify.
+    status: Mapped[str] = mapped_column(String, default="UNCHECKED", index=True)
+    status_reason: Mapped[str] = mapped_column(String, default="")
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # Last Discord "buy more" ping -- caps re-alerts, see ReplenA2AService.ALERT_COOLDOWN_DAYS.
+    alerted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+
+    # User hid it ("not interested") -- never re-checked, never re-added by a sync.
+    ignored: Mapped[bool] = mapped_column(Boolean, default=False)
 
     added_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
@@ -755,6 +907,13 @@ class TrackedSeller(Base):
     # populated yet" convention as ProductRecord.report_json.
     last_asin_snapshot: Mapped[str] = mapped_column(String, default="")
 
+    # How this seller sources, chosen by Tamara (2026-09-20): "eu_a2a", "oa", "oa_wholesale",
+    # "mixed" (OA / Wholesale + A2A) or "" for not sorted yet. Some products can never be EU A2A --
+    # anything with a mains plug (hoovers, electricals), laptops -- so a seller whose range is full
+    # of them has to be sourced OA whatever the price data says. See SELLER_TYPES and
+    # suggest_seller_type in seller_watch_service.py for the evidence-based suggestion.
+    seller_type: Mapped[str] = mapped_column(String, default="")
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
@@ -860,11 +1019,17 @@ class SignalQuery(Base):
     verified against a live account from this environment; see the
     project doc for what to check before automating.
 
-    signal_type: "stock_out" | "price_spike" | "ceiling_recheck". The
-    first two run a category-scoped Keepa Product Finder query
-    (ProductFinder.find_signal_candidates); ceiling_recheck needs no
-    Product Finder query at all -- it iterates Atlas's own
-    CeilingRejected pool instead (see that table).
+    signal_type: "stock_out" | "price_spike" | "ceiling_recheck" |
+    "eu_price_drop". The first two run a category-scoped UK Keepa
+    Product Finder query (ProductFinder.find_signal_candidates);
+    ceiling_recheck needs no Product Finder query at all -- it iterates
+    Atlas's own CeilingRejected pool instead (see that table).
+    eu_price_drop (2026-09-20) is a saved Keepa search on an EU
+    marketplace: it finds products whose EU Buy Box just dropped, then
+    runs them through the normal full scan so leads land in the Review
+    Queue (see EuDropScanService) -- the marketplace/min_price/... columns
+    below are ONLY used by this type, and each run is summarised in a
+    SignalRun row instead of SignalMatch rows.
 
     category_ids: comma-separated Keepa root category IDs, "" = no
     restriction -- same convention as ScanQueueItem.category_ids.
@@ -890,9 +1055,60 @@ class SignalQuery(Base):
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
     last_match_snapshot: Mapped[str] = mapped_column(String, default="")
 
+    # eu_price_drop only (2026-09-20). marketplace is where the price drop
+    # is searched -- category_ids above must be THAT marketplace's Keepa
+    # root category IDs (they differ per marketplace). Prices are whole
+    # units of that marketplace's currency (EUR). per_run_cap bounds how
+    # many candidates one run may send to the paid scan.
+    marketplace: Mapped[str] = mapped_column(String, default="UK")
+    min_price: Mapped[int] = mapped_column(Integer, default=20)
+    max_price: Mapped[int] = mapped_column(Integer, default=150)
+    drop30_pct: Mapped[int] = mapped_column(Integer, default=20)
+    drop90_pct: Mapped[int] = mapped_column(Integer, default=15)
+    min_rank_drops30: Mapped[int] = mapped_column(Integer, default=10)
+    per_run_cap: Mapped[int] = mapped_column(Integer, default=60)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(timezone.utc)
     )
+
+
+class SignalRun(Base):
+    """
+    One run of an eu_price_drop SignalQuery (2026-09-20) -- the funnel
+    and cost of that run, shown on the Keepa Searches page. Exists
+    because these runs produce ProductRecords/Review Queue leads rather
+    than SignalMatch rows, so without it a run leaves no visible trace
+    of what it found, dropped or cost.
+
+    status: "running" | "done" | "failed". A row stuck on "running" past
+    SignalService.STALE_RUN_MINUTES (the server restarted mid-run) is
+    treated as failed. tokens_spent is real Keepa spend summed from
+    TokenUsageEvent rows for the run's window, not a balance difference
+    (which refills and other features also move). summary_json holds the
+    rest: BUY/CONSIDER finds, mains-plug drops with titles, any error.
+    """
+    __tablename__ = "signal_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_query_id: Mapped[int] = mapped_column(Integer, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String, default="running")
+
+    candidates_found: Mapped[int] = mapped_column(Integer, default=0)
+    fresh_candidates: Mapped[int] = mapped_column(Integer, default=0)
+    precheck_dropped: Mapped[int] = mapped_column(Integer, default=0)
+    plug_dropped: Mapped[int] = mapped_column(Integer, default=0)
+    # Candidates Amazon says this account can't list (checked before any Keepa spend).
+    restricted_dropped: Mapped[int] = mapped_column(Integer, default=0)
+    sent_to_scan: Mapped[int] = mapped_column(Integer, default=0)
+    saved: Mapped[int] = mapped_column(Integer, default=0)
+    leads: Mapped[int] = mapped_column(Integer, default=0)
+    tokens_spent: Mapped[float] = mapped_column(Float, default=0.0)
+    summary_json: Mapped[str] = mapped_column(String, default="")
+    # What a "running" run is doing right now ("Free price check 12/40", "Waiting for another scan...").
+    stage: Mapped[str] = mapped_column(String, default="")
 
 
 class SignalMatch(Base):

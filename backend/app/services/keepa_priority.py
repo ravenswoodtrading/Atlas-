@@ -86,6 +86,32 @@ class KeepaPriority:
 
     @staticmethod
     @contextmanager
+    def priority_slot(timeout: float | None = None):
+        """
+        Like high_priority(), but the "get out of the way" signal is raised ONLY while waiting for
+        the lock and withdrawn the moment it is held. For work that runs its own BrandScanService
+        scans (Competitor Watch): under high_priority() the caller's own scan would see
+        has_pending() at every chunk boundary and stop itself early. While it waits, the automated
+        ticks decline to start and any in-flight scan yields within one chunk; once it holds the
+        lock it runs undisturbed and everyone else simply can't start.
+        """
+        KeepaPriority.mark_active()
+        try:
+            acquired = ScanCoordinator.acquire_for_manual_scan(timeout=timeout)
+        finally:
+            KeepaPriority.mark_done()
+        if not acquired:
+            raise ScanBusyError(
+                "A Keepa scan is running right now and didn't finish in time. "
+                "Nothing was checked -- try again shortly."
+            )
+        try:
+            yield
+        finally:
+            ScanCoordinator.release_after_manual_scan()
+
+    @staticmethod
+    @contextmanager
     def high_priority(timeout: float | None = None):
         """
         Wraps a high-priority Keepa call site (manual verdict check, queued

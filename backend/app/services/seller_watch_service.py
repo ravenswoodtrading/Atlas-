@@ -1,7 +1,9 @@
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 
 from app.database.database import SessionLocal
 from app.database.models import TrackedSeller, SellerNewListing, ProductRecord, OaSourceCandidate
@@ -9,10 +11,118 @@ from app.keepa.client import get_keepa_client
 from app.models.product import Product
 from app.services.brand_scan_service import BrandScanService
 from app.services.product_repository import ProductRepository
-from app.services.sourcing_classifier import SourcingClassifier, BRAND_PATTERN_MIN_SAMPLE
+from app.services.sourcing_classifier import (
+    SourcingClassifier, BRAND_PATTERN_MIN_SAMPLE, title_suggests_mains_plug, RECENT_VIABLE_ROI_PCT,
+)
 from app.services.activity_log import ActivityLog
 from app.services.token_usage_service import TokenUsageService
 from app.services.fee_engine import FeeEngine
+
+# --- Seller types (2026-09-20, Tamara) ---------------------------------------------------------
+# The four ways a tracked competitor sources, in the order they are shown. "" = not sorted yet.
+# The user's own split: EU A2A on one side, and on the other sellers that are more OA, OA/Wholesale,
+# or OA/Wholesale with A2A mixed in. The reason OA exists as its own group: some products cannot be
+# sourced EU A2A at all -- anything with a mains plug (hoovers, kettles, electricals), laptops -- so
+# a seller whose range is full of them is an OA seller whatever the EU price data says.
+SELLER_TYPES = (
+    ("eu_a2a", "EU A2A"),
+    ("mixed", "OA / Wholesale + A2A"),
+    ("oa_wholesale", "OA / Wholesale"),
+    ("oa", "OA"),
+)
+SELLER_TYPE_LABELS = dict(SELLER_TYPES)
+UNSORTED_LABEL = "Not sorted"
+
+# Some sellers do BOTH (Tamara, 2026-09-20), so the two headline views overlap on purpose: "does EU
+# A2A" = EU A2A + mixed, "does OA" = OA + OA/Wholesale + mixed. "unsorted" is the seller with no type.
+SELLER_TYPE_GROUPS = {
+    "does_a2a": ("eu_a2a", "mixed"),
+    "does_oa": ("oa", "oa_wholesale", "mixed"),
+}
+SELLER_TYPE_GROUP_LABELS = {"does_a2a": "Does EU A2A", "does_oa": "Does OA / Wholesale"}
+
+
+def seller_type_matches(seller_type: str, wanted: str) -> bool:
+    """True if a seller of `seller_type` belongs in the view `wanted` ("" = every seller)."""
+    if not wanted:
+        return True
+    if wanted == "unsorted":
+        return not seller_type
+    if wanted in SELLER_TYPE_GROUPS:
+        return seller_type in SELLER_TYPE_GROUPS[wanted]
+    return seller_type == wanted
+
+# Thresholds for the SUGGESTION only (a human always has the last word). Chosen by trying them on
+# the 27 real tracked sellers on 2026-09-20; see suggest_seller_type.
+SUGGEST_MIN_TAGGED = 20          # fewer classified detections than this: not enough evidence
+SUGGEST_PLUG_SHARE = 0.30        # this share of listings looks plug/electrical -> OA family
+SUGGEST_EU_A2A_SHARE = 0.45      # this share of classified detections is EU A2A -> EU A2A seller
+SUGGEST_MIXED_EU_SHARE = 0.20    # ...at least this much EU A2A, alongside...
+SUGGEST_MIXED_OTHER_SHARE = 0.35 # ...at least this much OA + Wholesale -> mixed
+
+
+def suggest_seller_type(signals: dict) -> tuple:
+    """
+    (type_key or None, plain-English reason) from a seller's evidence. Pure.
+
+    signals: {tagged, eu, uk, wholesale, oa, titled, plug}. `tagged` counts detections the sourcing
+    classifier has tagged (EU A2A, UK A2A, Wholesale, OA); `titled` counts detections with a product
+    title, `plug` those whose title looks like a mains-plug device (title_suggests_mains_plug --
+    the same filter that keeps plug items out of the EU price-drop scan; the coarser category-name
+    check is deliberately NOT used, it flags whole categories such as Computers & Accessories).
+
+    Order matters:
+      1. A third of their range can't be EU A2A (plug/electrical): if they ALSO have a real EU A2A
+         share they do both (mixed); otherwise OA or OA / Wholesale, decided by which of the two the
+         classifier sees more of. Beats the price-based tags, because an "EU A2A" tag on a plug
+         product can't actually be acted on.
+      2. Mostly EU A2A -> EU A2A.
+      3. Meaningful EU A2A alongside a lot of OA/Wholesale -> the mixed group.
+      4. Otherwise OA / Wholesale, or OA if OA clearly outweighs Wholesale.
+    """
+    tagged = signals.get("tagged") or 0
+    if tagged < SUGGEST_MIN_TAGGED:
+        return None, f"Not enough data yet ({tagged} classified detections, need {SUGGEST_MIN_TAGGED})"
+
+    eu = (signals.get("eu") or 0) / tagged
+    wholesale = (signals.get("wholesale") or 0) / tagged
+    oa = (signals.get("oa") or 0) / tagged
+    other = wholesale + oa
+    titled = signals.get("titled") or 0
+    plug = (signals.get("plug") or 0) / titled if titled else 0.0
+
+    facts = (
+        f"{eu:.0%} EU A2A, {other:.0%} OA/Wholesale, {plug:.0%} plug/electrical items "
+        f"({tagged} classified)"
+    )
+
+    if plug >= SUGGEST_PLUG_SHARE:
+        if eu >= SUGGEST_MIXED_EU_SHARE:
+            # Lots of plug items (OA only) AND a real EU A2A share on the rest: they do both.
+            return "mixed", (
+                f"{plug:.0%} of their range is plug/electrical (can't be EU A2A) but {eu:.0%} of it "
+                f"is EU A2A -- they do both -- {facts}"
+            )
+        kind = "oa" if oa > wholesale else "oa_wholesale"
+        return kind, f"{plug:.0%} of their range is plug/electrical, which can't be EU A2A -- {facts}"
+    if eu >= SUGGEST_EU_A2A_SHARE:
+        return "eu_a2a", facts
+    if eu >= SUGGEST_MIXED_EU_SHARE and other >= SUGGEST_MIXED_OTHER_SHARE:
+        return "mixed", facts
+    return ("oa" if oa > wholesale else "oa_wholesale"), facts
+
+
+def migrate_seller_schema(engine):
+    """
+    Additive migration, same pattern as reporting_schema.py: create_all() only creates missing
+    tables, so tracked_sellers (already on the live DB) needs its new column added by hand.
+    NOT NULL with a constant default so existing rows read as "" (not sorted yet), not NULL.
+    """
+    if "tracked_sellers" in inspect(engine).get_table_names():
+        if "seller_type" not in {c["name"] for c in inspect(engine).get_columns("tracked_sellers")}:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE tracked_sellers ADD COLUMN seller_type VARCHAR NOT NULL DEFAULT ''"))
+
 
 # How many DISTINCT ASINs to send to BrandScanService.scan() per Keepa
 # call within one reclassify_all() run -- same chunking spirit as
@@ -47,6 +157,12 @@ SOURCING_TAG_BY_TAB = {
     "wholesale": "Wholesale (likely)",
     "oa": "OA / unclear",
 }
+
+
+# See SellerWatchService.brand_sourcing_pattern_cached.
+BRAND_PATTERN_CACHE_SECONDS = 300
+_BRAND_PATTERN_CACHE = {"table": None, "at": 0.0}
+_BRAND_PATTERN_LOCK = threading.Lock()
 
 
 class SellerWatchService:
@@ -203,6 +319,52 @@ class SellerWatchService:
 
         eu_a2a_count = next((count for tag, count in rows if tag == "EU A2A"), 0)
         return {"sample_size": total, "eu_a2a_pct": (eu_a2a_count / total) * 100.0}
+
+    @staticmethod
+    def brand_sourcing_pattern_cached(brand: str) -> dict | None:
+        """
+        Same answer as brand_sourcing_pattern, for PAGE loads (2026-09-21): the Review Queue / Command Centre
+        built one row per competitor lead and each row ran its own join over every scan record -- 711 queries,
+        ~8s cold, on every load of the Command Centre. This answers every brand from ONE grouped query, kept
+        for BRAND_PATTERN_CACHE_SECONDS. A brand's historical tag mix moves slowly, and the value only feeds a
+        display-side certainty note, so a few minutes stale is fine here. Callers that need the live number
+        (classification, tests) keep using brand_sourcing_pattern.
+        """
+        if not brand:
+            return None
+        counts = SellerWatchService._brand_pattern_table().get(brand.lower(), {})
+        total = sum(counts.values())
+        if total < BRAND_PATTERN_MIN_SAMPLE:
+            return None
+        return {"sample_size": total, "eu_a2a_pct": (counts.get("EU A2A", 0) / total) * 100.0}
+
+    @staticmethod
+    def _brand_pattern_table() -> dict:
+        """{lower(brand): {sourcing_tag: count}} over every non-dismissed, tagged detection; one query, cached."""
+        with _BRAND_PATTERN_LOCK:
+            cached = _BRAND_PATTERN_CACHE["table"]
+            if cached is not None and time.monotonic() - _BRAND_PATTERN_CACHE["at"] < BRAND_PATTERN_CACHE_SECONDS:
+                return cached
+
+            db = SessionLocal()
+            try:
+                rows = (
+                    db.query(func.lower(ProductRecord.brand), SellerNewListing.sourcing_tag, func.count(SellerNewListing.id))
+                    .join(ProductRecord, SellerNewListing.product_record_id == ProductRecord.id)
+                    .filter(SellerNewListing.dismissed == False)  # noqa: E712
+                    .filter(SellerNewListing.sourcing_tag.isnot(None))
+                    .filter(ProductRecord.brand.isnot(None))
+                    .group_by(func.lower(ProductRecord.brand), SellerNewListing.sourcing_tag)
+                    .all()
+                )
+            finally:
+                db.close()
+
+            table: dict = {}
+            for brand_key, tag, count in rows:
+                table.setdefault(brand_key, {})[tag] = count
+            _BRAND_PATTERN_CACHE.update({"table": table, "at": time.monotonic()})
+            return table
 
     @staticmethod
     def _persist_classification(listing: SellerNewListing, classification, recommendation: str | None) -> None:
@@ -914,6 +1076,103 @@ class SellerWatchService:
             db.close()
 
     @staticmethod
+    def get_seller_type_signals() -> dict:
+        """
+        {tracked_seller_id: {tagged, eu, uk, wholesale, oa, titled, plug}} -- the evidence
+        suggest_seller_type works from. One pass over non-dismissed detections joined to their
+        product record's title; the plug check is a regex over ~3,000 titles (milliseconds).
+        """
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(SellerNewListing.tracked_seller_id, SellerNewListing.sourcing_tag, ProductRecord.title)
+                .outerjoin(ProductRecord, ProductRecord.id == SellerNewListing.product_record_id)
+                .filter(SellerNewListing.dismissed == False)
+                .all()
+            )
+        finally:
+            db.close()
+
+        tag_key = {"EU A2A": "eu", "UK A2A": "uk", "Wholesale (likely)": "wholesale", "OA / unclear": "oa"}
+        signals: dict = {}
+        for seller_id, tag, title in rows:
+            entry = signals.setdefault(seller_id, {
+                "tagged": 0, "eu": 0, "uk": 0, "wholesale": 0, "oa": 0, "titled": 0, "plug": 0,
+            })
+            key = tag_key.get(tag)
+            if key:
+                entry[key] += 1
+                entry["tagged"] += 1
+            if title:
+                entry["titled"] += 1
+                if title_suggests_mains_plug(title):
+                    entry["plug"] += 1
+        return signals
+
+    @staticmethod
+    def get_seller_type_suggestions() -> dict:
+        """{tracked_seller_id: {"type": key or None, "reason": str, "signals": {...}}} for every tracked seller."""
+        signals = SellerWatchService.get_seller_type_signals()
+        empty = {"tagged": 0, "eu": 0, "uk": 0, "wholesale": 0, "oa": 0, "titled": 0, "plug": 0}
+        out = {}
+        for seller in SellerWatchService.list_tracked_sellers():
+            sig = signals.get(seller.id, empty)
+            kind, reason = suggest_seller_type(sig)
+            out[seller.id] = {"type": kind, "reason": reason, "signals": sig}
+        return out
+
+    @staticmethod
+    def set_seller_type(tracked_seller_id: int, seller_type: str) -> bool:
+        """Sets a seller's type ("" clears it back to not sorted). False for an unknown seller or type."""
+        if seller_type and seller_type not in SELLER_TYPE_LABELS:
+            return False
+        db = SessionLocal()
+        try:
+            seller = db.get(TrackedSeller, tracked_seller_id)
+            if seller is None:
+                return False
+            seller.seller_type = seller_type or ""
+            db.commit()
+            return True
+        finally:
+            db.close()
+
+    @staticmethod
+    def apply_suggested_types() -> dict:
+        """
+        Fills in the type of every seller that is NOT SORTED YET from its suggestion. Never
+        overrides a type Tamara already chose, and skips sellers without enough evidence.
+        """
+        suggestions = SellerWatchService.get_seller_type_suggestions()
+        applied = skipped_no_data = already_sorted = 0
+        db = SessionLocal()
+        try:
+            for seller in db.query(TrackedSeller).all():
+                if seller.seller_type:
+                    already_sorted += 1
+                    continue
+                kind = (suggestions.get(seller.id) or {}).get("type")
+                if not kind:
+                    skipped_no_data += 1
+                    continue
+                seller.seller_type = kind
+                applied += 1
+            db.commit()
+        finally:
+            db.close()
+        return {"applied": applied, "skipped_no_data": skipped_no_data, "already_sorted": already_sorted}
+
+    @staticmethod
+    def get_seller_type_counts() -> dict:
+        """{type_key: count of tracked sellers, "": not sorted} -- every type present, zero if empty."""
+        counts = {key: 0 for key, _ in SELLER_TYPES}
+        counts[""] = 0
+        for seller in SellerWatchService.list_tracked_sellers():
+            key = seller.seller_type if seller.seller_type in SELLER_TYPE_LABELS else ""
+            counts[key] += 1
+        return counts
+
+    @staticmethod
     def set_active(tracked_seller_id: int, active: bool):
         db = SessionLocal()
 
@@ -1387,6 +1646,25 @@ class SellerWatchService:
         return {"target": target, "breakeven": breakeven}
 
     @staticmethod
+    def has_viable_eu_source(record) -> bool:
+        """
+        True if this product has a LIVE EU source that earns at least the viable bar (17% ROI) at
+        today's UK price OR at the UK's 90-day typical price. Such a product is EU-A2A-shaped, not an
+        OA lead: it belongs with the EU A2A handling and the Watchlist, never in the OA queue.
+        Uses only fields already stored on the ProductRecord -- no Keepa call.
+
+        The 90-day half matters (2026-09-20, Tamara): when the UK price has fallen too, today's ROI can
+        look poor while the same EU cost is comfortably profitable at the UK's normal price -- the
+        competitor is banking on the UK recovering. The tag for that shape can land on "OA / unclear"
+        (see SourcingClassifier: the EU test compares each day's EU cost with THAT day's UK price, and
+        the UK only counts as a dip at 30%+ below its 90-day average), so the queue must not trust the
+        tag alone.
+        """
+        if not (record.best_source_cost_gbp or 0) > 0:
+            return False
+        return max(record.roi or 0, record.roi_90d or 0) >= RECENT_VIABLE_ROI_PCT
+
+    @staticmethod
     def list_oa_worth_investigating(limit: int = 200):
         """
         OA/unclear detections where the SAME OA price-guide economics
@@ -1428,6 +1706,10 @@ class SellerWatchService:
             for listing, seller, record in rows:
                 oa_price_guide = SellerWatchService.oa_price_guide_for_record(record)
                 if oa_price_guide is None:
+                    continue
+                # An OA lead is a product with NO working EU source. One with a live, viable EU
+                # source is an EU A2A candidate (see has_viable_eu_source) -- not an OA lead.
+                if SellerWatchService.has_viable_eu_source(record):
                     continue
                 result.append({
                     "listing": listing, "seller": seller, "record": record,

@@ -3,6 +3,80 @@
 
 {% block title %}Replen - Atlas{% endblock %}
 
+{% macro ago(hours) -%}
+    {%- if hours is none -%}never
+    {%- elif hours < 1 -%}just now
+    {%- elif hours < 48 -%}{{ hours|round|int }}h ago
+    {%- else -%}{{ (hours / 24)|round|int }}d ago{%- endif -%}
+{%- endmacro %}
+
+{% macro status_badge(status, label) -%}
+    {%- set cls = {
+        'BUY_MORE': 'bg-success',
+        'STOCKED': 'bg-info text-dark',
+        'MARGINAL': 'bg-warning text-dark',
+        'WAIT_COST': 'bg-secondary',
+        'WAIT_PRICE': 'bg-secondary',
+        'WAIT_BOTH': 'bg-secondary',
+        'WAIT': 'bg-secondary',
+        'NO_SOURCE': 'bg-light text-muted border',
+        'GATED': 'bg-dark',
+        'DEAD': 'bg-dark',
+        'UNCHECKED': 'bg-light text-muted border',
+    }.get(status, 'bg-light text-muted border') -%}
+    <span class="badge {{ cls }}">{{ label }}</span>
+{%- endmacro %}
+
+{# A column header that sorts by `key`. Clicking the active one flips its direction. #}
+{% macro sort_th(key, label, cls='') -%}
+    <th class="{{ cls }}">
+        {%- if sort == key -%}
+            <a class="text-decoration-none fw-bold" href="{{ url(sort=key, order=('asc' if sort_desc else 'desc')) }}"
+               title="Sorted {{ 'high to low' if sort_desc else 'low to high' }} -- click to reverse">
+                {{ label }} <i class="bi bi-caret-{{ 'down' if sort_desc else 'up' }}-fill"></i></a>
+        {%- else -%}
+            <a class="text-decoration-none text-body" href="{{ url(sort=key, order=None) }}" title="Sort by {{ label|lower }}">
+                {{ label }} <i class="bi bi-arrow-down-up text-muted small"></i></a>
+        {%- endif -%}
+    </th>
+{%- endmacro %}
+
+{% macro select(name, label, options, current, all_label='Any') -%}
+    <div>
+        <label class="form-label small text-muted mb-0">{{ label }}</label>
+        <select class="form-select form-select-sm" name="{{ name }}" onchange="this.form.submit()">
+            <option value="">{{ all_label }}</option>
+            {% for value, text in options %}
+            <option value="{{ value }}" {{ 'selected' if current == value }}>{{ text }}</option>
+            {% endfor %}
+        </select>
+    </div>
+{%- endmacro %}
+
+{% macro pager() -%}
+    {% if data.pages > 1 %}
+    <nav class="d-flex justify-content-center my-2">
+        <ul class="pagination pagination-sm mb-0">
+            <li class="page-item {{ 'disabled' if data.page <= 1 }}"><a class="page-link" href="{{ url(page=data.page - 1) }}">&laquo; Prev</a></li>
+            {% set first = [1, data.page - 2]|max %}
+            {% set last = [data.pages, data.page + 2]|min %}
+            {% if first > 1 %}
+                <li class="page-item"><a class="page-link" href="{{ url(page=1) }}">1</a></li>
+                {% if first > 2 %}<li class="page-item disabled"><span class="page-link">&hellip;</span></li>{% endif %}
+            {% endif %}
+            {% for p in range(first, last + 1) %}
+                <li class="page-item {{ 'active' if p == data.page }}"><a class="page-link" href="{{ url(page=p) }}">{{ p }}</a></li>
+            {% endfor %}
+            {% if last < data.pages %}
+                {% if last < data.pages - 1 %}<li class="page-item disabled"><span class="page-link">&hellip;</span></li>{% endif %}
+                <li class="page-item"><a class="page-link" href="{{ url(page=data.pages) }}">{{ data.pages }}</a></li>
+            {% endif %}
+            <li class="page-item {{ 'disabled' if data.page >= data.pages }}"><a class="page-link" href="{{ url(page=data.page + 1) }}">Next &raquo;</a></li>
+        </ul>
+    </nav>
+    {% endif %}
+{%- endmacro %}
+
 {% block content %}
 
 {% if message %}
@@ -12,141 +86,257 @@
 </div>
 {% endif %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Replen List ({{ items|length }}) {{ help_button("replen") }}</h4>
-    <form method="post" action="/replen/check-now" id="checkNowForm">
-        <button class="btn btn-dark btn-sm" type="submit" id="checkNowBtn">
-            <i class="bi bi-arrow-repeat"></i> Check current prices now
-        </button>
-    </form>
+{% if run.running %}
+<div class="alert alert-warning py-2 d-flex align-items-center gap-2">
+    <span class="spinner-border spinner-border-sm"></span>
+    <span><strong>Running:</strong> {{ run.running }}. This page reloads itself every few seconds.</span>
 </div>
+<script>setTimeout(function () { window.location.reload(); }, 8000);</script>
+{% elif run.last_message %}
+<div class="text-muted small mb-2"><i class="bi bi-check2-circle"></i> Last manual run &mdash; {{ run.last_message }}</div>
+{% endif %}
 
-<script>
-(function() {
-    var form = document.getElementById('checkNowForm');
-    var btn = document.getElementById('checkNowBtn');
-
-    form.addEventListener('submit', function() {
-        btn.disabled = true;
-        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Checking -- this can take a while for a large list, please wait...';
-    });
-})();
-</script>
-
-<p class="text-muted">
-    ASINs proven to sell well before -- either imported from a join of your purchase history and Seller Toolkit's
-    actual sales data, or added manually. <code>Achieved ROI</code> is real, historical proof it's a genuine past
-    winner. <code>Current ROI</code> (from "Check current prices now") is what actually decides whether it's worth
-    buying again today.
-</p>
-
-<div class="row g-4 mb-4">
-    <div class="col-md-5">
-        <div class="card metric p-4 h-100">
-            <h6>Add an ASIN manually</h6>
-            <form method="post" action="/replen/add" class="row g-2 align-items-end">
-                <div class="col-7">
-                    <label class="form-label small">ASIN</label>
-                    <input type="text" class="form-control" name="asin" placeholder="B0EXAMPLE1" required>
-                </div>
-                <div class="col-5">
-                    <button type="submit" class="btn btn-outline-dark w-100">
-                        <i class="bi bi-plus-lg"></i> Add
-                    </button>
-                </div>
-                <div class="col-12">
-                    <label class="form-label small">Notes (optional)</label>
-                    <input type="text" class="form-control" name="notes" placeholder="e.g. why it's worth watching">
-                </div>
-            </form>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+        <h4 class="mb-1">Replen &mdash; EU A2A ({{ data.total }}) {{ help_button("replen") }}</h4>
+        <div class="text-muted small">
+            Everything we've ever bought Amazon-to-Amazon from DE/FR/ES/IT, with what to do about it now.
+            Stock and sales refreshed <strong>{{ ago(stock_age_hours) }}</strong> (SP-API).
+            {% if scheduler and scheduler.last_tick_at %}
+                Daily job last ran <a href="/automations">{{ scheduler.last_tick_at.strftime("%d %b %H:%M") }}</a>.
+            {% else %}
+                Daily job hasn't run yet.
+            {% endif %}
         </div>
     </div>
-    <div class="col-md-7">
-        <div class="card metric p-4 h-100">
-            <h6>Import from purchase history + Seller Toolkit</h6>
-            <form method="post" action="/replen/import" enctype="multipart/form-data" class="row g-2 align-items-end">
-                <div class="col-md-6">
-                    <label class="form-label small">Purchase history (buy sheet CSV)</label>
-                    <input type="file" class="form-control form-control-sm" name="buy_sheet" accept=".csv" required>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label small">Seller Toolkit sales export (.txt)</label>
-                    <input type="file" class="form-control form-control-sm" name="stk_sales" accept=".txt,.csv" required>
-                </div>
-                <div class="col-md-8">
-                    <label class="form-label small">Minimum achieved ROI to import</label>
-                    <input type="number" class="form-control form-control-sm" name="min_achieved_roi" value="15" min="0" max="100" step="1">
-                </div>
-                <div class="col-md-4">
-                    <button type="submit" class="btn btn-outline-dark w-100">
-                        <i class="bi bi-upload"></i> Import
-                    </button>
-                </div>
-            </form>
-        </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <form method="post" action="/replen/refresh">
+            <button class="btn btn-outline-dark btn-sm" type="submit" {{ 'disabled' if run.running }}
+                    title="Free: re-reads the Buy Sheet and refreshes stock and 30-day sales from Amazon. No Keepa tokens.">
+                <i class="bi bi-arrow-repeat"></i> Refresh stock &amp; sales
+            </button>
+        </form>
+        <form method="post" action="/replen/check-batch">
+            <button class="btn btn-dark btn-sm" type="submit" {{ 'disabled' if run.running }}
+                    title="Spends Keepa tokens: re-prices the next {{ daily_pct }}% of the list (the same batch the daily job takes).">
+                <i class="bi bi-lightning-charge"></i> Re-price next batch
+            </button>
+        </form>
     </div>
 </div>
 
-{% if items %}
+{# Quick views: one click to a combination people actually want. #}
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
+    <span class="text-muted">Quick views:</span>
+    <a class="btn btn-sm btn-outline-success" href="/replen?group=buy&stock=out"
+       title="Worth buying and nothing left on the shelf">Buy more &amp; sold out</a>
+    <a class="btn btn-sm btn-outline-success" href="/replen?group=buy&sold=yes"
+       title="Worth buying and selling right now">Buy more &amp; selling</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/replen?stock=out&sold=yes"
+       title="Out of stock but shipped units in the last 30 days">Just sold out</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/replen?bought=30&sort=bought">Bought last 30 days</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/replen?trend=costup&sort=costdelta"
+       title="EU cost is 10%+ above what we paid">Cost gone up</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/replen?bought=repeat">Repeat buys</a>
+    <a class="btn btn-sm btn-outline-secondary" href="/replen?checked=never">Needs pricing</a>
+</div>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+    {% set chips = [
+        ('', 'All', data.matching),
+        ('buy', 'Buy more', data.counts.buy),
+        ('stocked', 'Well stocked', data.counts.stocked),
+        ('marginal', 'Thin margin', data.counts.marginal),
+        ('wait', 'Wait', data.counts.wait),
+        ('nosource', 'No EU source', data.counts.nosource),
+        ('blocked', 'Dead / gated', data.counts.blocked),
+        ('unchecked', 'Not priced', data.counts.unchecked),
+    ] %}
+    {% for key, label, count in chips %}
+    <a class="btn btn-sm {{ 'btn-dark' if group == key else 'btn-outline-secondary' }}" href="{{ url(group=(key or None)) }}">
+        {{ label }} <span class="badge {{ 'bg-light text-dark' if group == key else 'bg-secondary' }}">{{ count }}</span>
+    </a>
+    {% endfor %}
+    {% if data.ignored_count %}
+    <a class="btn btn-sm btn-link text-muted ms-auto"
+       href="{{ url(ignored=(None if show_ignored else 'true')) }}">
+        {{ 'Hide hidden' if show_ignored else 'Show hidden (' ~ data.ignored_count ~ ')' }}
+    </a>
+    {% endif %}
+</div>
+
+{# Filter bar: every control submits on change; filters combine. #}
+<form method="get" action="/replen" class="card p-3 mb-2" id="filterForm">
+    {% if group %}<input type="hidden" name="group" value="{{ group }}">{% endif %}
+    {% if show_ignored %}<input type="hidden" name="ignored" value="true">{% endif %}
+    <div class="row g-2 align-items-end">
+        <div class="col-12 col-md-4 col-lg-3">
+            <label class="form-label small text-muted mb-0">Search</label>
+            <div class="input-group input-group-sm">
+                <input type="text" class="form-control" name="q" value="{{ q }}" placeholder="ASIN, title or brand">
+                <button class="btn btn-outline-dark" type="submit"><i class="bi bi-search"></i></button>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">{{ select('stock', 'Stock', stock_filters, state.stock) }}</div>
+        <div class="col-6 col-md-2">{{ select('sold', 'Sales', sold_filters, state.sold) }}</div>
+        <div class="col-6 col-md-2">{{ select('bought', 'Bought', bought_filters, state.bought) }}</div>
+        <div class="col-6 col-md-2">
+            {{ select('market', 'EU source now', market_opts, state.market) }}
+        </div>
+        <div class="col-6 col-md-2">{{ select('roi', 'ROI now', roi_filters, state.roi) }}</div>
+        <div class="col-6 col-md-3 col-lg-2">{{ select('trend', 'Since we bought', trend_filters, state.trend) }}</div>
+        <div class="col-6 col-md-2">{{ select('checked', 'Priced', checked_filters, state.checked) }}</div>
+        <div class="col-6 col-md-3">
+            {{ select('brand', 'Brand', brand_opts, state.brand, 'All brands') }}
+        </div>
+        <div class="col-6 col-md-3">
+            {{ select('category', 'Category', category_opts, state.category, 'All categories') }}
+        </div>
+        <div class="col-6 col-md-3 col-lg-2">{{ select('sort', 'Sort by', sort_choices, sort if sort != 'verdict' else '', 'Verdict (default)') }}</div>
+        <div class="col-6 col-md-2 col-lg-1">
+            <label class="form-label small text-muted mb-0">Per page</label>
+            <select class="form-select form-select-sm" name="per" onchange="this.form.submit()">
+                {% for n in page_sizes %}
+                <option value="{{ n }}" {{ 'selected' if n == per_size }}>{{ 'All' if n == 0 else n }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+</form>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-2 small">
+    {% for label, link in pills %}
+    <a class="badge rounded-pill text-bg-light border text-decoration-none" href="{{ link }}" title="Remove this filter">
+        {{ label }} <i class="bi bi-x"></i></a>
+    {% endfor %}
+    {% if pills or state.sort or state.per %}
+    <a class="text-decoration-none" href="{{ '/replen?ignored=true' if show_ignored else '/replen' }}"><i class="bi bi-x-circle"></i> Clear all</a>
+    {% endif %}
+    <span class="text-muted ms-auto">
+        {% if data.filtered %}
+            {% if data.page_size %}
+                Showing {{ (data.page - 1) * data.page_size + 1 }}&ndash;{{ [data.page * data.page_size, data.filtered]|min }} of
+            {% else %}Showing all{% endif %}
+            <strong>{{ data.filtered }}</strong>
+        {% else %}<strong>0</strong> shown{% endif %}
+        {% if data.filtered != data.total %}&middot; {{ data.total }} total{% endif %}
+    </span>
+</div>
+
+{{ pager() }}
+
+{% if data.rows %}
 <div class="card metric p-3">
     <div class="table-responsive">
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
-                    <th>Product</th>
-                    <th>Originally sourced from</th>
-                    <th class="text-end">Achieved ROI</th>
-                    <th class="text-end">Achieved units</th>
-                    <th class="text-end">Current ROI</th>
-                    <th class="text-end">Current profit</th>
-                    <th>Current best source</th>
-                    <th>Last checked</th>
+                    {{ sort_th('title', 'Product') }}
+                    {{ sort_th('verdict', 'Verdict') }}
+                    {{ sort_th('bought', 'Last bought') }}
+                    <th>
+                        Stock &amp; sales
+                        <div class="small fw-normal">
+                            <a class="text-decoration-none {{ 'fw-bold' if sort == 'stock' }}" href="{{ url(sort='stock', order=None) }}">stock</a> &middot;
+                            <a class="text-decoration-none {{ 'fw-bold' if sort == 'sold' }}" href="{{ url(sort='sold', order=None) }}">sold</a> &middot;
+                            <a class="text-decoration-none {{ 'fw-bold' if sort == 'cover' }}" href="{{ url(sort='cover', order=None) }}">cover</a>
+                        </div>
+                    </th>
+                    {{ sort_th('costdelta', 'EU cost now', 'text-end') }}
+                    {{ sort_th('pricedelta', 'UK Buy Box now', 'text-end') }}
+                    {{ sort_th('roi', 'ROI now', 'text-end') }}
+                    {{ sort_th('checked', 'Priced') }}
                     <th></th>
                 </tr>
             </thead>
             <tbody>
-                {% for item in items %}
-                <tr id="replen-{{ item.id }}" class="{{ 'table-success' if item.current_roi and item.current_roi > 25 }}">
-                    <td style="max-width:240px;">
-                        <div class="fw-semibold small">{{ item.title[:70] if item.title else item.asin }}{% if item.title and item.title|length > 70 %}...{% endif %}</div>
+                {% for r in data.rows %}
+                {% set it = r.item %}
+                <tr id="replen-{{ it.asin }}" class="{{ 'table-success' if it.status == 'BUY_MORE' }} {{ 'opacity-50' if it.ignored }}">
+                    <td style="max-width:230px;">
+                        <div class="fw-semibold small">{{ it.title[:70] if it.title else it.asin }}{% if it.title and it.title|length > 70 %}...{% endif %}</div>
                         <div class="text-muted small">
-                            {{ item.asin }}
-                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ item.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
-                            &middot; {{ item.brand }}
+                            {{ it.asin }}
+                            <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ it.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
+                            <a href="https://www.amazon.co.uk/dp/{{ it.asin }}" target="_blank" rel="noopener" title="Amazon UK"><i class="bi bi-box-arrow-up-right"></i></a>
+                            {% if it.brand %}&middot; <a class="text-muted" href="{{ url(brand=it.brand) }}" title="Show only {{ it.brand }}">{{ it.brand }}</a>{% endif %}
                         </div>
-                        {% if item.notes %}<div class="text-muted small fst-italic">{{ item.notes }}</div>{% endif %}
                     </td>
-                    <td class="small text-muted">{{ item.source_store or "Manual" }}</td>
+
+                    <td style="max-width:280px;">
+                        {{ status_badge(it.status, r.label) }}
+                        <div class="small text-muted mt-1">{{ it.status_reason }}</div>
+                    </td>
+
+                    <td class="small">
+                        {% if it.last_bought_at %}
+                            {{ it.last_bought_at.strftime("%d %b %Y") }}
+                            <span class="text-muted">({{ r.days_since_bought }}d ago)</span><br>
+                            {{ it.last_qty }} &times; &pound;{{ "%.2f"|format(it.last_cost_gbp) if it.last_cost_gbp is not none else "?" }}
+                            <span class="text-muted">from {{ it.last_source_store or "EU" }}</span><br>
+                            <span class="text-muted">planned &pound;{{ "%.2f"|format(it.last_sale_price_gbp) if it.last_sale_price_gbp is not none else "?" }}
+                            {% if it.times_bought > 1 %}&middot; bought {{ it.times_bought }}&times; ({{ it.total_units_bought }} units){% endif %}</span>
+                        {% else %}<span class="text-muted">--</span>{% endif %}
+                    </td>
+
+                    <td class="small">
+                        {% if it.stock_total is not none %}
+                            <strong>{{ it.stock_total }}</strong> in stock
+                            {% if it.stock_inbound %}<span class="text-muted">+ {{ it.stock_inbound }} inbound</span>{% endif %}
+                        {% else %}<span class="text-muted">stock unknown</span>{% endif %}
+                        <br>
+                        {% if it.units_30d is not none %}
+                            {{ it.units_30d }} shipped (30d)
+                            {% if r.cover_days is not none %}<span class="text-muted">&middot; ~{{ r.cover_days }}d cover</span>{% endif %}
+                            {% if it.last_sale_date %}<br><span class="text-muted">last sale {{ it.last_sale_date }}</span>{% endif %}
+                        {% else %}<span class="text-muted">sales unknown</span>{% endif %}
+                    </td>
+
+                    <td class="text-end small">
+                        {% if it.current_source_cost_gbp is not none %}
+                            <strong>&pound;{{ "%.2f"|format(it.current_source_cost_gbp) }}</strong>
+                            <span class="text-muted">{{ it.current_source_marketplace }}</span>
+                            {% if r.cost_delta is not none %}
+                            <br><span class="{{ 'text-danger' if r.cost_delta > 0.5 else ('text-success' if r.cost_delta < -0.5 else 'text-muted') }}">
+                                {{ '%+.2f'|format(r.cost_delta) }} vs paid</span>
+                            {% endif %}
+                        {% else %}<span class="text-muted">--</span>{% endif %}
+                    </td>
+
+                    <td class="text-end small">
+                        {% if it.buy_box_now is not none %}
+                            <strong>&pound;{{ "%.2f"|format(it.buy_box_now) }}</strong>
+                            {% if r.price_delta_pct is not none %}
+                            <br><span class="{{ 'text-danger' if r.price_delta_pct < -5 else ('text-success' if r.price_delta_pct > 5 else 'text-muted') }}">
+                                {{ '%+.0f'|format(r.price_delta_pct) }}% vs planned</span>
+                            {% endif %}
+                            {% if it.offers_now is not none %}<br><span class="text-muted">{{ it.offers_now }} offer{{ '' if it.offers_now == 1 else 's' }}</span>{% endif %}
+                        {% else %}<span class="text-muted">--</span>{% endif %}
+                    </td>
+
                     <td class="text-end">
-                        {% if item.achieved_roi is not none %}
-                            {{ "%.0f"|format(item.achieved_roi) }}%
-                        {% else %}
-                            <span class="text-muted">--</span>
-                        {% endif %}
+                        {% if it.current_roi is not none %}
+                            <span class="fw-semibold {{ 'text-success' if it.current_roi >= buy_roi else ('text-danger' if it.current_roi < 0 else '') }}">{{ "%.0f"|format(it.current_roi) }}%</span>
+                            {% if it.current_profit is not none %}<div class="small text-muted">{{ '-' if it.current_profit < 0 }}&pound;{{ "%.2f"|format(it.current_profit|abs) }} / unit</div>{% endif %}
+                            {% if it.current_roi_90d is not none %}<div class="small text-muted">90d: {{ "%.0f"|format(it.current_roi_90d) }}%</div>{% endif %}
+                        {% else %}<span class="text-muted">--</span>{% endif %}
                     </td>
-                    <td class="text-end">{{ item.achieved_units if item.achieved_units is not none else "--" }}</td>
-                    <td class="text-end {{ 'text-success' if item.current_roi and item.current_roi > 0 else ('text-danger' if item.current_roi is not none) }}">
-                        {% if item.current_roi is not none %}
-                            {{ "%.0f"|format(item.current_roi) }}%
-                        {% else %}
-                            <span class="text-muted">Not checked</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-end">
-                        {% if item.current_profit is not none %}
-                            &pound;{{ "%.2f"|format(item.current_profit) }}
-                        {% else %}
-                            <span class="text-muted">--</span>
-                        {% endif %}
-                    </td>
-                    <td class="small">{{ item.current_source_marketplace or "--" }}</td>
-                    <td class="small text-muted">{{ item.last_checked_at.strftime("%Y-%m-%d %H:%M") if item.last_checked_at else "Never" }}</td>
-                    <td>
-                        <form method="post" action="/replen/remove">
-                            <input type="hidden" name="item_id" value="{{ item.id }}">
-                            <button class="btn btn-sm btn-outline-danger" type="submit">
-                                <i class="bi bi-trash"></i>
-                            </button>
+
+                    <td class="small text-muted">{{ ago(r.hours_since_check) }}</td>
+
+                    <td class="text-nowrap">
+                        <form method="post" action="/replen/check-one" class="d-inline">
+                            <input type="hidden" name="asin" value="{{ it.asin }}">
+                            <input type="hidden" name="view" value="{{ view_qs }}">
+                            <button class="btn btn-sm btn-outline-secondary" type="submit" {{ 'disabled' if run.running }}
+                                    title="Re-price this one on Keepa now"><i class="bi bi-arrow-repeat"></i></button>
+                        </form>
+                        <form method="post" action="/replen/{{ 'unignore' if it.ignored else 'ignore' }}" class="d-inline">
+                            <input type="hidden" name="asin" value="{{ it.asin }}">
+                            <input type="hidden" name="view" value="{{ view_qs }}">
+                            <button class="btn btn-sm btn-outline-secondary" type="submit"
+                                    title="{{ 'Bring back' if it.ignored else 'Hide: never re-price or alert on this' }}">
+                                <i class="bi bi-{{ 'eye' if it.ignored else 'eye-slash' }}"></i></button>
                         </form>
                     </td>
                 </tr>
@@ -155,27 +345,59 @@
         </table>
     </div>
 </div>
-{% else %}
+{{ pager() }}
+{% elif data.total == 0 %}
 <div class="alert alert-info">
-    Nothing on the replen list yet -- add an ASIN manually or import from your purchase history above.
+    Nothing here yet. Click <strong>Refresh stock &amp; sales</strong> to read the Buy Sheet and build the list.
+</div>
+{% else %}
+<div class="alert alert-secondary">
+    Nothing matches those filters. <a href="{{ '/replen?ignored=true' if show_ignored else '/replen' }}">Clear all filters</a>
 </div>
 {% endif %}
 
-{% call help_modal("replen", "Replen") %}
+{% call help_modal("replen", "Replen (EU A2A)") %}
 <p>
-    Your restock list -- ASINs proven to sell well before, either imported from a join of your
-    purchase history and Seller Toolkit's real sales data, or added manually.
+    Every ASIN we have ever bought <strong>Amazon-to-Amazon from Germany, France, Spain or Italy</strong>,
+    read straight from the Buy Sheet. It is <em>not</em> limited to things that have already sold through:
+    something that wasn't worth repeating last time may be a winner now, and something you bought last week
+    and is already selling is exactly what you want to see.
 </p>
-<p>
-    <strong>Achieved ROI/units</strong> come from your own purchase history + Seller Toolkit
-    sales data -- real, historical proof it's a genuine past winner, not an estimate.
-    <strong>Current ROI</strong> is what actually decides whether it's worth buying again today
-    -- it only updates when you click "Check current prices now."
-</p>
+<p>Each row is judged from three live sources:</p>
+<ul>
+    <li><strong>Buy Sheet</strong> &mdash; what you paid per unit, what you planned to sell it for, when, and how many.</li>
+    <li><strong>Amazon (SP-API)</strong> &mdash; units in stock and inbound, and units shipped to customers in the
+        last 30 days. Free; refreshed every day.</li>
+    <li><strong>Keepa</strong> &mdash; today's cheapest EU cost, the UK Buy Box and the resulting <strong>ROI</strong>
+        (today's, not the best of today and 90 days). Rolling: about {{ daily_pct }}% of the list is re-priced each
+        day, so every ASIN is re-priced roughly every four days. Items bought in the last 30 days, or that shipped
+        units recently, are re-priced sooner.</li>
+</ul>
+<p><strong>Verdicts</strong></p>
+<ul>
+    <li><span class="badge bg-success">Buy more</span> ROI is {{ "%.0f"|format(buy_roi) }}% or better and there isn't a pile of stock already.
+        You get a Discord ping when something <em>flips</em> into this (not for ones that were already there).</li>
+    <li><span class="badge bg-info text-dark">Well stocked</span> profitable, but you already have more than about
+        {{ cover_days_max }} days of stock at the current sales rate, or none has shipped in 30 days.</li>
+    <li><span class="badge bg-warning text-dark">Thin margin</span> viable (ROI 17&ndash;{{ "%.0f"|format(buy_roi) }}%) but not a clear buy.</li>
+    <li><span class="badge bg-secondary">Wait</span> not profitable now &mdash; and the reason is shown: the EU cost is
+        up on what you paid, the UK Buy Box is down on what you planned, or both. A 10% move either way is treated as noise.</li>
+    <li><span class="badge bg-light text-muted border">No EU source</span> no EU marketplace has it at a usable price right now.</li>
+    <li><span class="badge bg-dark">Dead / gated</span> nobody's selling it, Keepa has no record, it's in an excluded category,
+        or Amazon has it gated for us.</li>
+</ul>
+<p><strong>Finding things</strong></p>
+<ul>
+    <li><strong>Quick views</strong> are one-click shortcuts, e.g. <em>Buy more &amp; sold out</em> is what's worth reordering with nothing left on the shelf.</li>
+    <li><strong>Verdict chips</strong> and the <strong>filter bar</strong> combine: every filter narrows the others, and the chip counts show what you'd get if you clicked them right now.
+        Filters stay put when you sort, change page, hide an item or re-price one.</li>
+    <li><strong>Click a column heading</strong> to sort by it; click again to reverse. Rows with no value for that column always go last.
+        Click a brand name in a row to show only that brand. The little &times; on a filter tag removes just that filter.</li>
+    <li>"Since we bought" compares today's EU cost and UK Buy Box with what you paid and planned last time; a 10% move counts.</li>
+</ul>
 <p class="mb-0">
-    "Check current prices now" processes in batches against your Keepa token budget, so a large
-    list may need more than one click to fully refresh. Rows over 25% current ROI are
-    highlighted green, same bar as everywhere else in Atlas.
+    <em>Hide</em> (the eye) stops an ASIN being re-priced or alerted on; it stays in the Buy Sheet history.
+    The old Replen list (proven winners from sales exports) has been replaced; its data is still in the database.
 </p>
 {% endcall %}
 

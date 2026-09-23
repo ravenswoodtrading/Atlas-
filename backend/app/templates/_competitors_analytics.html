@@ -5,12 +5,21 @@
     <a href="/competitors/sellers" class="btn btn-sm btn-outline-dark"><i class="bi bi-gear"></i> Manage sellers</a>
 </div>
 
+<div class="d-flex flex-wrap gap-2 mb-2">
+    {% for value, label, count, active in type_chips %}
+    <a class="btn btn-sm {{ 'btn-dark' if active else 'btn-outline-secondary' }}"
+       href="/competitors?tab=competitors{{ '&stype=' ~ value if value }}">
+        {{ label }} <span class="badge {{ 'bg-light text-dark' if active else 'bg-secondary' }}">{{ count }}</span></a>
+    {% endfor %}
+</div>
+<div class="small text-muted mb-2">Some sellers do both, so "Does EU A2A" and "Does OA / Wholesale" overlap -- a mixed seller is in each.</div>
+
 <div class="card metric p-3 mb-3">
     <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
             <thead>
                 <tr>
-                    <th>Competitor</th><th class="text-end">Total</th><th class="text-end">A2A</th>
+                    <th>Competitor</th><th>Type</th><th class="text-end">Total</th><th class="text-end">A2A</th>
                     <th class="text-end">OA</th><th class="text-end">Wholesale</th><th class="text-end">Unscored</th>
                     <th class="text-end">Last 7d</th><th class="text-end">Last 30d</th><th class="text-end">BUY found</th><th></th>
                 </tr>
@@ -19,6 +28,7 @@
             {% for row in seller_rows %}
                 <tr class="{{ 'table-active' if seller_id == row.seller.id }}" style="cursor:pointer;" onclick="window.location='/competitors?tab=competitors&seller_id={{ row.seller.id }}'">
                     <td class="fw-semibold">{{ row.seller.nickname or row.seller.seller_id }}</td>
+                    <td class="small">{% if row.seller.seller_type %}<span class="badge text-bg-light border fw-normal">{{ seller_type_labels.get(row.seller.seller_type, row.seller.seller_type) }}</span>{% else %}<span class="text-muted">--</span>{% endif %}</td>
                     <td class="text-end">{{ row.total }}</td>
                     <td class="text-end">{{ row.eu_a2a + row.uk_a2a }}</td>
                     <td class="text-end">{{ row.oa }}</td>

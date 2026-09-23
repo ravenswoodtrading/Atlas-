@@ -17,14 +17,43 @@
             <i class="bi bi-eye-slash"></i> Hide non-actionable{% if hidden_count %} ({{ hidden_count }}){% endif %}
         </a>
         {% endif %}
-        <a href="/watchlist?force_rescan=true&profitable_only={{ profitable_only|lower }}" class="btn btn-dark btn-sm">
-            <i class="bi bi-arrow-clockwise"></i> Force rescan all
-        </a>
+        <form method="post" action="/watchlist/refresh" class="d-inline"
+              onsubmit="return confirm('Re-price every watched product on Keepa now? This runs in the background and spends Keepa tokens (roughly 3 per product).');">
+            <input type="hidden" name="profitable_only" value="{{ profitable_only|lower }}">
+            <button type="submit" class="btn btn-dark btn-sm" {{ 'disabled' if refresh.running }}>
+                <i class="bi bi-arrow-clockwise"></i> Refresh prices
+            </button>
+        </form>
+        <form method="post" action="/watchlist/refresh" class="d-inline"
+              onsubmit="return confirm('Force a full re-scan of every watched product, even ones scanned recently? This spends the most Keepa tokens.');">
+            <input type="hidden" name="profitable_only" value="{{ profitable_only|lower }}">
+            <input type="hidden" name="force" value="true">
+            <button type="submit" class="btn btn-outline-dark btn-sm" {{ 'disabled' if refresh.running }}>
+                Force rescan all
+            </button>
+        </form>
         <a href="/discovery" class="btn btn-outline-dark btn-sm">
             <i class="bi bi-search"></i> Back to Discovery
         </a>
     </div>
 </div>
+
+{% if message %}
+<div class="alert alert-secondary py-2 small">{{ message }}</div>
+{% endif %}
+{% if refresh.running %}
+<div class="alert alert-info py-2 small">
+    <span class="spinner-border spinner-border-sm me-1"></span>
+    Refreshing prices in the background (started {{ refresh.started_at.strftime('%H:%M') }}{{ ', full rescan' if refresh.force }}).
+    The numbers below are from the previous scans until it finishes -- reload to see progress.
+</div>
+<script>setTimeout(function () { window.location.reload(); }, 30000);</script>
+{% elif refresh.finished_at %}
+<div class="alert {{ 'alert-warning' if refresh.error else 'alert-success' }} py-2 small">
+    {% if refresh.error %}The last refresh (finished {{ refresh.finished_at.strftime('%H:%M') }}) stopped early: {{ refresh.error }}
+    {% else %}Prices refreshed at {{ refresh.finished_at.strftime('%H:%M') }}{% if refresh.checked is not none %} ({{ refresh.checked }} checked){% endif %}.{% endif %}
+</div>
+{% endif %}
 
 {% if not watched %}
     <div class="alert alert-info">
@@ -48,14 +77,19 @@
             </div>
             <div class="col-md-4">
                 <div class="card metric p-3 text-center">
-                    <div class="text-muted small">Keepa tokens remaining</div>
-                    <h2>{{ result.tokens_remaining if result.tokens_remaining is not none else "?" }}</h2>
+                    <div class="text-muted small">Prices last checked</div>
+                    <h2>{{ result.newest.strftime('%d %b %H:%M') if result.newest else "never" }}</h2>
+                    <div class="small text-muted">
+                        {% if result.oldest %}oldest {{ result.oldest.strftime('%d %b %H:%M') }}{% endif %}
+                        {% if result.stale %}&middot; <span class="text-warning">{{ result.stale }} older than {{ stale_after_hours }}h</span>{% endif %}
+                    </div>
                 </div>
             </div>
             <div class="col-md-4">
                 <div class="card metric p-3 text-center">
-                    <div class="text-muted small">Skipped (already scanned recently)</div>
-                    <h2>{{ result.skipped_recently_scanned }}</h2>
+                    <div class="text-muted small">Not scanned yet</div>
+                    <h2>{{ result.missing|length }}</h2>
+                    <div class="small text-muted">{{ "no stored price to show" if result.missing else "every watched product has a scan" }}</div>
                 </div>
             </div>
         </div>
@@ -219,9 +253,10 @@
     behind any auto-added item).
 </p>
 <p>
-    <strong>This page re-checks live prices every time you load it</strong> -- unlike Products
-    (a historical log), Watchlist always shows today's real Keepa data, which is why it spends
-    tokens and shows a "Keepa tokens remaining" count.
+    <strong>This page shows each product's most recent stored scan</strong>, so it loads instantly and
+    costs no Keepa tokens. The "Prices last checked" card says how old the numbers are. Press
+    <em>Refresh prices</em> to re-price everything on Keepa in the background (roughly 3 tokens a product) --
+    the page keeps showing the last results until it finishes.
 </p>
 <p>
     By default the table only shows rows Atlas currently scores BUY, CONSIDER, PEAK_WINDOW, or

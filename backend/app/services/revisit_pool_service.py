@@ -50,7 +50,11 @@ class RevisitPoolService:
     # whole pool at once -- same "clears gradually, oldest/highest-value
     # first" convention MAX_STALE_RECHECK_PER_RUN already established
     # for review_queue_recheck.
-    DEFAULT_DAILY_LIMIT = 25
+    #
+    # 25 -> 5 (2026-09-20, Tamara approved after a token review): 600 revisits had produced 0
+    # "recovered" and 8 BUY/CONSIDER (~1.3%). Kept rather than removed -- it still finds the odd
+    # one -- but at a fifth of the cost.
+    DEFAULT_DAILY_LIMIT = 5
 
     # Matches the ASIN Re-Entry Audit's own 30-day cutoff -- the pool
     # this phase targets IS that audit's 736-ASIN population, not a

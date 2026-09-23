@@ -3,6 +3,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
@@ -10,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.services.google_sheets_client import open_sheet
 from app.services.google_sheets_lead_sync import LEAD_SHEET_TAB, LEAD_SHEET_URL
+from app.services.stale_cache import StaleCache
 from app.database.database import SessionLocal
 from app.database.models import WeeklyVaReportSummary
 
@@ -20,14 +22,25 @@ RATINGS = ("Ok", "Good", "Avoid")
 # The VA began submitting leads in April 2026. Earlier sheet history is not
 # VA performance data and must never dilute the monthly/YTD reporting view.
 VA_REPORT_START = date(2026, 4, 1)
-_VA_SHEET_CACHE = None
-_VA_SHEET_CACHE_TTL = 60
+# The Lead Sheet read (1-3s) is served from here and refreshed in the background once it is a couple of minutes old, so a
+# report page never waits for Google (2026-09-21) -- see StaleCache. generate_va_summary asks for a fresh read.
+_VA_SHEET_CACHE = StaleCache(ttl_seconds=120, retry_seconds=30, name="va-lead-sheet")
+
+
+@lru_cache(maxsize=8192)
+def _normalise(text: str) -> str:
+    return " ".join(text.strip().lower().split())
+
+
+@lru_cache(maxsize=512)
+def _wanted(names: tuple) -> frozenset:
+    return frozenset(_normalise(str(name)) for name in names)
 
 
 def _value(row: dict, *names: str):
-    normalise = lambda value: " ".join(str(value).strip().lower().split())
-    wanted = {normalise(name) for name in names}
-    return next((value for key, value in row.items() if normalise(key) in wanted), None)
+    # Cached normalisation (2026-09-21): this ran ~2 million string normalisations to build the monthly report.
+    wanted = _wanted(names)
+    return next((value for key, value in row.items() if _normalise(str(key)) in wanted), None)
 
 
 def _number(value) -> float:
@@ -66,19 +79,29 @@ def _sourcing_method_used(row: dict) -> str:
     return str(_value(row, "sourcing method used") or "Not recorded").strip() or "Not recorded"
 
 
-def _date_candidates(row: dict) -> list[date]:
-    # In this sheet, "Date Last Added" is a workflow flag (e.g. "New
-    # ASIN"), while its plain "Date" column is the real submission date.
-    text = str(_value(row, "date", "date submitted", "date added") or "").strip()
+_DATE_PATTERNS = ("%d %b %y", "%d %b %Y", "%d/%m/%Y", "%m/%d/%Y", "%d/%m/%y", "%m/%d/%y", "%Y-%m-%d", "%d-%m-%Y",
+                  "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S")
+
+
+@lru_cache(maxsize=8192)
+def _parse_date_candidates(text: str) -> tuple:
+    """Every date `text` parses to under any of the sheet's formats, in pattern order, without duplicates."""
     candidates = []
-    for pattern in ("%d %b %y", "%d %b %Y", "%d/%m/%Y", "%m/%d/%Y", "%d/%m/%y", "%m/%d/%y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+    for pattern in _DATE_PATTERNS:
         try:
             parsed = datetime.strptime(text, pattern).date()
             if parsed not in candidates:
                 candidates.append(parsed)
         except ValueError:
             pass
-    return candidates
+    return tuple(candidates)
+
+
+def _date_candidates(row: dict) -> list[date]:
+    # In this sheet, "Date Last Added" is a workflow flag (e.g. "New
+    # ASIN"), while its plain "Date" column is the real submission date.
+    text = str(_value(row, "date", "date submitted", "date added") or "").strip()
+    return list(_parse_date_candidates(text))
 
 
 def _date_for_period(row: dict, start: date, end: date) -> date | None:
@@ -100,19 +123,19 @@ def _percent(part: int, whole: int) -> int:
     return round(part / whole * 100) if whole else 0
 
 
-def _sheet_rows() -> list[dict]:
-    global _VA_SHEET_CACHE
-    now = time.monotonic()
-    if _VA_SHEET_CACHE and now - _VA_SHEET_CACHE[0] < _VA_SHEET_CACHE_TTL:
-        return _VA_SHEET_CACHE[1]
+def _read_sheet_rows() -> list[dict]:
     values = open_sheet(LEAD_SHEET_URL).worksheet(LEAD_SHEET_TAB).get_all_values()
     if not values:
-        _VA_SHEET_CACHE = (now, [])
         return []
     header = values[0]
-    rows = [{header[i]: row[i] if i < len(row) else "" for i in range(len(header))} for row in values[1:] if any(row)]
-    _VA_SHEET_CACHE = (now, rows)
-    return rows
+    return [{header[i]: row[i] if i < len(row) else "" for i in range(len(header))} for row in values[1:] if any(row)]
+
+
+def _sheet_rows(fresh: bool = False) -> list[dict]:
+    """The Lead Sheet rows -- the last good read, refreshed in the background when stale. fresh=True reads it now."""
+    if fresh:
+        _VA_SHEET_CACHE.invalidate("rows")
+    return _VA_SHEET_CACHE.get("rows", _read_sheet_rows)
 
 
 def _report_data(rows: list[dict], start: date, end: date, working_days: int = 5) -> dict:
@@ -222,7 +245,7 @@ def va_report(request: Request, period: str = "week", date_value: str = ""):
 @router.post("/reports/va/summary")
 def generate_va_summary(period_start: str = Form(...)):
     start = date.fromisoformat(period_start)
-    rows = _sheet_rows()
+    rows = _sheet_rows(fresh=True)
     data = _report_data(rows, start, start + timedelta(days=7))
     notes = "\n".join(f"- {note}" for note in data["avoid_notes"][:80]) or "No Avoid comments were recorded."
     prompt = (

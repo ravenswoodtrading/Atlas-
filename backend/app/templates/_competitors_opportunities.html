@@ -9,7 +9,7 @@
      plain 7-day tally across every tag. -->
 <div class="row g-3 mb-3">
     <div class="col-6 col-md">
-        <a href="/competitors?tab=opportunities&view=buy_now&source={{ source }}" class="text-decoration-none text-reset">
+        <a href="/competitors?tab=opportunities&view=buy_now&source={{ source }}&stype={{ stype }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #198754;">
                 <div class="small fw-bold text-uppercase text-success"><i class="bi bi-cart-check-fill"></i> Buy Now</div>
                 <h2 class="mb-0">{{ counts.buy_now }}</h2>
@@ -24,7 +24,7 @@
          calling it "Buy Now" -- see build_opportunities_context's own
          comment. -->
     <div class="col-6 col-md">
-        <a href="/competitors?tab=opportunities&view=strong_consider&source={{ source }}" class="text-decoration-none text-reset">
+        <a href="/competitors?tab=opportunities&view=strong_consider&source={{ source }}&stype={{ stype }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #20c997;">
                 <div class="small fw-bold text-uppercase" style="color:#20c997;"><i class="bi bi-star-fill"></i> Strong Consider</div>
                 <h2 class="mb-0">{{ counts.strong_consider }}</h2>
@@ -33,7 +33,7 @@
         </a>
     </div>
     <div class="col-6 col-md">
-        <a href="/competitors?tab=opportunities&view=needs_attention&source={{ source }}" class="text-decoration-none text-reset">
+        <a href="/competitors?tab=opportunities&view=needs_attention&source={{ source }}&stype={{ stype }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #dc3545;">
                 <div class="small fw-bold text-uppercase text-danger"><i class="bi bi-exclamation-triangle-fill"></i> Needs Attention</div>
                 <h2 class="mb-0">{{ counts.needs_attention }}</h2>
@@ -42,7 +42,7 @@
         </a>
     </div>
     <div class="col-6 col-md">
-        <a href="/competitors?tab=opportunities&view=oa_investigate&source={{ source }}" class="text-decoration-none text-reset">
+        <a href="/competitors?tab=opportunities&view=oa_investigate&source={{ source }}&stype={{ stype }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #fd7e14;">
                 <div class="small fw-bold text-uppercase" style="color:#fd7e14;"><i class="bi bi-question-diamond-fill"></i> OA &mdash; Worth Investigating</div>
                 <h2 class="mb-0">{{ counts.oa_investigate }}</h2>
@@ -51,7 +51,7 @@
         </a>
     </div>
     <div class="col-6 col-md">
-        <a href="/competitors?tab=opportunities&view=all&source=all" class="text-decoration-none text-reset">
+        <a href="/competitors?tab=opportunities&view=all&source=all&stype={{ stype }}" class="text-decoration-none text-reset">
             <div class="card metric p-3 h-100" style="border-left:5px solid #0d6efd;">
                 <div class="small fw-bold text-uppercase text-primary"><i class="bi bi-clock-history"></i> Recent Discoveries</div>
                 <h2 class="mb-0">{{ counts.recent }}</h2>
@@ -86,6 +86,13 @@
         </select>
     </div>
     <div class="col-6 col-md">
+        <select name="stype" class="form-select form-select-sm" onchange="this.form.submit()" title="Filter by how the competitor sources. Some sellers do both, so EU A2A and OA views overlap.">
+            {% for value, label in seller_type_filters %}
+            <option value="{{ value }}" {{ "selected" if stype == value }}>Sellers: {{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-6 col-md">
         <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
             {% for value, label in sort_labels.items() %}
             <option value="{{ value }}" {{ "selected" if sort == value }}>Sort: {{ label }}</option>
@@ -101,7 +108,7 @@
 <div class="mb-3 small d-flex align-items-center justify-content-between">
     <div>
         <span class="badge bg-light text-dark border">{{ view_labels.get(view, view) }}</span>
-        <a href="/competitors?tab=opportunities&source={{ source }}" class="text-decoration-none ms-1">Clear filter &times;</a>
+        <a href="/competitors?tab=opportunities&source={{ source }}&stype={{ stype }}" class="text-decoration-none ms-1">Clear filter &times;</a>
     </div>
     {% if view == "oa_investigate" %}
     <!-- Same export the Review Queue's OA to Investigate view already offers
@@ -141,6 +148,7 @@
                     {{ listing.asin }}
                     <button type="button" class="btn btn-link btn-sm p-0 copy-asin-btn" data-asin="{{ listing.asin }}" title="Copy ASIN"><i class="bi bi-clipboard"></i></button>
                     &middot; via {{ seller.nickname or seller.seller_id }}
+                    {% if seller.seller_type %}<span class="badge text-bg-light border fw-normal" title="How this competitor sources">{{ seller_type_labels.get(seller.seller_type, seller.seller_type) }}</span>{% endif %}
                     &middot; {{ listing.detected_at.strftime("%d %b") if listing.detected_at else "" }}
                 </div>
             </div>

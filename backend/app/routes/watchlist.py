@@ -1,18 +1,25 @@
 from app.routes.review_validation import validate_rejection_reason
 from datetime import datetime, timezone
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.services.product_repository import ProductRepository
-from app.services.brand_scan_service import BrandScanService
-from app.services.scan_coordinator import ScanCoordinator
 from app.services.seller_watch_service import SellerWatchService
+from app.services import watchlist_view_service
 
 router = APIRouter()
 
 templates = Jinja2Templates(directory="app/templates")
+
+# 2026-09-21 (Tamara: "very slow ... a constant problem"): this page no longer scans anything. It used to run a LIVE
+# Keepa scan of every watched ASIN whenever a 5-minute cache had expired (41 minutes for one load at its worst on
+# 2026-09-17, queued behind the process-wide scan lock, spending real tokens just to look at the page). It now shows
+# each ASIN's latest STORED scan and how old that is; "Refresh prices" runs the scan in the background. See
+# watchlist_view_service.
 
 
 @router.post("/watch/add")
@@ -190,8 +197,23 @@ def exclude_add_bulk(selected: list[str] = Form(...), reason: str = Form("Bulk e
     return RedirectResponse(url=return_to, status_code=303)
 
 
+@router.post("/watchlist/refresh")
+def watchlist_refresh(force: bool = Form(False), profitable_only: bool = Form(True)):
+    """Start a background re-price of every watched ASIN (the old inline scan). Never blocks; one at a time."""
+    asins = [w.asin for w in ProductRepository.list_watched()]
+    started = watchlist_view_service.start_refresh(asins, force=force)
+    if not asins:
+        message = "Nothing on the watchlist to refresh."
+    elif started:
+        message = "Refreshing prices in the background -- this page keeps showing the last results until it finishes."
+    else:
+        message = "A refresh is already running."
+    return RedirectResponse(url=f"/watchlist?profitable_only={str(profitable_only).lower()}&message={quote(message)}",
+                            status_code=303)
+
+
 @router.get("/watchlist")
-def watchlist_page(request: Request, profitable_only: bool = True, force_rescan: bool = False):
+def watchlist_page(request: Request, profitable_only: bool = True, message: str = ""):
     watched = ProductRepository.list_watched()
     result = None
     hidden_count = 0
@@ -210,26 +232,19 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
     ACTIONABLE_RECOMMENDATIONS = {"BUY", "CONSIDER", "PEAK_WINDOW", "GATED"}
 
     if watched:
-        asins = [w.asin for w in watched]
-        ScanCoordinator.acquire_for_manual_scan()
-        try:
-            scanner = BrandScanService(usage_category="watchlist")
-            result = scanner.scan("watchlist", limit=len(asins), force_rescan=force_rescan, asins=asins)
-        finally:
-            ScanCoordinator.release_after_manual_scan()
+        result = watchlist_view_service.stored_result([w.asin for w in watched])
 
-        if result and not result.get("error"):
-            hidden_count = sum(
-                1 for o in result["opportunities"]
-                if o["report"]["recommendation"] not in ACTIONABLE_RECOMMENDATIONS
-            )
-            visible_opportunities = (
-                [
-                    o for o in result["opportunities"]
-                    if o["report"]["recommendation"] in ACTIONABLE_RECOMMENDATIONS
-                ]
-                if profitable_only else result["opportunities"]
-            )
+        hidden_count = sum(
+            1 for o in result["opportunities"]
+            if o["report"]["recommendation"] not in ACTIONABLE_RECOMMENDATIONS
+        )
+        visible_opportunities = (
+            [
+                o for o in result["opportunities"]
+                if o["report"]["recommendation"] in ACTIONABLE_RECOMMENDATIONS
+            ]
+            if profitable_only else result["opportunities"]
+        )
 
     reviews = {}
     if result and not result.get("error"):
@@ -260,9 +275,11 @@ def watchlist_page(request: Request, profitable_only: bool = True, force_rescan:
             "visible_opportunities": visible_opportunities,
             "hidden_count": hidden_count,
             "profitable_only": profitable_only,
-            "force_rescan": force_rescan,
             "reviews": reviews,
             "notes": notes,
+            "refresh": watchlist_view_service.refresh_state(),
+            "stale_after_hours": watchlist_view_service.STALE_AFTER_HOURS,
+            "message": message,
         }
     )
 

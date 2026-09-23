@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timezone
 
 from sqlalchemy import func
@@ -9,6 +10,8 @@ from app.services.scan_schedule_service import schedule_maps, due_at
 from app.services.brand_scan_service import BrandScanService, WEEKLY_SAFETY_NET_RESERVE
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.activity_log import ActivityLog
+from app.services.replen_a2a_service import ReplenA2AService
+from app.services.token_usage_service import TokenUsageService
 
 # Placeholder for the legacy NOT NULL target_count column -- the queue
 # no longer stops a brand once it hits a target (see class docstring
@@ -23,6 +26,15 @@ _LEGACY_TARGET_COUNT_PLACEHOLDER = 999_999
 # below so the "is my queue too long?" estimate always matches
 # whatever the scheduler is actually doing.
 TICK_INTERVAL_SECONDS = 60
+
+# Rolling-24h ceiling on Keepa tokens the Scan Queue may spend (2026-09-20). Measured that day: the
+# queue took 68-77% of all spend (~40k of a 89k/day refill) for about 4 new notable finds in 14 days
+# (~9,000 tokens per usable lead), against ~25 finds per 100k tokens for Competitor Watch. A ceiling
+# keeps that discovery spend bounded and, just as important, leaves headroom so the higher-yield work
+# (Competitor Watch, Replen, review-queue freshness, manual checks) never meets an empty balance.
+# It is a ceiling, not a target: the queue still pauses itself on a low balance as before. 0 (or
+# negative) disables it. Override with SCAN_QUEUE_DAILY_TOKEN_CEILING in .env -- no code change.
+SCAN_QUEUE_DAILY_TOKEN_CEILING = int(os.getenv("SCAN_QUEUE_DAILY_TOKEN_CEILING", "30000"))
 
 class ScanQueueService:
     """
@@ -295,7 +307,10 @@ class ScanQueueService:
         db.commit()
         ScanCoordinator.progress(f"Scan Queue: {item.brand}, catalogue page {item.next_page + 1}")
         try:
-            scanner = BrandScanService(token_reserve=WEEKLY_SAFETY_NET_RESERVE, usage_category="scan_queue")
+            # Also hold back whatever Replen still needs for today's batch (0 once it's done) --
+            # see ReplenA2AService.token_reserve_needed.
+            reserve = max(WEEKLY_SAFETY_NET_RESERVE, ReplenA2AService.token_reserve_needed())
+            scanner = BrandScanService(token_reserve=reserve, usage_category="scan_queue")
             result = scanner.scan(item.brand, limit=10, page=item.next_page, category_ids=category_ids, already_checked=checked)
         except Exception as exc:
             db.rollback()
@@ -429,6 +444,14 @@ class ScanQueueService:
 
             if settings.paused:
                 return {"skipped": "paused"}
+
+            if SCAN_QUEUE_DAILY_TOKEN_CEILING > 0:
+                spent = TokenUsageService.spent_since("scan_queue", 24)
+                if spent >= SCAN_QUEUE_DAILY_TOKEN_CEILING:
+                    return {"skipped": (
+                        f"Daily token ceiling reached ({spent:,.0f} of {SCAN_QUEUE_DAILY_TOKEN_CEILING:,} "
+                        f"in the last 24h) -- resumes as older spend ages out"
+                    )}
 
             item = ScanQueueService._next_round_robin_item(db, settings)
 

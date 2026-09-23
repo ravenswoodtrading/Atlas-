@@ -60,6 +60,14 @@ MINIMUM_REFERRAL_FEE_GBP = 0.25
 # economic cost is just the net 45p, not the 54p gross invoice).
 PREP_FEE_GBP = 0.45
 
+# Amazon UK "Digital Services Fee" (added 2026-09-21, Tamara: "on every item so we need to include this"). 2% of the
+# selling fees on each unit. SAS's breakdown for B0DL6FD23C (referral 6.54, FBA 3.69, DSF 0.20) fits 2% x (referral +
+# FBA fee) = 0.2046, and no other combination of the listed fees does (2% of referral alone is 0.13; adding prep 0.54
+# gives 0.22). Inferred from that one breakdown -- Amazon's Product Fees API returned InternalError for every ASIN tried
+# (2026-09-21), so it could not be confirmed live. Treated like the other Amazon fees: taken off as listed, with its VAT
+# reclaimed (net zero). Storage and inbound shipping are deliberately NOT modelled (Tamara's decision, same day).
+DIGITAL_SERVICES_FEE_RATE = 0.02
+
 REFERRAL_RATE_BY_CATEGORY_NAME = {
     "electronics": 0.08,
     "computers & accessories": 0.07,
@@ -125,14 +133,17 @@ UK_VAT_ZERO_RATED_CATEGORY_NAMES = {
     "children's shoes",
 }
 
-# EU VAT standard rates by sourcing marketplace -- applied to extract
-# net (ex-VAT) cost from Keepa's gross EU buy_box price, since the
-# user reclaims this input VAT (Standard VAT accounting, not Flat
-# Rate). Standard rates only; a small number of EU-sourced goods
-# qualify for a reduced rate, deliberately ignored for v1.
+# VAT taken off an EU source cost to get the net (ex-VAT) cost used in profit.
+#
+# CHANGED 2026-09-21 (Tamara): "We are charged UK VAT so will reclaim this and this only on Amazon FBA EU". On EU FBA
+# purchases she is charged UK VAT (20%) and that is all she can reclaim -- NOT the local rate (DE 19%, FR 20%, ES 21%,
+# IT 22%) this table used to hold, which flattered Italian/Spanish costs and undersold German ones by a point or two of
+# ROI. So every EU sourcing marketplace nets by the UK standard rate; the table is kept (same keys) so callers and the
+# stored eu_vat_rate_used column keep working, and a marketplace not listed already falls back to the UK rate.
+# Records scanned before this date were priced with the old local rates -- see keepa_watch_list_service.roi_fn_for.
 EU_VAT_RATE_BY_MARKETPLACE = {
-    "DE": 0.19,
-    "FR": 0.20,
-    "IT": 0.22,
-    "ES": 0.21,
+    "DE": UK_VAT_STANDARD_RATE,
+    "FR": UK_VAT_STANDARD_RATE,
+    "IT": UK_VAT_STANDARD_RATE,
+    "ES": UK_VAT_STANDARD_RATE,
 }

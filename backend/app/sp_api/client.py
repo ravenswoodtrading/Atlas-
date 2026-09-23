@@ -232,6 +232,82 @@ class SPAPIClient:
         # Exhausted retries, still rate-limited.
         return None
 
+    def get_listing_restrictions(self, asin: str, marketplace: str = "UK",
+                                  condition_type: str = "new_new") -> dict | None:
+        """
+        Can THIS seller account list `asin` on `marketplace` right now?
+        Listings Restrictions API (2021-08-01). Returns
+        {"restricted": bool, "reason_code": str, "message": str}, or None
+        if the call itself failed to give an answer (no seller ID
+        configured, network error, HTTP error, exhausted rate-limit
+        retries) -- same None-vs-real-answer contract as get_item_offers:
+        a failed call must never be read as "not restricted".
+
+        VERIFIED LIVE 2026-09-20 with this account's existing credentials
+        and SP_API_SELLER_ID (~0.5s per call, no Keepa tokens): HP/Canon
+        items came back APPROVAL_REQUIRED ("You need approval to list this
+        brand", with a Request Approval link), previously-sold and
+        never-gated ASINs came back with an empty restrictions list. Of
+        340 recent BUY/CONSIDER leads, 28 were APPROVAL_REQUIRED and 5
+        NOT_ELIGIBLE -- restrictions are per ASIN, so no brand list can
+        predict them. ANY reason counts as restricted; reason_code joins
+        distinct codes with "+" (e.g. "APPROVAL_REQUIRED").
+
+        Not covered: FBA dangerous-goods (hazmat) classification -- a
+        lighter shows no listing restriction here but can still need a
+        hazmat review.
+        """
+        marketplace_id = MARKETPLACE_IDS.get(marketplace)
+        if not marketplace_id or not self.seller_id:
+            return None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                access_token = self._get_access_token()
+            except Exception as exc:
+                print(f"SP-API token refresh failed: {exc}")
+                return None
+
+            self._pace()
+
+            try:
+                resp = requests.get(
+                    f"{EU_ENDPOINT}/listings/2021-08-01/restrictions",
+                    headers={"x-amz-access-token": access_token, "Content-Type": "application/json"},
+                    params={
+                        "asin": asin, "conditionType": condition_type, "sellerId": self.seller_id,
+                        "marketplaceIds": marketplace_id, "reasonLocale": "en_GB",
+                    },
+                    timeout=15,
+                )
+            except Exception as exc:
+                print(f"SP-API listing restrictions request failed for {asin}/{marketplace}: {exc}")
+                return None
+
+            if resp.status_code == 429:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+
+            if resp.status_code != 200:
+                return None
+
+            reasons = [
+                reason
+                for entry in resp.json().get("restrictions", [])
+                for reason in entry.get("reasons", [])
+            ]
+
+            if not reasons:
+                return {"restricted": False, "reason_code": "", "message": ""}
+
+            return {
+                "restricted": True,
+                "reason_code": "+".join(sorted({r.get("reasonCode") or "UNKNOWN" for r in reasons})),
+                "message": (reasons[0].get("message") or "")[:200],
+            }
+
+        return None
+
     def search_catalog_items(self, asins: list[str], marketplace: str = "UK") -> dict | None:
         """
         Free (no Keepa token) sales-rank + package-dimension lookup for
@@ -350,7 +426,124 @@ class SPAPIClient:
         # Exhausted retries, still rate-limited.
         return None
 
-    def get_inventory_summaries(self, marketplace: str = "UK", seller_skus: list[str] | None = None) -> dict | None:
+    # search_catalog_items_by_identifier prints one raw response per
+    # process so the unverified parsing below can be checked against it.
+    _identifier_response_logged = False
+
+    def search_catalog_items_by_identifier(self, identifiers: list[str], identifiers_type: str = "EAN",
+                                           marketplace: str = "UK") -> dict | None:
+        """
+        Barcode -> ASIN lookup (2026-09-23, Eligibility Check): the same
+        searchCatalogItems call as search_catalog_items above, keyed by
+        EAN/UPC/GTIN instead of ASIN. Up to CATALOG_ITEMS_BATCH_SIZE
+        identifiers per call; callers chunk, same division of labour.
+
+        Returns {identifier: [{"asin", "title", "brand"}, ...]} with an
+        entry for EVERY identifier asked about -- [] means Amazon's
+        catalog genuinely had no match. One barcode can map to several
+        ASINs (duplicate listings, bundles), so it's always a list. None
+        (not {}) if the CALL ITSELF failed, same contract as
+        search_catalog_items.
+
+        includedData asks for `identifiers` as well as `summaries`: a
+        batch of 20 barcodes comes back as one flat `items` list, and the
+        item's own identifier list is the only way to tell which barcode
+        each item matched.
+
+        VERIFIED LIVE 2026-09-23 (3 Philips EANs from a Keepa export + one
+        nonsense EAN): items[].identifiers[].identifiers[] carries
+        {identifierType, identifier}, summaries[] carries marketplaceId/
+        itemName/brand, and items came back in a DIFFERENT order from the
+        request -- so position can't be used to map them. The first call
+        in each process still prints the raw response, as a cheap check
+        if Amazon ever changes the shape.
+        """
+        if not identifiers:
+            return {}
+
+        identifiers = identifiers[: self.CATALOG_ITEMS_BATCH_SIZE]
+
+        marketplace_id = MARKETPLACE_IDS.get(marketplace)
+        if not marketplace_id:
+            return None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                access_token = self._get_access_token()
+            except Exception as exc:
+                print(f"SP-API token refresh failed: {exc}")
+                return None
+
+            self._pace(self.CATALOG_MIN_REQUEST_INTERVAL_SECONDS)
+
+            try:
+                resp = requests.get(
+                    f"{EU_ENDPOINT}/catalog/2022-04-01/items",
+                    headers={"x-amz-access-token": access_token, "Content-Type": "application/json"},
+                    params={
+                        "identifiers": ",".join(identifiers),
+                        "identifiersType": identifiers_type,
+                        "marketplaceIds": marketplace_id,
+                        "includedData": "identifiers,summaries",
+                    },
+                    timeout=15,
+                )
+            except Exception as exc:
+                print(f"SP-API searchCatalogItems request failed for {len(identifiers)} "
+                      f"{identifiers_type}s/{marketplace}: {exc}")
+                return None
+
+            if resp.status_code == 429:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+
+            if resp.status_code != 200:
+                return None
+
+            body = resp.json()
+
+            if not SPAPIClient._identifier_response_logged:
+                SPAPIClient._identifier_response_logged = True
+                print(f"SP-API searchCatalogItems by {identifiers_type} -- raw response (first call, "
+                      f"verify field names): {str(body)[:3000]}")
+
+            # Barcodes are compared without leading zeros: a UPC-12 is
+            # also stored as its EAN-13 with a leading 0.
+            wanted = {code.lstrip("0"): code for code in identifiers}
+            results = {code: [] for code in identifiers}
+
+            for item in body.get("items", []):
+                asin = item.get("asin")
+                if not asin:
+                    continue
+
+                summary = next((s for s in item.get("summaries", []) if s.get("marketplaceId") == marketplace_id),
+                               (item.get("summaries") or [{}])[0])
+                match = {"asin": asin, "title": summary.get("itemName") or "", "brand": summary.get("brand") or ""}
+
+                matched = {
+                    wanted[value]
+                    for group in item.get("identifiers", [])
+                    for entry in group.get("identifiers", [])
+                    if (value := str(entry.get("identifier") or "").lstrip("0")) in wanted
+                }
+                if not matched and len(identifiers) == 1:
+                    matched = {identifiers[0]}
+                if not matched:
+                    print(f"SP-API searchCatalogItems: {asin} matched none of the requested "
+                          f"{identifiers_type}s -- skipped")
+
+                for code in matched:
+                    if all(m["asin"] != asin for m in results[code]):
+                        results[code].append(match)
+
+            return results
+
+        # Exhausted retries, still rate-limited.
+        return None
+
+    def get_inventory_summaries(self, marketplace: str = "UK", seller_skus: list[str] | None = None,
+                                all_pages: bool = True) -> dict | None:
         """
         Returns {sku: {"asin","title","fulfillable","inbound_working",
         "inbound_shipped","inbound_receiving","reserved","total"}} for
@@ -369,23 +562,34 @@ class SPAPIClient:
         trusting a slightly older bulk snapshot. Omit for the full
         nightly sweep.
 
+        all_pages (default True): follows every page. VERIFIED AGAINST A
+        LIVE CALL (2026-09-20) -- Amazon returns `pagination` as a
+        TOP-LEVEL sibling of `payload`, not inside it, and a nextToken
+        request must repeat granularity/marketplaceIds or it 400s. Until
+        2026-09-20 this read `payload.pagination`, so it NEVER followed a
+        page and every caller silently saw only the first 50 SKUs (50 of
+        1,387 live): Inventory Cleanup swept "50 checked, 0 flagged" every
+        night, Storage Fee Watch could only join 50 SKUs to their ASINs,
+        and Lead Analysis only knew about 50 SKUs' stock. A full pull is
+        ~28 requests / ~30s (INVENTORY_MIN_REQUEST_INTERVAL_SECONDS
+        pacing), so callers that run often must cache the result (see
+        LeadAnalysisService._fetch_inventory_snapshot). all_pages=False
+        keeps the old first-page-only read for anything that wants it.
+
         Returns None (not {}) if the call itself failed outright
         (network error, auth failure, exhausted 429 retries,
-        unconfigured marketplace) -- same None-vs-real-dict convention
-        as get_item_offers/search_catalog_items above. An empty {} is a
-        real answer (genuinely zero FBA SKUs matched); None never is.
-        Callers MUST check `is None` before reading an empty/partial
-        result as "no stock anywhere" -- a failed call read that way
-        could wrongly flag a SKU that Amazon simply didn't answer for.
+        unconfigured marketplace, or ANY later page failing -- a partial
+        list is never returned as if it were complete) -- same None-vs-
+        real-dict convention as get_item_offers/search_catalog_items
+        above. An empty {} is a real answer (genuinely zero FBA SKUs
+        matched); None never is. Callers MUST check `is None` before
+        reading an empty/partial result as "no stock anywhere" -- a
+        failed call read that way could wrongly flag a SKU that Amazon
+        simply didn't answer for.
 
-        UNVERIFIED AGAINST A LIVE CALL (2026-09-01): field names below
-        (inventorySummaries/inventoryDetails/fulfillableQuantity/
-        reservedQuantity/pagination.nextToken) are from Amazon's
-        published FBA Inventory API v1 docs, not a live response --
-        same caution search_catalog_items' own docstring gives its own
-        fields. Confirm the actual shape via GET /debug/sp-api/
-        inventory-check (added alongside this) before trusting this for
-        a real delete decision.
+        Response shape VERIFIED AGAINST A LIVE CALL (2026-09-20):
+        inventorySummaries/inventoryDetails/fulfillableQuantity/
+        reservedQuantity/pagination.nextToken all as documented.
         """
         marketplace_id = MARKETPLACE_IDS.get(marketplace)
         if not marketplace_id:
@@ -412,7 +616,7 @@ class SPAPIClient:
 
                 self._pace(self.INVENTORY_MIN_REQUEST_INTERVAL_SECONDS)
 
-                if next_token:
+                if next_token and not all_pages:
                     params = {"nextToken": next_token}
                 else:
                     params = {
@@ -423,6 +627,8 @@ class SPAPIClient:
                     }
                     if seller_skus:
                         params["sellerSkus"] = ",".join(seller_skus[:50])
+                    if next_token:
+                        params["nextToken"] = next_token
 
                 try:
                     resp = requests.get(
@@ -468,7 +674,10 @@ class SPAPIClient:
                         "total": item.get("totalQuantity", 0) or 0,
                     }
 
-                next_token = (payload.get("pagination", {}) or {}).get("nextToken")
+                if all_pages:
+                    next_token = (body.get("pagination", {}) or {}).get("nextToken")
+                else:
+                    next_token = (payload.get("pagination", {}) or {}).get("nextToken")
                 break
             else:
                 # Exhausted retries, still rate-limited on this page.

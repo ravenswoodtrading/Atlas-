@@ -205,6 +205,10 @@
         <span>&pound;{{ "%.2f"|format(metrics.fee_breakdown.prep_fee) }}</span>
     </div>
     <div class="vr-detail-line">
+        <span class="vr-detail-label">Digital services fee</span>
+        <span>&pound;{{ "%.2f"|format(metrics.fee_breakdown.digital_services_fee or 0) }} (2% of referral + FBA)</span>
+    </div>
+    <div class="vr-detail-line">
         <span class="vr-detail-label">UK VAT rate applied</span>
         <span>{{ "%.0f"|format(metrics.fee_breakdown.uk_vat_rate_used * 100) }}%</span>
     </div>

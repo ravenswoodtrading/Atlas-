@@ -1,5 +1,6 @@
 from app.routes.review_validation import validate_rejection_reason
 from datetime import date, datetime, timezone
+import threading
 import time
 from urllib.parse import urlencode
 
@@ -137,7 +138,13 @@ VIEW_LABELS = {
 # each have their own human workflow.
 MONITOR_ONLY_ACTIONS = {"WATCH", "HISTORICAL_RECURRING", "BLOCKED"}
 _REVIEW_QUEUE_CACHE = {}
-_REVIEW_QUEUE_CACHE_TTL = 8
+# Was 8s -- far shorter than a real rebuild takes once product_records
+# grew past ~29k rows (profiled at ~69s, 2026-09-17), so the cache was
+# expiring before a build could ever finish, meaning every click paid
+# the full rebuild cost regardless. 120s means a browsing session
+# (switching tabs/paging, all same `sort`) is served from cache instead
+# of re-triggering a full rebuild on every single request.
+_REVIEW_QUEUE_CACHE_TTL = 120
 
 
 def _clear_review_queue_cache():
@@ -585,16 +592,25 @@ def review_queue_save_note(asin: str = Form(...), atlas_notes: str = Form(...)):
     finally:
         db.close()
 
-    pushed = 0
-    for lead_id in lead_ids:
-        try:
+    # Backgrounded, same reason/fix as resolve_item's own sheet push
+    # (2026-09-18) -- push_decision_to_sheet is a real Google Sheets
+    # read+write round trip; the note is already committed to Atlas's
+    # own DB above, so it doesn't need to finish before this responds.
+    # pushed_to_sheet in the response below is therefore no longer a
+    # reliable live count (the thread may still be running) -- kept for
+    # backwards compatibility with anything reading the field, but
+    # nothing in review_queue.html's own JS currently displays it.
+    if lead_ids:
+        def _push_note_leads(ids_to_push):
             from app.services.google_sheets_lead_sync import push_decision_to_sheet
-            if push_decision_to_sheet(lead_id):
-                pushed += 1
-        except Exception as exc:
-            print(f"push_decision_to_sheet (note-only) failed for lead {lead_id}: {exc}")
+            for lead_id in ids_to_push:
+                try:
+                    push_decision_to_sheet(lead_id)
+                except Exception as exc:
+                    print(f"push_decision_to_sheet (note-only) failed for lead {lead_id}: {exc}")
+        threading.Thread(target=_push_note_leads, args=(lead_ids,), daemon=True).start()
 
-    return JSONResponse({"ok": True, "asin": asin, "leads_updated": len(lead_ids), "pushed_to_sheet": pushed})
+    return JSONResponse({"ok": True, "asin": asin, "leads_updated": len(lead_ids), "pushed_to_sheet": None})
 
 
 @router.post("/review-queue/resolve")

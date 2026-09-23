@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import re
+import threading
 import time
 
 from fastapi import APIRouter, Request
@@ -113,6 +114,43 @@ def _monthly_daily_tracker_total(rows, month_start):
     return total
 
 
+# Once the cached snapshot is older than PURCHASING_CACHE_TTL it is refreshed in the BACKGROUND while the page keeps
+# showing the old numbers (2026-09-21): rebuilding reads three tabs of the Google workbook (4-7s, worse when Google is
+# slow), and whoever loaded the Command Centre at the wrong minute each hour used to wait for all of it -- or time out.
+# Only the very first load after a restart (nothing cached yet) still builds it inline.
+PURCHASING_RETRY_AFTER_FAILURE = timedelta(minutes=5)
+_purchasing_refresh_lock = threading.Lock()
+_purchasing_refreshing = False
+
+
+def _refresh_purchasing_snapshot_in_background():
+    """Start ONE background rebuild (a second call while one is running does nothing)."""
+    global _purchasing_refreshing
+    with _purchasing_refresh_lock:
+        if _purchasing_refreshing:
+            return
+        _purchasing_refreshing = True
+
+    def work():
+        global _purchasing_refreshing
+        try:
+            previous = _purchasing_snapshot_cache["value"]
+            snapshot = _build_purchasing_snapshot()
+            now = datetime.now()
+            if snapshot["error"] and previous is not None and previous.get("available"):
+                # A failed refresh must not replace good numbers with an error: keep them and try again soon.
+                _purchasing_snapshot_cache["created_at"] = now - PURCHASING_CACHE_TTL + PURCHASING_RETRY_AFTER_FAILURE
+            else:
+                _purchasing_snapshot_cache.update({"created_at": now, "value": snapshot})
+        except Exception as exc:
+            print(f"Purchasing snapshot background refresh failed: {exc}")
+        finally:
+            with _purchasing_refresh_lock:
+                _purchasing_refreshing = False
+
+    threading.Thread(target=work, name="purchasing-snapshot-refresh", daemon=True).start()
+
+
 def _purchasing_snapshot():
     """Return a cached, read-only month-to-date view of the official workbook."""
     now = datetime.now()
@@ -120,6 +158,18 @@ def _purchasing_snapshot():
     if cached_at and now - cached_at < PURCHASING_CACHE_TTL:
         return _purchasing_snapshot_cache["value"]
 
+    if _purchasing_snapshot_cache["value"] is not None:
+        _refresh_purchasing_snapshot_in_background()
+        return _purchasing_snapshot_cache["value"]
+
+    snapshot = _build_purchasing_snapshot()
+    _purchasing_snapshot_cache.update({"created_at": datetime.now(), "value": snapshot})
+    return snapshot
+
+
+def _build_purchasing_snapshot():
+    """Read the workbook and build the snapshot dict (never raises: a failure comes back in snapshot["error"])."""
+    now = datetime.now()
     month_start = date.today().replace(day=1)
     snapshot = {
         "available": False,
@@ -166,7 +216,6 @@ def _purchasing_snapshot():
     except Exception as exc:
         snapshot["error"] = str(exc)
 
-    _purchasing_snapshot_cache.update({"created_at": now, "value": snapshot})
     return snapshot
 
 
@@ -187,7 +236,15 @@ def _command_centre():
     """
     cached = globals().get('_COMMAND_CENTRE_CACHE')
     now = time.monotonic()
-    if cached and now - cached[0] < 15:
+    # Was 15s -- same bug as review_queue.py's own cache (fixed
+    # 2026-09-17): list_queue_items() can take well over 15s once
+    # product_records is large/under scheduler load, so the cache was
+    # expiring before a rebuild could ever finish and every Command
+    # Centre load paid the full cost. This is a SEPARATE cache from
+    # review_queue.py's _REVIEW_QUEUE_CACHE (different page, same
+    # underlying expensive call) -- both need a realistic TTL, not
+    # just one of them.
+    if cached and now - cached[0] < 120:
         return cached[1]
 
     items = [item for item in ReviewQueueService.list_queue_items() if _requires_human_review(item)]

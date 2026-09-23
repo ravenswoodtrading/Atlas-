@@ -9,7 +9,10 @@ from fastapi.templating import Jinja2Templates
 
 from app.database.database import SessionLocal
 from app.database.models import TrackedSeller, SellerNewListing, ProductRecord, OaSourceCandidate
-from app.services.seller_watch_service import SellerWatchService, SOURCING_TAG_BY_TAB
+from app.services.seller_watch_service import (
+    SellerWatchService, SOURCING_TAG_BY_TAB, SELLER_TYPES, SELLER_TYPE_LABELS, SELLER_TYPE_GROUPS,
+    SELLER_TYPE_GROUP_LABELS, UNSORTED_LABEL, seller_type_matches,
+)
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.product_repository import ProductRepository
 from app.services.fee_engine import FeeEngine
@@ -137,9 +140,28 @@ OPPORTUNITY_VIEW_LABELS = {
 }
 OPPORTUNITY_SORT_LABELS = {"newest": "Newest first", "profit_desc": "Highest profit"}
 
+# Seller-type views (2026-09-20). Some sellers do BOTH, so "does EU A2A" and "does OA / Wholesale"
+# overlap on purpose -- a mixed seller is in each. See SELLER_TYPE_GROUPS.
+SELLER_TYPE_FILTERS = (
+    [("", "All seller types")]
+    + [(key, label) for key, label in SELLER_TYPE_GROUP_LABELS.items()]
+    + list(SELLER_TYPES)
+    + [("unsorted", UNSORTED_LABEL)]
+)
+SELLER_TYPE_FILTER_LABELS = dict(SELLER_TYPE_FILTERS)
+
+
+def _type_chips(sellers, current: str) -> list:
+    """[(value, label, count, active)] for the seller-type chips, counts over `sellers` (every tracked seller)."""
+    chips = []
+    for value, label in SELLER_TYPE_FILTERS:
+        count = sum(1 for s in sellers if seller_type_matches(s.seller_type or "", value))
+        chips.append((value, label, count, value == current))
+    return chips
+
 
 def build_opportunities_context(view: str = "all", source: str = "all", q: str = "",
-                                 sort: str = "newest", seller_id: int = 0) -> dict:
+                                 sort: str = "newest", seller_id: int = 0, stype: str = "") -> dict:
     """
     Competitor Watch redesign -- the Opportunities feed. The pool is
     the UNION of the same three already-tested service methods that
@@ -215,6 +237,11 @@ def build_opportunities_context(view: str = "all", source: str = "all", q: str =
     if seller_id:
         items = [e for e in items if e["listing"].tracked_seller_id == seller_id]
 
+    sellers = SellerWatchService.list_tracked_sellers()
+    if stype:
+        type_by_id = {s.id: (s.seller_type or "") for s in sellers}
+        items = [e for e in items if seller_type_matches(type_by_id.get(e["listing"].tracked_seller_id, ""), stype)]
+
     if q.strip():
         needle = q.strip().lower()
         items = [
@@ -244,10 +271,12 @@ def build_opportunities_context(view: str = "all", source: str = "all", q: str =
                 reasoning = {}
         entry["reasoning"] = reasoning
 
-    sellers = SellerWatchService.list_tracked_sellers()
     seller_names = {s.id: (s.nickname or s.seller_id) for s in sellers}
 
     return {
+        "stype": stype,
+        "seller_type_filters": SELLER_TYPE_FILTERS,
+        "seller_type_labels": SELLER_TYPE_LABELS,
         "items": items,
         "counts": counts,
         "view": view,
@@ -350,7 +379,7 @@ def build_source_finder_context(asin: str = "") -> dict:
     }
 
 
-def build_competitor_analytics_context(seller_id: int = 0) -> dict:
+def build_competitor_analytics_context(seller_id: int = 0, stype: str = "") -> dict:
     """Competitor Watch redesign -- Competitors tab (seller list + drill-down)."""
     empty_breakdown = {
         "total": 0, "eu_a2a": 0, "uk_a2a": 0, "wholesale": 0, "oa": 0,
@@ -365,6 +394,9 @@ def build_competitor_analytics_context(seller_id: int = 0) -> dict:
         for s in sellers
     ]
     seller_rows.sort(key=lambda r: r["total"], reverse=True)
+    type_chips = _type_chips(sellers, stype)
+    if stype:
+        seller_rows = [r for r in seller_rows if seller_type_matches(r["seller"].seller_type or "", stype)]
 
     selected = None
     if seller_id:
@@ -381,13 +413,16 @@ def build_competitor_analytics_context(seller_id: int = 0) -> dict:
         "seller_rows": seller_rows,
         "selected": selected,
         "seller_id": seller_id,
+        "stype": stype,
+        "type_chips": type_chips,
+        "seller_type_labels": SELLER_TYPE_LABELS,
     }
 
 
 @router.get("/competitors")
 def competitors_page(request: Request, tab: str = "opportunities", view: str = "all",
                       source: str = "all", q: str = "", sort: str = "newest",
-                      seller_id: int = 0, asin: str = "", check_result: str = ""):
+                      seller_id: int = 0, asin: str = "", check_result: str = "", stype: str = ""):
     """
     Competitor Watch, redesigned 2026-09-03 -- "turn competitor
     activity into sourcing opportunities" rather than a flat detections
@@ -411,10 +446,10 @@ def competitors_page(request: Request, tab: str = "opportunities", view: str = "
         context = build_source_finder_context(asin=asin)
         content_template = "_competitors_source_finder.html"
     elif tab == "competitors":
-        context = build_competitor_analytics_context(seller_id=seller_id)
+        context = build_competitor_analytics_context(seller_id=seller_id, stype=stype)
         content_template = "_competitors_analytics.html"
     else:
-        context = build_opportunities_context(view=view, source=source, q=q, sort=sort, seller_id=seller_id)
+        context = build_opportunities_context(view=view, source=source, q=q, sort=sort, seller_id=seller_id, stype=stype)
         content_template = "_competitors_opportunities.html"
 
     return templates.TemplateResponse(
@@ -459,21 +494,38 @@ def competitors_find_source(asin: str = Form(...)):
     return RedirectResponse(url=f"/competitors?tab=source_finder&asin={quote(asin)}", status_code=303)
 
 
-def build_competitors_sellers_context(check_result: str = "") -> dict:
+def build_competitors_sellers_context(check_result: str = "", stype: str = "") -> dict:
     """
     Kept as its own function even though /competitors/sellers is its
     only caller now -- Leads Hub used to be a second caller (removed
     2026-09-04, Navigation redesign).
+
+    Seller types (2026-09-20): `types` carries everything the type controls need -- the chips
+    (overlapping on purpose, some sellers do both), each seller's evidence-based suggestion, and how
+    many not-yet-sorted sellers a one-click "apply suggestions" would sort.
     """
+    all_sellers = SellerWatchService.list_tracked_sellers()
+    suggestions = SellerWatchService.get_seller_type_suggestions()
+    sellers = [s for s in all_sellers if seller_type_matches(s.seller_type or "", stype)]
+    suggestable = sum(1 for s in all_sellers if not s.seller_type and (suggestions.get(s.id) or {}).get("type"))
     return {
-        "sellers": SellerWatchService.list_tracked_sellers(),
+        "sellers": sellers,
         "stats": SellerWatchService.get_seller_stats(),
         "check_result": check_result,
+        "types": {
+            "stype": stype,
+            "chips": _type_chips(all_sellers, stype),
+            "options": SELLER_TYPES,
+            "labels": SELLER_TYPE_LABELS,
+            "suggestions": suggestions,
+            "suggestable": suggestable,
+            "return_to": "/competitors/sellers" + (f"?stype={quote(stype)}" if stype else ""),
+        },
     }
 
 
 @router.get("/competitors/sellers")
-def competitors_sellers_page(request: Request, check_result: str = ""):
+def competitors_sellers_page(request: Request, check_result: str = "", stype: str = ""):
     """
     Tracked-seller management -- add/pause/resume/remove and "Check
     now", split out from the detections feed (see competitors_page's
@@ -483,8 +535,37 @@ def competitors_sellers_page(request: Request, check_result: str = ""):
     return templates.TemplateResponse(
         request=request,
         name="competitors_sellers.html",
-        context={"request": request, **build_competitors_sellers_context(check_result)}
+        context={"request": request, **build_competitors_sellers_context(check_result, stype)}
     )
+
+
+def _safe_return(return_to: str) -> str:
+    """Only ever redirect back to a Competitors page -- return_to comes from a form field."""
+    return return_to if return_to.startswith("/competitors") and "//" not in return_to else "/competitors/sellers"
+
+
+@router.post("/competitors/set-type")
+def competitors_set_type(tracked_seller_id: int = Form(...), seller_type: str = Form(""),
+                         return_to: str = Form("/competitors/sellers")):
+    """Sets one seller's type ("" puts it back to not sorted). An unknown type is ignored."""
+    SellerWatchService.set_seller_type(tracked_seller_id, seller_type)
+    return RedirectResponse(url=_safe_return(return_to), status_code=303)
+
+
+@router.post("/competitors/apply-suggested-types")
+def competitors_apply_suggested_types(return_to: str = Form("/competitors/sellers")):
+    """
+    Sorts every NOT-YET-SORTED seller from its evidence-based suggestion. Never overrides a type
+    already chosen, and skips sellers without enough data.
+    """
+    result = SellerWatchService.apply_suggested_types()
+    message = (
+        f"Sorted {result['applied']} seller(s) from the evidence; "
+        f"{result['skipped_no_data']} don't have enough data yet."
+    )
+    base = _safe_return(return_to)
+    separator = "&" if "?" in base else "?"
+    return RedirectResponse(url=f"{base}{separator}check_result={quote(message)}", status_code=303)
 
 
 @router.post("/competitors/add")

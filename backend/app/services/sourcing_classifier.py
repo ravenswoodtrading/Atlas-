@@ -125,6 +125,96 @@ def requires_uk_plug(category_name: str | None) -> bool:
     return any(keyword in name for keyword in UK_PLUG_RISK_CATEGORY_KEYWORDS)
 
 
+# Title-level mains-plug detector (2026-09-20, EU price-drop scan; Tamara:
+# "be careful with plugs for computers"). requires_uk_plug above works on
+# category NAME, which is far too coarse for non-brand category scans:
+# "Computers & Accessories" is mostly plug-free (mice, keyboards, SSDs,
+# webcams) but also holds chargers, routers, monitors and printers -- and
+# her standing rule (2026-09-07) is that anything with a mains plug can't
+# be EU A2A, since the EU unit can arrive with an EU plug. This reads the
+# UK listing title instead.
+#
+# Deliberately errs towards FALSE POSITIVES: a wrongly dropped candidate
+# costs nothing but a missed lead, a wrongly kept one is an unsellable
+# purchase. Known false positives (consumables and accessories whose title
+# names the device, e.g. "ink for Brother printer", "cable for monitor") are
+# accepted for now; the scan reports every dropped title so this list can
+# be tuned from real examples. Not perfect in the other direction either --
+# a mains device whose title never names what it is will get through, which
+# is what the Review Queue's EU_PLUG check is still for.
+_MAINS_PLUG_TITLE_FRAGMENTS = (
+    # power / charging
+    r"chargers?", r"power suppl(?:y|ies)", r"psu", r"(?:power|ac|mains|wall|travel)\s+ad[ae]pt[eo]rs?",
+    r"netzteil\w*", r"ladeger\w+", r"power strips?", r"extension\s+(?:lead|cord|cable)s?",
+    r"surge\s+protect\w*", r"multi[- ]?plugs?", r"steckdose\w*", r"(?:wall|power|mains|smart)\s+sockets?",
+    r"(?:mains|wall|uk|eu|2|3|two|three)[- ]?pins?", r"schuko", r"plug[- ]?in", r"ups", r"uninterruptible",
+    # networking
+    r"routers?", r"modems?", r"mesh\s+(?:wi-?fi|system|router)", r"wi-?fi\s+(?:extender|repeater|booster)",
+    r"range\s+extenders?", r"repeaters?", r"access\s+points?", r"powerline", r"fritz", r"nas",
+    r"network\s+storage",
+    # Small switches and PoE gear ship with an external mains adapter (a DIGITUS 5-port Fast Ethernet
+    # switch reached the Review Queue as a BUY/CONSIDER before this was added, 2026-09-20).
+    r"(?:network|ethernet|poe|gigabit|managed|unmanaged|desktop)\s+switch(?:es)?", r"poe",
+    r"media\s+converters?",
+    # computers, displays, printers (bare "laptop"/"macbook"/"chromebook"/"tv" are NOT listed: they
+    # appear in accessory titles -- "mouse ... for laptop" -- and laptops sit above the scan's price cap)
+    r"monitor(?!\s+(?:arm|stand|mount|riser|bracket|cable|light|lamp|cleaner|filter|privacy))",
+    r"(?:desktop|gaming|mini|tower|all[- ]in[- ]one)\s+(?:pc|computer)s?", r"printers?", r"drucker",
+    # A laptop only counts when its spec follows ("HP 15 Laptop, Intel Core i5") -- not "mouse for laptop".
+    r"(?:laptop|notebook)s?(?=,?\s+(?:with\s+)?(?:intel|amd|ryzen|core|celeron|pentium|snapdragon|apple|\d+\s*gb))",
+    r"projectors?", r"beamer", r"docking\s+stations?", r"labelwriter", r"shredders?", r"soundbars?",
+    r"(?:smart|led|oled|qled|4k|uhd)\s+tvs?", r"television",
+    # kitchen / household appliances
+    r"kettles?", r"toasters?", r"air[- ]?fryers?", r"fryers?", r"blenders?",
+    r"(?:hand|stand|electric|food|kitchen|planetary)\s+mixers?(?!\s+taps?)",
+    r"food\s+processors?", r"(?:coffee|espresso)\s+(?:machines?|makers?)", r"(?:slow|pressure|rice|multi)[- ]?cookers?",
+    r"microwave\s+ovens?", r"(?:electric|mini|toaster|convection)\s+ovens?", r"(?:waffle|sandwich)\s+makers?",
+    r"juicers?", r"vacuum", r"hoover",
+    r"steam\s+(?:iron|generator)s?", r"steamers?", r"heaters?", r"humidifiers?", r"dehumidifiers?",
+    r"air\s+purifiers?",
+    # power tools
+    r"cordless\s+(?:drill|driver|saw|grinder|sander|planer|jigsaw|hammer|wrench|screwdriver|mower|strimmer)s?",
+    r"power\s+tools?", r"angle\s+grinders?", r"jigsaws?", r"circular\s+saws?", r"heat\s+guns?",
+    r"pressure\s+washers?", r"air\s+compressors?", r"soldering\s+(?:iron|station)s?", r"welders?",
+)
+_MAINS_PLUG_TITLE_RE = re.compile(r"\b(?:" + "|".join(_MAINS_PLUG_TITLE_FRAGMENTS) + r")\b", re.IGNORECASE)
+
+# Titles that name a flagged word but are plug-free. Every entry here comes from a
+# product Tamara has actually bought via EU A2A (back-test against
+# historical_purchases, 2026-09-20): car chargers run off a 12V socket; Bialetti
+# stovetop Moka pots are "coffee makers" with no electrics; Instax/Polaroid
+# photo printers are battery powered; tools sold as "battery & charger excluded"
+# carry no charger.
+_PLUG_FREE_TITLE_RE = re.compile(
+    r"\bcar\s+chargers?\b|\bin[- ]car\b|cigarette\s+lighter"
+    r"|\bstove[- ]?top\b|\bmoka\b|percolator|cafeti[eè]re|french\s+press"
+    r"|induction\s+(?:plate|base|compatible)|suitable\s+for\s+(?:all\s+)?(?:heat|induction)"
+    r"|\binstax\b|\bpolaroid\b|zoemini|photo\s+printer|smartphone\s+printer"
+    r"|chargers?\s+(?:excluded|not\s+included)|without\s+(?:a\s+)?(?:battery|charger)|body\s+only|bare\s+tool|tool\s+only"
+    # Consumables that merely name the tool they fit: saw blades, drill bits, wall fixings (Fischer, Bosch).
+    r"|\bsaw\s+blades?\b|\bdrill\s+bits?\b|\bfixings?\b|\banchors?\b|\bdowels?\b"
+    # Dymo LetraTag / Brother PT-E110 handheld label makers run on batteries; D1 tape is a consumable.
+    r"|letratag|handheld.{0,60}label|label.{0,60}handheld|\bd1\s+labels?\b|label\s+tapes?"
+    # GoPro's dual charger charges over USB-C (no plug in the box; 3 EU A2A purchases).
+    r"|\bgopro\b"
+    # Passive: attachments and accessories, PC cases (a "Mid-Tower PC Case" is not a "Tower PC"),
+    # and USB-powered PC soundbars (Razer Leviathan V2 X).
+    r"|\bcartridges?\b|\btoner\b|\battachments?\b|\b(?:pc|computer|mid[- ]tower|full[- ]tower)\s+cases?\b|\bpc\b.{0,30}soundbar|usb\s+soundbar"
+    # A power bank is only plug-free if the title doesn't also sell a wall charger with it.
+    r"|power\s+bank(?!.*(?:wall|mains|adapter|adaptor|plug))"
+    # Bialetti is overwhelmingly stovetop Moka pots (19 EU A2A purchases); its electric range says so.
+    r"|bialetti(?!.*\belectric)",
+    re.IGNORECASE,
+)
+
+
+def title_suggests_mains_plug(title: str | None) -> bool:
+    text = title or ""
+    if _PLUG_FREE_TITLE_RE.search(text):
+        return False
+    return bool(_MAINS_PLUG_TITLE_RE.search(text))
+
+
 @dataclass
 class SourcingClassification:
     sourcing_tag: str

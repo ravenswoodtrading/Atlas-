@@ -1,4 +1,4 @@
-{% macro signal_queries_content(queries, signal_types, signal_type_labels, check_result) %}
+{% macro signal_queries_content(queries, signal_types, signal_type_labels, check_result, latest_runs, recent_runs, queries_by_id, category_presets, marketplaces) %}
 
 {% if check_result %}
 <div class="alert alert-info alert-dismissible fade show py-2">
@@ -8,54 +8,99 @@
 {% endif %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Manage Signal Queries</h4>
+    <h4 class="mb-0">Saved Keepa searches</h4>
     <a href="/signals" class="btn btn-outline-dark btn-sm"><i class="bi bi-arrow-left"></i> Back to Signals</a>
 </div>
 
 <div class="alert alert-secondary py-2 small mb-4">
     <i class="bi bi-info-circle"></i>
-    A signal query is a saved "find opportunities like this" definition. Nothing runs automatically -- click <strong>Run now</strong> on a query whenever you want to spend the tokens and check for new candidates (see why on the <a href="/signals">Signals</a> page).
-    <br><strong>Stock-out</strong> / <strong>Price spike</strong> run a category-scoped Keepa Product Finder search. <strong>Ceiling cleared</strong> ignores the category filter entirely -- it just re-checks Atlas's own pool of previously-rejected ASINs, so you normally only need one of these.
+    A saved search is a Keepa Product Finder query Atlas can re-run. <strong>Stock-out</strong> and <strong>Ceiling cleared</strong> run automatically every 2 hours; <strong>Price spike</strong> is <strong>Run now</strong> only. Their results appear on the <a href="/signals">Signals</a> page.
+    <br><strong>EU price drop</strong> looks at one EU marketplace for products whose price has just fallen, checks prices for free first, then runs the survivors through the full scan. Anything worth buying lands in the <a href="/review-queue">Review Queue</a>, and each run is summarised under <em>Recent runs</em> below. It is <strong>Run now</strong> only and costs roughly 12 Keepa tokens per candidate scanned.
 </div>
 
 <div class="card metric p-4 mb-4">
     <div class="text-muted small mb-2">
-        Add a signal query. Optionally restrict Stock-out/Price spike to specific Keepa categories (comma-separated IDs -- find these on the <a href="/categories">Categories</a> page). Leave blank to search all categories.
+        Add a search. For Stock-out/Price spike you can optionally restrict to UK Keepa categories (comma-separated IDs, see the <a href="/categories">Categories</a> page). For <strong>EU price drop</strong> the category must be that <em>marketplace's own</em> Keepa category ID -- pick a preset or enter one.
     </div>
-    <form method="post" action="/signals/queries/add" class="row g-3 align-items-end">
+    <form method="post" action="/signals/queries/add" class="row g-3 align-items-end" id="keepa-search-form">
         <div class="col-md-4">
             <label class="form-label">Name</label>
-            <input type="text" class="form-control" name="name" placeholder="e.g. Kitchen stock-outs" required>
+            <input type="text" class="form-control" name="name" placeholder="e.g. Computers price drops (DE)" required>
         </div>
         <div class="col-md-3">
-            <label class="form-label">Signal type</label>
-            <select class="form-select" name="signal_type" required>
+            <label class="form-label">Search type</label>
+            <select class="form-select" name="signal_type" id="ks-type" required>
                 {% for t in signal_types %}
                 <option value="{{ t }}">{{ signal_type_labels[t] }}</option>
                 {% endfor %}
             </select>
         </div>
         <div class="col-md-3">
-            <label class="form-label">Category IDs (optional)</label>
-            <input type="text" class="form-control" name="category_ids" placeholder="e.g. 340831031, 192413031">
+            <label class="form-label">Category IDs <span id="ks-cat-hint" class="text-muted">(optional)</span></label>
+            <input type="text" class="form-control" name="category_ids" id="ks-cats" placeholder="e.g. 340831031, 192413031">
         </div>
         <div class="col-md-2">
             <button type="submit" class="btn btn-dark w-100">
                 <i class="bi bi-plus-lg"></i> Add
             </button>
         </div>
+
+        <div class="col-12" id="ks-eu" style="display:none;">
+            <div class="row g-3 border-top pt-3">
+                <div class="col-md-2">
+                    <label class="form-label">Marketplace</label>
+                    <select class="form-select" name="marketplace" id="ks-market">
+                        {% for m in marketplaces %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Category preset</label>
+                    <select class="form-select" id="ks-preset"></select>
+                    <div class="form-text">Only DE has been run so far; FR/ES/IT are untried.</div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Min price (&euro;)</label>
+                    <input type="number" class="form-control" name="min_price" value="20" min="1">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Max price (&euro;)</label>
+                    <input type="number" class="form-control" name="max_price" value="150" min="2">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Max to scan</label>
+                    <input type="number" class="form-control" name="per_run_cap" value="60" min="1" max="100">
+                    <div class="form-text">Caps token spend per run.</div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Drop vs 30d avg (%)</label>
+                    <input type="number" class="form-control" name="drop30_pct" value="20" min="1" max="90">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Drop vs 90d avg (%)</label>
+                    <input type="number" class="form-control" name="drop90_pct" value="15" min="1" max="90">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Min rank drops (30d)</label>
+                    <input type="number" class="form-control" name="min_rank_drops30" value="10" min="0" max="1000">
+                    <div class="form-text">Demand in that marketplace, a weak proxy for UK demand.</div>
+                </div>
+                <div class="col-md-6 small text-muted align-self-center">
+                    Before any Keepa spend, products Amazon says this account can't list (approval required / not eligible) are dropped, and so are products whose title names a mains-plug device (chargers, routers, monitors, kitchen appliances, power tools), since EU units can arrive with an EU plug.
+                </div>
+            </div>
+        </div>
     </form>
 </div>
 
 {% if queries %}
-<div class="card metric p-3">
+<div class="card metric p-3 mb-4">
     <div class="table-responsive">
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
                     <th>Name</th>
-                    <th>Signal type</th>
-                    <th>Categories</th>
+                    <th>Type</th>
+                    <th>Searches</th>
                     <th>Enabled</th>
                     <th>Last run</th>
                     <th></th>
@@ -63,12 +108,16 @@
             </thead>
             <tbody>
                 {% for q in queries %}
+                {% set run = latest_runs.get(q.id) %}
                 <tr>
                     <td class="fw-semibold">{{ q.name }}</td>
                     <td class="small">{{ signal_type_labels.get(q.signal_type, q.signal_type) }}</td>
                     <td class="small text-muted">
                         {% if q.signal_type == "ceiling_recheck" %}
                         <span class="text-muted">N/A -- uses the rejected pool</span>
+                        {% elif q.signal_type == "eu_price_drop" %}
+                        <strong>{{ q.marketplace }}</strong> &middot; categories {{ q.category_ids or "?" }}<br>
+                        &euro;{{ q.min_price }}&ndash;{{ q.max_price }} &middot; down &ge;{{ q.drop30_pct }}% (30d) / &ge;{{ q.drop90_pct }}% (90d) &middot; &ge;{{ q.min_rank_drops30 }} rank drops &middot; scans up to {{ q.per_run_cap }}
                         {% else %}
                         {{ q.category_ids or "All categories" }}
                         {% endif %}
@@ -83,18 +132,25 @@
                         </form>
                     </td>
                     <td class="small text-muted">
-                        {% if q.last_checked_at %}{{ q.last_checked_at.strftime("%d %b %H:%M") }}{% else %}Never{% endif %}
+                        {% if q.signal_type == "eu_price_drop" %}
+                            {% if not run %}Never
+                            {% elif run.status == "running" %}<span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm" style="width:.7rem;height:.7rem;"></span> Running&hellip;</span>{% if run.stage %}<div class="mt-1">{{ run.stage }}</div>{% endif %}
+                            {% elif run.status == "failed" %}<span class="badge text-bg-danger">Failed</span> {{ run.started_at.strftime("%d %b %H:%M") }}
+                            {% else %}{{ run.started_at.strftime("%d %b %H:%M") }}<br><strong>{{ run.leads }}</strong> lead{{ "" if run.leads == 1 else "s" }} &middot; {{ run.sent_to_scan }} scanned &middot; {{ run.tokens_spent|round|int }} tokens
+                            {% endif %}
+                        {% elif q.last_checked_at %}{{ q.last_checked_at.strftime("%d %b %H:%M") }}{% else %}Never{% endif %}
                     </td>
                     <td>
                         <div class="d-flex gap-1">
-                            <form method="post" action="/signals/run">
+                            <form method="post" action="/signals/run"
+                                  {% if q.signal_type == "eu_price_drop" %}onsubmit="return confirm('Run this search now? It uses Keepa tokens (roughly 12 per candidate scanned, up to {{ q.per_run_cap }} candidates) and takes a few minutes in the background.');"{% endif %}>
                                 <input type="hidden" name="query_id" value="{{ q.id }}">
                                 <input type="hidden" name="return_to" value="/signals/queries">
-                                <button type="submit" class="btn btn-sm btn-outline-primary" {{ "disabled" if not q.enabled }} title="{{ 'Enable this query first' if not q.enabled }}">
+                                <button type="submit" class="btn btn-sm btn-outline-primary" {{ "disabled" if not q.enabled or (run and run.status == "running") }} title="{{ 'Enable this search first' if not q.enabled }}">
                                     <i class="bi bi-play-fill"></i> Run now
                                 </button>
                             </form>
-                            <form method="post" action="/signals/queries/delete" onsubmit="return confirm('Delete this signal query? This also removes its matches from the Signals page.');">
+                            <form method="post" action="/signals/queries/delete" onsubmit="return confirm('Delete this saved search? This also removes its matches and run history.');">
                                 <input type="hidden" name="query_id" value="{{ q.id }}">
                                 <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
                             </form>
@@ -108,8 +164,110 @@
 </div>
 {% else %}
 <div class="alert alert-secondary py-2 small">
-    <i class="bi bi-info-circle"></i> No signal queries yet -- add one above to get started. A good first one: "Ceiling cleared" with no category filter, since it costs nothing to set up (it just re-checks products Atlas has already seen).
+    <i class="bi bi-info-circle"></i> No saved searches yet -- add one above to get started. A good first one: "Ceiling cleared" with no category filter, since it costs nothing to set up (it just re-checks products Atlas has already seen).
 </div>
 {% endif %}
+
+{% if recent_runs %}
+<div class="card metric p-3">
+    <h5 class="mb-3">Recent EU price-drop runs</h5>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>When</th><th>Search</th>
+                    <th class="text-end" title="Products whose price dropped in that marketplace">Found</th>
+                    <th class="text-end" title="Amazon says this account can't list it (checked free, before any Keepa spend)">Gated</th>
+                    <th class="text-end" title="Dropped by the free UK-vs-source price check (poor spread)">Price check</th>
+                    <th class="text-end" title="Dropped because the title names a mains-plug device">Plug</th>
+                    <th class="text-end" title="Sent to the paid full scan">Scanned</th>
+                    <th class="text-end">Leads</th>
+                    <th class="text-end">Tokens</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run, summary in recent_runs %}
+                {% set q = queries_by_id.get(run.signal_query_id) %}
+                <tr>
+                    <td class="small">{{ run.started_at.strftime("%d %b %H:%M") }}</td>
+                    <td class="small">{{ q.name if q else "(deleted search)" }}</td>
+                    <td class="text-end">{{ run.candidates_found }}</td>
+                    <td class="text-end">&minus;{{ run.restricted_dropped or 0 }}</td>
+                    <td class="text-end">&minus;{{ run.precheck_dropped }}</td>
+                    <td class="text-end">&minus;{{ run.plug_dropped }}</td>
+                    <td class="text-end">{{ run.sent_to_scan }}</td>
+                    <td class="text-end fw-semibold">{{ run.leads }}</td>
+                    <td class="text-end">{{ run.tokens_spent|round|int }}</td>
+                    <td class="text-end">
+                        {% if run.status == "running" %}<span class="badge text-bg-primary">Running</span>
+                        {% elif run.status == "failed" %}<span class="badge text-bg-danger">Failed</span>{% endif %}
+                        <button class="btn btn-sm btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#run-{{ run.id }}">Details</button>
+                    </td>
+                </tr>
+                <tr class="collapse" id="run-{{ run.id }}">
+                    <td colspan="10" class="bg-light small">
+                        {% if summary.error %}<div class="text-danger mb-2"><i class="bi bi-exclamation-triangle"></i> {{ summary.error }}</div>{% endif %}
+                        {% if summary.good %}
+                        <div class="fw-semibold mb-1">Leads (BUY / CONSIDER) -- read the title before buying: check plug type, size, and that it's the right language/edition</div>
+                        <ul class="mb-2">
+                            {% for g in summary.good %}
+                            <li>
+                                <span class="badge {{ 'text-bg-success' if g.recommendation == 'BUY' else 'text-bg-warning' }}">{{ g.recommendation }}</span>
+                                <a href="/review-queue?q={{ g.asin }}">{{ g.title }}</a>
+                                &mdash; ROI {{ g.roi }}%, profit &pound;{{ g.profit }}, UK &pound;{{ g.uk_price }}, source {{ g.source }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% elif run.status == "done" %}<div class="mb-2 text-muted">No BUY/CONSIDER leads this run.</div>{% endif %}
+                        {% if summary.plug_risk_examples %}
+                        <div class="fw-semibold mb-1">Dropped as mains-plug devices ({{ run.plug_dropped }}) -- tell me if any are wrong</div>
+                        <ul class="mb-0">{% for t in summary.plug_risk_examples %}<li>{{ t }}</li>{% endfor %}</ul>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<script>
+(function () {
+    var presets = {{ category_presets|tojson }};
+    var type = document.getElementById('ks-type');
+    var eu = document.getElementById('ks-eu');
+    var market = document.getElementById('ks-market');
+    var preset = document.getElementById('ks-preset');
+    var cats = document.getElementById('ks-cats');
+    var hint = document.getElementById('ks-cat-hint');
+
+    function fillPresets() {
+        preset.innerHTML = '<option value="">Choose a category...</option>';
+        (presets[market.value] || []).forEach(function (p) {
+            var o = document.createElement('option');
+            o.value = p[1]; o.textContent = p[0] + ' — ' + p[1];
+            preset.appendChild(o);
+        });
+    }
+    function sync() {
+        var isEu = type.value === 'eu_price_drop';
+        eu.style.display = isEu ? '' : 'none';
+        cats.required = isEu;
+        hint.textContent = isEu ? '(required -- marketplace IDs)' : '(optional)';
+        if (isEu) { fillPresets(); }
+    }
+    type.addEventListener('change', sync);
+    market.addEventListener('change', fillPresets);
+    preset.addEventListener('change', function () { if (preset.value) { cats.value = preset.value; } });
+    sync();
+
+    // A run is in the background: refresh until nothing is still running.
+    if (document.querySelector('.badge.text-bg-primary')) {
+        setTimeout(function () { location.reload(); }, 20000);
+    }
+})();
+</script>
 
 {% endmacro %}

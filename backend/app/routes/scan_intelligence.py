@@ -10,6 +10,7 @@ from app.services.scan_schedule_service import pending_reviews, decide_review, T
 from app.services.brand_scan_service import BrandScanService
 from app.services.scan_coordinator import ScanCoordinator
 from app.services.activity_log import ActivityLog
+from app.services.stale_cache import StaleCache
 from app.services.opportunity_lens_service import ACTION_LABELS
 from app.services.historical_buying_service import get_brand_history, classify_discovery_state
 from app.services.scan_economics_service import get_brand_economics, MIN_SCANS_FOR_EFFICIENCY
@@ -253,10 +254,35 @@ def _describe_scan_now(brand: str, result: dict) -> str:
     )
 
 
+# The three heavy roll-ups this page shows (discovery targets, scan economics, attention candidates) take ~13s to build
+# cold and each kept its own 5-minute cache, so whoever opened the page just after they expired waited for all of it
+# (2026-09-21, Tamara: pages slow "constantly"). They are now built together and served from here: the last result is
+# handed out at once and rebuilt in the background when it is 5 minutes old. Prewarmed at server start (see main.py).
+_INTEL_BUNDLE = StaleCache(ttl_seconds=300, retry_seconds=60, name="scan-intelligence")
+
+
+def _compute_intel_bundle() -> dict:
+    return {
+        "targets": DiscoveryIntelligenceService.list_discovery_targets(limit=DISCOVERY_TARGETS_LIMIT),
+        "economics": get_brand_economics(),
+        "attention": get_attention_candidates(),
+    }
+
+
+def _intel_bundle() -> dict:
+    return _INTEL_BUNDLE.get("bundle", _compute_intel_bundle)
+
+
+def prewarm_intel_bundle() -> bool:
+    """Start building the bundle in the background (server start); False if one is already being built."""
+    return _INTEL_BUNDLE.refresh_in_background("bundle", _compute_intel_bundle)
+
+
 @router.get("/scan-intelligence")
 def scan_intelligence(request: Request, brand: str = "", tick_result: str = "",
                        tier: str = "all", q: str = "", page: int = 1):
-    targets = DiscoveryIntelligenceService.list_discovery_targets(limit=DISCOVERY_TARGETS_LIMIT)
+    bundle = _intel_bundle()
+    targets = bundle["targets"]
     queue_states = _queue_states(targets)
 
     targets_by_brand = {t["brand"]: t for t in targets}
@@ -295,7 +321,7 @@ def scan_intelligence(request: Request, brand: str = "", tick_result: str = "",
     # population with enough real scan history to measure at all);
     # cached internally (see scan_economics_service) since the full
     # computation is a real ~3s pass over live ProductRecord history.
-    economics = get_brand_economics()
+    economics = bundle["economics"]
     economics_rows = _economics_rows(economics, targets_by_brand)
 
     # Attention Engine v1 (Phase 5B, 2026-09-04) -- WHO deserves the
@@ -307,7 +333,7 @@ def scan_intelligence(request: Request, brand: str = "", tick_result: str = "",
     # handful of EXPLORE candidates -- KEEP_SCANNING/REDUCE_QUIET are
     # already visible in the Scan Economics section above, not repeated
     # here.
-    attention_candidates = get_attention_candidates()
+    attention_candidates = bundle["attention"]
     attention_increase = [c for c in attention_candidates if c["lane"] == LANE_INCREASE_ATTENTION and not c["ignored"]]
     attention_explore = [c for c in attention_candidates if c["lane"] == LANE_EXPLORE and not c["ignored"]][:10]
 

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Price sweep - Atlas{% endblock %}
+
+{% macro roi(v) -%}{%- if v is none -%}<span class="text-muted">-</span>{%- else -%}{{ v|round(0)|int }}%{%- endif -%}{%- endmacro %}
+{% macro gbp(v) -%}{%- if v is none -%}<span class="text-muted">-</span>{%- else -%}&pound;{{ '%.2f'|format(v) }}{%- endif -%}{%- endmacro %}
+
+{% macro sweep_table(rows, show_since) %}
+<div class="table-responsive">
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Product</th><th>In</th>
+                <th class="text-end">UK now</th><th class="text-end">EU now</th><th class="text-end">Est. ROI</th>
+                <th class="text-end">Keepa's last scan</th><th>Checked</th>{% if show_since %}<th>New since</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in rows %}
+            <tr>
+                <td style="max-width: 320px;">
+                    <a href="{{ amazon_url(r.asin) }}" target="_blank" rel="noopener">{{ (r.title or r.asin)[:70] }}</a>
+                    <div class="small text-muted">{{ r.asin }}</div>
+                </td>
+                <td class="small">{{ r.scopes }}</td>
+                <td class="text-end">{{ gbp(r.uk_price) }}
+                    {% if r.uk_move_pct is not none and r.uk_move_pct|abs >= o.uk_jump_warn_pct %}
+                    <div><span class="badge bg-danger" title="The live UK price is far from the price Keepa last saw -- often a different listing or bundle, or a spike. Check the listing before trusting this.">UK {{ '%+.0f'|format(r.uk_move_pct) }}% vs scan</span></div>{% endif %}</td>
+                <td class="text-end">{{ gbp(r.best_cost_gbp) }}{% if r.best_market %} <span class="small text-muted">{{ r.best_market }}</span>{% endif %}</td>
+                <td class="text-end fw-bold">{{ roi(r.est_roi) }}</td>
+                <td class="text-end small">{{ roi(r.ref_roi) }} at {{ gbp(r.ref_uk_price) }} / {{ gbp(r.ref_cost_gbp) }}
+                    <div class="text-muted">{{ r.ref_at.strftime('%d %b') if r.ref_at else '' }}</div></td>
+                <td class="small">{{ r.checked_at.strftime('%d %b %H:%M') }}</td>
+                {% if show_since %}<td class="small">{{ r.hit_since.strftime('%d %b %H:%M') if r.hit_since else '' }}</td>{% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <h1 class="h3 mb-1">Free price sweep</h1>
+    <p class="text-muted mb-3">
+        Live UK and EU prices from Amazon (free -- no Keepa tokens) for every product on the Watchlist, near misses,
+        UK-recovery candidates and every Replen item, run through each product's own fee maths to see whether it would be
+        a lead at today's prices, whichever direction the prices moved. <strong>Monitoring only</strong>: nothing alerts or
+        changes a verdict from this yet.
+        {% if last_ago %}Last batch {{ last_ago }}: {{ last_summary }}.{% else %}No batch has completed yet.{% endif %}
+    </p>
+
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3"><div class="card"><div class="card-body">
+            <div class="text-muted small">Products in the sweep</div><div class="fs-3">{{ o.population }}</div>
+            <div class="small text-muted">{{ o.checked_ever }} checked at least once, {{ o.never_checked }} not yet</div>
+        </div></div></div>
+        <div class="col-6 col-md-3"><div class="card"><div class="card-body">
+            <div class="text-muted small">Checked in the last 24h</div><div class="fs-3">{{ o.checked_24h }}</div>
+            <div class="small text-muted">the target is everything about twice a day</div>
+        </div></div></div>
+        <div class="col-6 col-md-3"><div class="card"><div class="card-body">
+            <div class="text-muted small">Got a UK and an EU price</div>
+            <div class="fs-3">{% if o.coverage.modelled %}{{ (100 * o.coverage.answered / o.coverage.modelled)|round|int }}%{% else %}-{% endif %}</div>
+            <div class="small text-muted">{{ o.coverage.answered }} of {{ o.coverage.modelled }} with usable fee data; the rest need Keepa</div>
+        </div></div></div>
+        <div class="col-6 col-md-3"><div class="card"><div class="card-body">
+            <div class="text-muted small">Accuracy vs Keepa (scans under {{ o.accuracy.max_age_days }} days old)</div>
+            {% if o.accuracy.n %}
+            <div class="fs-3">{{ o.accuracy.within_close }} / {{ o.accuracy.n }}</div>
+            <div class="small text-muted">within 5 points of Keepa's ROI; average gap {{ o.accuracy.mean_abs_delta }} points;
+                {{ o.accuracy.lead_agreement }} / {{ o.accuracy.n }} agree on lead vs not</div>
+            {% else %}
+            <div class="fs-3">-</div><div class="small text-muted">no product has both a fresh check and a recent Keepa scan yet</div>
+            {% endif %}
+        </div></div></div>
+    </div>
+
+    <h2 class="h5">Results</h2>
+    <p>
+        {% for status, count in o.by_status.items() %}
+            <span class="badge {{ 'bg-success' if status == 'LEAD' else 'bg-warning text-dark' if status == 'CLOSE' else 'bg-secondary' }} me-1">{{ o.status_labels.get(status, status) }}: {{ count }}</span>
+        {% else %}<span class="text-muted">Nothing checked yet.</span>{% endfor %}
+    </p>
+
+    <h2 class="h5 mt-4">Leads at today's prices that Keepa's last scan didn't have as leads ({{ o.hits_worth_a_look|length }})</h2>
+    <p class="text-muted small">
+        These are <strong>unconfirmed</strong>: the free check sees a Buy Box price, not who fulfils it, and has no price
+        history, so a temporary UK spike or a merchant-fulfilled EU offer can still look like a lead. Confirm one with a
+        normal re-scan before buying.
+    </p>
+    {% if o.hits_worth_a_look %}{{ sweep_table(o.hits_worth_a_look, true) }}{% else %}<p class="text-muted">None right now.</p>{% endif %}
+
+    <h2 class="h5 mt-4">Probably a spike or a different listing ({{ o.hits_probably_spikes|length }})</h2>
+    <p class="text-muted small">
+        Would be leads, but only because the live UK price is {{ o.uk_jump_warn_pct|int }}% or more away from what Keepa last
+        saw -- typically Amazon itself out of stock so a third-party seller's inflated price is the Buy Box, or a bundle
+        listed on the same page. Kept here so you can see how often it happens, not as leads.
+    </p>
+    {% if o.hits_probably_spikes %}{{ sweep_table(o.hits_probably_spikes, true) }}{% else %}<p class="text-muted">None right now.</p>{% endif %}
+
+    <h2 class="h5 mt-4">Biggest disagreements with Keepa ({{ o.disagreements|length }} shown)</h2>
+    <p class="text-muted small">
+        Where the free check's ROI differs most from Keepa's own ROI for the same product (Keepa scans under
+        {{ o.accuracy.max_age_days }} days old only). A real price move since the scan shows up here as well as a
+        weakness in the free check -- compare the two sets of prices to tell which.
+    </p>
+    {% if o.disagreements %}{{ sweep_table(o.disagreements, false) }}{% else %}<p class="text-muted">Nothing to compare yet.</p>{% endif %}
+</div>
+{% endblock %}

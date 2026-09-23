@@ -283,6 +283,59 @@ class ProductFinder:
 
         return products[:max(1, limit)]
 
+    def find_eu_price_drops(self, marketplace: str, category_id: str, min_price: int = 20,
+                             max_price: int = 150, drop30_pct: int = 20, drop90_pct: int = 15,
+                             min_rank_drops30: int = 10, page: int = 0):
+        """
+        Non-brand discovery (2026-09-20): products whose Buy Box on an EU
+        marketplace has just dropped, within one ROOT category of THAT
+        marketplace -- Keepa root category IDs are per-marketplace, so
+        `category_id` (one ID, or a list) must be the DE/FR/ES/IT one, not the UK one.
+        Verified live 2026-09-20 on DE: the filters are accepted, cost is
+        Keepa's documented 10 tokens + 1 per 100 results, and a positive
+        deltaPercent means the price FELL (per Keepa's docs -- the
+        opposite of what the name suggests, see find_signal_candidates).
+
+        min_price/max_price are whole currency units (converted to Keepa's
+        cents here). Both drop thresholds must hold: 30-day so it's a
+        recent move, 90-day so it isn't merely a bounce back after a
+        spike. min_rank_drops30 measures demand on THIS marketplace, not
+        the UK -- a weak proxy only; the normal scan pipeline that runs
+        on these candidates checks real UK demand and profitability.
+
+        Returns None (not []) if the call failed -- same contract as
+        find_brand().
+        """
+        query = {
+            "productType": ["0"],
+            "rootCategory": [str(c) for c in (category_id if isinstance(category_id, (list, tuple)) else [category_id])],
+            "deltaPercent30_BUY_BOX_SHIPPING_gte": drop30_pct,
+            "deltaPercent90_BUY_BOX_SHIPPING_gte": drop90_pct,
+            "current_BUY_BOX_SHIPPING_gte": int(min_price * 100),
+            "current_BUY_BOX_SHIPPING_lte": int(max_price * 100),
+            "salesRankDrops30_gte": min_rank_drops30,
+            "avg90_COUNT_NEW_gte": 3,
+            "sort": [["current_SALES", "asc"]],
+            "perPage": 100,
+            "page": page,
+        }
+
+        print(f"Calling Product Finder for {marketplace} price drops, category {category_id} (page {page})...")
+        tokens_before = self.api.tokens_left
+
+        try:
+            products = self.api.product_finder(query, wait=False, domain=marketplace)
+        except Exception as exc:
+            print(f"Product Finder ({marketplace} price drops) failed: {exc}")
+            return None
+
+        TokenUsageService.record_keepa_spend(
+            "eu_drop_scan", "keepa_product_finder", tokens_before, self.api.tokens_left,
+            marketplace=marketplace, asins_count=len(products),
+        )
+
+        return list(products)
+
     @staticmethod
     def verify_sales_rank_sort(brand: str, category_ids: list = None) -> dict:
         """

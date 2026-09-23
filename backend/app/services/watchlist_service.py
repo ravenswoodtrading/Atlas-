@@ -37,6 +37,25 @@ class WatchlistService:
     PRUNE_AFTER_DAYS = 14
     PRUNE_MIN_RECHECKS = 2
 
+    # "UK recovery watch" (2026-09-20, Tamara): a product with a live EU source that is NOT viable
+    # today only because the UK price has fallen, yet would be a great buy (25%+ ROI, real sales) at
+    # the UK's normal price. Not buyable now, so it isn't a lead -- but worth watching in case the UK
+    # recovers or the EU cost drops again. maybe_auto_watch can't catch it: it skips anything already
+    # profitable at the 90-day price. The marker prefix still starts with "Auto-added:" so the
+    # Watchlist shows its Auto badge and prune_stale_auto_adds can retire it, but it tells the prune
+    # step to judge these on TODAY's profit only -- see prune_stale_auto_adds.
+    RECOVERY_WATCH_MARKER = "Auto-added: UK recovery watch"
+    RECOVERY_WATCH_ROI_90D_MIN = FeeEngine.OA_TARGET_ROI_PCT
+    # Never recovery-watch something already buyable, or that can't be bought at all.
+    RECOVERY_WATCH_EXCLUDED_RECOMMENDATIONS = ("BUY", "GATED", "FREQUENTLY_RETURNED")
+    # Sanity caps. A UK price 40%+ below its 90-day typical isn't a temporary dip -- it usually means
+    # the "typical" is inflated or the EU listing is a different pack/variant -- and an ROI above 200%
+    # at the typical price is too good to be true (same ceiling as IMPLAUSIBLE_AUTO_PROMOTE_ROI_PCT in
+    # oa_source_discovery_service). Measured 2026-09-20 on the live data: without these, 8 of 74
+    # candidates were such cases (e.g. UK GBP 11.82 vs a "typical" 48.28, 312% ROI).
+    RECOVERY_WATCH_MAX_UK_DROP_PCT = 40.0
+    RECOVERY_WATCH_MAX_ROI_90D = 200.0
+
     @staticmethod
     def maybe_auto_watch(product: Product, category_name: str = ""):
         """
@@ -98,6 +117,55 @@ class WatchlistService:
 
         except Exception as exc:
             print(f"WatchlistService.maybe_auto_watch failed for {product.asin}: {exc}")
+
+    @staticmethod
+    def maybe_auto_watch_recovery(product: Product, recommendation: str = ""):
+        """
+        Adds a "UK recovery watch" (see RECOVERY_WATCH_MARKER) when ALL of: not already buyable
+        (recommendation isn't BUY), a live EU source, not viable today (ROI under the viable floor),
+        but at least RECOVERY_WATCH_ROI_90D_MIN% at the UK's 90-day typical price, real sales
+        evidence, the UK Buy Box genuinely below its typical price, and not already watched.
+
+        Rides along on every scan like maybe_auto_watch, so it never raises.
+        """
+        try:
+            if recommendation in WatchlistService.RECOVERY_WATCH_EXCLUDED_RECOMMENDATIONS:
+                return
+            if not (product.best_source_cost_gbp or 0) > 0:
+                return
+            if (product.roi or 0) >= OpportunityEngine.MIN_VIABLE_ROI:
+                return                                   # viable today: the normal queues handle it
+            if not (
+                WatchlistService.RECOVERY_WATCH_ROI_90D_MIN <= (product.roi_90d or 0)
+                <= WatchlistService.RECOVERY_WATCH_MAX_ROI_90D
+            ):
+                return
+            has_sales = (
+                (product.monthly_sales or 0) > 0
+                or (product.sales_drops_30d or 0) >= ProductRepository.SALES_DROPS_NOTABLE_THRESHOLD
+            )
+            if not has_sales:
+                return
+            if not (product.buy_box_now and product.buy_box_90d) or product.buy_box_now >= product.buy_box_90d:
+                return
+
+            if product.asin in ProductRepository.get_watched_asins():
+                return
+
+            drop_pct = 100 * (1 - product.buy_box_now / product.buy_box_90d)
+            if drop_pct > WatchlistService.RECOVERY_WATCH_MAX_UK_DROP_PCT:
+                return
+            note = (
+                f"{WatchlistService.RECOVERY_WATCH_MARKER} -- UK Buy Box is GBP {product.buy_box_now:.2f}, "
+                f"{drop_pct:.0f}% below its 90-day typical GBP {product.buy_box_90d:.2f}. With "
+                f"{product.best_source_marketplace} at GBP {product.best_source_cost_gbp:.2f} that's "
+                f"{product.roi:.0f}% ROI today but ~{product.roi_90d:.0f}% if the UK recovers. "
+                f"Not buyable now; watching for the UK to recover or the EU cost to drop."
+            )
+            ProductRepository.add_watch(product.asin, title=product.title, brand=product.brand, note=note)
+
+        except Exception as exc:
+            print(f"WatchlistService.maybe_auto_watch_recovery failed for {product.asin}: {exc}")
 
     # Same day-count bar as OpportunityEngine.PEAK_MIN_VIABLE_DAYS_90D
     # (reused, not duplicated) -- applied here to the EU-source-cost-drop
@@ -263,7 +331,12 @@ class WatchlistService:
                 if w.watched_at > cutoff:
                     continue  # hasn't had its fair chance yet
 
-                summary = ProductRepository.get_recheck_summary_since(w.asin, w.watched_at)
+                # A recovery watch is chosen BECAUSE it is profitable at the 90-day price, so
+                # judging it on that would keep it forever. Judge it on today's profit only.
+                summary = ProductRepository.get_recheck_summary_since(
+                    w.asin, w.watched_at,
+                    today_only=(w.note or "").startswith(WatchlistService.RECOVERY_WATCH_MARKER),
+                )
 
                 if summary["recheck_count"] < WatchlistService.PRUNE_MIN_RECHECKS:
                     continue  # not enough real rechecks to call this proven either way

@@ -10,7 +10,8 @@ from app.services.currency_service import CurrencyService
 from app.services.fee_engine import FeeEngine
 from app.services.opportunity_engine import OpportunityEngine
 from app.services.product_repository import ProductRepository
-from app.services.sourcing_classifier import SourcingClassifier
+from app.services.sourcing_classifier import SourcingClassifier, title_suggests_mains_plug
+from app.services.restriction_service import RestrictionService
 from app.config.exclusions import is_excluded, is_excluded_by_name, is_gated
 from app.services.category_survey_service import get_category_names
 from app.config.fees import DEFAULT_REFERRAL_RATE, REFERRAL_RATE_BY_CATEGORY_NAME
@@ -66,6 +67,37 @@ CHUNK_SIZE = 10
 # so this mostly just avoids re-paying for a brand re-scanned twice
 # in the same day.
 RESCAN_COOLDOWN_HOURS = 48
+
+# Amazon listing restrictions ("are we gated on this ASIN?", see RestrictionService).
+# Free SP-API checks, ~0.5s each and cached, so each place gets a time budget:
+# the Scan Queue's tick must stay short; a manual search can afford more; scoring
+# only tops up whatever the earlier check didn't reach.
+RESTRICTION_BUDGET_TICK_SECONDS = 8.0
+RESTRICTION_BUDGET_MANUAL_SECONDS = 30.0
+RESTRICTION_BUDGET_SCORING_SECONDS = 20.0
+
+# Discovery-type scans hunt for NEW leads, so a restricted ASIN is dropped outright and never
+# costs an EU lookup. Every other caller (Watchlist, Replen, Competitor Watch, Verdict...)
+# already tracks the ASIN for its own reasons, so it is kept and TAGGED gated instead --
+# the existing GATED status keeps it out of the Review Queue, Discord and the counters.
+_DROP_RESTRICTED_USAGE_CATEGORIES = ("scan_queue", "eu_drop_scan")
+
+# Scan Queue only (2026-09-20) -- how long an ASIN the queue already paid
+# to look up and DROPPED stays off its rotation. RESCAN_COOLDOWN_HOURS
+# above can't cover these: it's built from saved ProductRecords, and none
+# of these leave one, so every lap re-paid for them (~46% of a week's
+# lookups on bounded-list brands). Judgment calls, not measured values --
+# shortest where the answer changes fastest. "excluded_category" is
+# cleared outright if the exclusion is removed (see ProductRepository.
+# remove_category_exclusion); "unprofitable_ceiling" is also rechecked
+# cheaply by Signals' ceiling_recheck, so 14d costs little.
+SKIP_MEMORY_DAYS = {
+    "no_eu_source": 14,
+    "dead_listing": 30,
+    "excluded_category": 30,
+    "unprofitable_ceiling": 14,
+    "no_current_price": 7,
+}
 
 # ROI bar an EU marketplace's CURRENT price must clear (see
 # _clears_early_exit_roi) for Step 4 below to stop checking further
@@ -361,6 +393,7 @@ class BrandScanService:
         brand = brand.strip().lower()
 
         raw_page_count = None
+        from_finder = asins is None
 
         # Step 1 - Find ASINs (or use the explicit list if provided).
         # Always requests the FULL page (limit=100) here, regardless of
@@ -564,6 +597,28 @@ class BrandScanService:
             asins = [a for a in asins if a not in recently_scanned]
             skipped_recently_scanned = before_count - len(asins)
 
+        skipped_remembered = 0
+
+        if self.usage_category == "scan_queue" and not force_rescan:
+            remembered = ProductRepository.get_scan_skip_asins(asins)
+            if remembered:
+                before_count = len(asins)
+                asins = [a for a in asins if a not in remembered]
+                skipped_remembered = before_count - len(asins)
+
+        skipped_restricted = 0
+
+        if from_finder and asins:
+            # Only as many API calls as this page will actually scan (limit + 1 also tells
+            # page_has_more whether anything is left); restricted ASINs already in the cache
+            # cost nothing, and anything unchecked simply passes through.
+            asins, restricted_now = RestrictionService.filter_unrestricted(
+                asins, needed=limit + 1,
+                budget_seconds=(RESTRICTION_BUDGET_TICK_SECONDS if self.usage_category == "scan_queue"
+                                else RESTRICTION_BUDGET_MANUAL_SECONDS),
+            )
+            skipped_restricted = len(restricted_now)
+
         page_has_more = len(asins) > limit
         asins = asins[:limit]
         if self.usage_category == "scan_queue":
@@ -575,6 +630,8 @@ class BrandScanService:
             "skipped_user_excluded": skipped_user_excluded,
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
+            "skipped_remembered": skipped_remembered,
+            "skipped_restricted": skipped_restricted,
             "skipped_unprofitable_ceiling": 0,
             "skipped_dead_listing": 0,
             "marketplaces_skipped_low_tokens": [],
@@ -614,6 +671,14 @@ class BrandScanService:
         # whole process, so this is a no-op after the first call.
         category_names = get_category_names(self.product_service.api)
 
+        # Amazon's own answer per ASIN (cache first, API only for what's missing, within a time
+        # budget) -- see RestrictionService. Brand-search pages were already filtered above, so
+        # for those this is all cache hits; it matters for explicit-ASIN callers and for
+        # anything the earlier budget didn't reach.
+        restriction_status = RestrictionService.check(
+            [p.get("asin") for p in uk_products], budget_seconds=RESTRICTION_BUDGET_SCORING_SECONDS,
+        )
+
         # Step 3 - Filter out excluded categories/ASINs/gated brands
         # BEFORE spending tokens on the 4 EU marketplaces.
         included_uk_products = []
@@ -640,9 +705,23 @@ class BrandScanService:
         # never auto-watched, never counted in `count`).
         filtered_uk_products = []
 
+        # asin -> why the Scan Queue dropped it after paying to look it
+        # up; written once at the end (see SKIP_MEMORY_DAYS). Collected
+        # for every caller but only PERSISTED for the Scan Queue.
+        skip_memory = {}
+
+        # (asin, title) the EU price-drop scan refused because the title
+        # says it's a mains-plug device -- see title_suggests_mains_plug.
+        # Dropped right after the UK lookup, before any EU lookup is paid.
+        plug_risk_dropped = []
+
         for uk_product in uk_products:
             asin = uk_product.get("asin") or ""
             brand_name = uk_product.get("brand") or ""
+
+            if self.usage_category == "eu_drop_scan" and title_suggests_mains_plug(uk_product.get("title")):
+                plug_risk_dropped.append((asin, (uk_product.get("title") or "")[:90]))
+                continue
 
             # Every category ID this product belongs to, root through
             # leaf -- categoryTree walks the full ancestor chain (with
@@ -667,9 +746,17 @@ class BrandScanService:
 
             if is_excluded(asin, brand_name, category_ids, excluded_category_ids):
                 skipped_excluded += 1
+                if asin:
+                    skip_memory[asin] = "excluded_category"
                 if include_no_eu_source:
                     filtered_uk_products.append((uk_product, "excluded_category"))
                 continue
+
+            if restriction_status.get(asin):
+                if self.usage_category in _DROP_RESTRICTED_USAGE_CATEGORIES:
+                    skipped_restricted += 1
+                    continue
+                gated_asins.add(asin)
 
             if is_gated(brand_name, category_ids, gated_brand_pairs):
                 gated_asins.add(asin)
@@ -711,6 +798,8 @@ class BrandScanService:
             # in as a legitimate opportunity.
             if quick_product.sales_drops_30d == 0 and quick_product.offers_now == 0:
                 skipped_dead_listing += 1
+                if asin:
+                    skip_memory[asin] = "dead_listing"
                 if include_no_eu_source:
                     filtered_uk_products.append((uk_product, "dead_listing"))
                 continue
@@ -731,6 +820,8 @@ class BrandScanService:
 
             if ceiling_profit <= 0:
                 skipped_unprofitable_ceiling += 1
+                if asin:
+                    skip_memory[asin] = "unprofitable_ceiling"
                 if include_no_eu_source:
                     filtered_uk_products.append((uk_product, "unprofitable_ceiling"))
 
@@ -988,11 +1079,19 @@ class BrandScanService:
                 continue
 
             if not product.buy_box_now:
+                if asin:
+                    skip_memory[asin] = "no_current_price"
                 if include_no_eu_source:
                     filtered_uk_products.append((uk_product, "no_current_price"))
                 continue
 
             if not product.best_source_marketplace and not include_no_eu_source:
+                # Only reachable for the Scan Queue once all 4 EU markets
+                # were actually attempted (the unfinished-check above
+                # `continue`s first) -- so this is a real "no EU source
+                # anywhere", not a token-starved gap.
+                if asin:
+                    skip_memory[asin] = "no_eu_source"
                 continue
 
             category_name = category_names.get(product.category, "")
@@ -1091,6 +1190,13 @@ class BrandScanService:
 
             report = OpportunityEngine.analyse(product)
 
+            # "UK recovery watch" (2026-09-20): great at the UK's normal price but not buyable now
+            # because the UK has fallen -- see WatchlistService.maybe_auto_watch_recovery. Needs the
+            # report's recommendation, so it runs here rather than beside maybe_auto_watch above.
+            if not product.gated:
+                from app.services.watchlist_service import WatchlistService
+                WatchlistService.maybe_auto_watch_recovery(product, report.recommendation)
+
             product_dict = asdict(product)
             report_dict = asdict(report)
 
@@ -1169,6 +1275,18 @@ class BrandScanService:
             completed_asins = {a for a in completed_asins if a not in quick_by_asin
                                or all(a in eu_attempted[m] for m in EU_MARKETPLACES)}
         unfinished = bool(set(asins) - completed_asins)
+
+        if self.usage_category == 'scan_queue' and skip_memory:
+            # Best-effort: the scan's own results are already saved above,
+            # so a locked-DB failure here must not turn a paid, completed
+            # scan into a "Failed" tick that gets re-run and re-paid.
+            try:
+                ProductRepository.remember_scan_skips(
+                    [(a, reason, SKIP_MEMORY_DAYS[reason]) for a, reason in skip_memory.items()]
+                )
+            except Exception as exc:
+                print(f"Scan skip memory write failed ({len(skip_memory)} ASINs): {exc}")
+
         return {
             "brand": brand,
             "count": len(opportunities),
@@ -1176,6 +1294,9 @@ class BrandScanService:
             "skipped_user_excluded": skipped_user_excluded,
             "skipped_known_excluded": skipped_known_excluded,
             "skipped_recently_scanned": skipped_recently_scanned,
+            "skipped_remembered": skipped_remembered,
+            "skipped_restricted": skipped_restricted,
+            "plug_risk_dropped": plug_risk_dropped,
             "skipped_unprofitable_ceiling": skipped_unprofitable_ceiling,
             "skipped_dead_listing": skipped_dead_listing,
             "marketplaces_skipped_low_tokens": marketplaces_skipped_low_tokens,

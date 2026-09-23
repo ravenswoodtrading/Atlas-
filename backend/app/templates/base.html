@@ -216,6 +216,32 @@ body.sidebar-collapsed .main{
     margin-left:64px;
 }
 
+/* Mobile fix (2026-09-17): .main's fixed margin-left:260px (or 64px
+   collapsed) had NO breakpoint at all below the 1200px .qi-workflows
+   one used elsewhere -- confirmed live that on a real phone-width
+   screen the sidebar still claimed 260px, squeezing content into under
+   50px and collapsing the whole page into an unreadable single-
+   character-wide column (that's what made the Review Queue's workflow
+   badges nearly untappable, reported as "only Buy Now works" -- the
+   badges themselves were never broken, the page around them was).
+   Auto-applies the SAME icon-only treatment the manual collapse toggle
+   already uses (same declarations as the body.sidebar-collapsed rules
+   above), regardless of the toggle's own stored state, since narrow
+   screens need it unconditionally rather than as an opt-in. */
+@media (max-width: 767.98px) {
+    .sidebar{ width:64px; }
+    .sidebar .logo{ font-size:0; padding:20px 0; text-align:center; }
+    .sidebar .logo::after{ content:"A"; font-size:28px; }
+    .sidebar a{ text-align:center; padding:14px 0; }
+    .sidebar .link-text{ display:none; }
+    .sidebar-section-label{ font-size:0; padding:14px 0 4px; text-align:center; }
+    .subnav{ max-height:none !important; }
+    .subnav a{ padding-left:0; }
+    .subgroup-toggle{ padding:14px 0; text-align:center; justify-content:center; }
+    .subgroup-toggle .chev{ display:none; }
+    .main{ margin-left:64px; }
+}
+
 .sidebar-toggle-btn{
     border:none;
     background:none;
@@ -261,11 +287,44 @@ body.sidebar-collapsed .main{
 
 }
 
+/* Site-wide navigation loading overlay (2026-09-18, Tamara: clicking
+   Buy Now from Command Centre "nothing is happening so I click
+   again") -- a slow-but-working page load and a genuinely broken
+   click look identical with no visual feedback at all, which is what
+   invites the re-click. This doesn't make anything faster; it just
+   makes an in-flight navigation visibly different from a dead one.
+   Hidden by default, shown by the click/submit delegation script
+   near the end of <body> -- see that script's own comment for exactly
+   which clicks/submits do and don't trigger it. */
+.atlas-loading-overlay{
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(255,255,255,.6);
+    z-index:2000;
+    align-items:center;
+    justify-content:center;
+    flex-direction:column;
+    gap:12px;
+}
+.atlas-loading-overlay.show{
+    display:flex;
+}
+.atlas-loading-overlay .spinner-border{
+    width:3rem;
+    height:3rem;
+}
+
 </style>
 
 </head>
 
 <body>
+
+<div class="atlas-loading-overlay" id="atlas-loading-overlay">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="text-muted small">Loading&hellip;</div>
+</div>
 
 <script>
 // Applied as early as possible (right at the top of <body>, before the
@@ -351,6 +410,7 @@ ATLAS
          stays exactly where it is). -->
     <a href="/oa-discovery" title="OA Source Discovery" class="{{ 'active' if nav_path == '/oa-discovery' }}"><i class="bi bi-collection-fill"></i> <span class="link-text">OA Source Discovery</span></a>
     <a href="/shortlist" title="Shortlist" class="{{ 'active' if nav_path == '/shortlist' }}"><i class="bi bi-lightning-charge"></i> <span class="link-text">Shortlist</span></a>
+    <a href="/tools/eligibility" title="Eligibility Check" class="{{ 'active' if nav_path == '/tools/eligibility' }}"><i class="bi bi-shield-check"></i> <span class="link-text">Eligibility Check</span></a>
 </div>
 
 <div class="sidebar-section-label">Review</div>
@@ -389,7 +449,7 @@ ATLAS
 <div class="subnav {{ 'open' if automation_open }}">
     <a href="/scan-queue" title="Scan Queue" class="{{ 'active' if nav_path.startswith('/scan-queue') }}"><i class="bi bi-arrow-repeat"></i> <span class="link-text">Scan Queue</span></a>
     <a href="/competitors/sellers" title="Tracked Sellers" class="{{ 'active' if nav_path.startswith('/competitors/sellers') }}"><i class="bi bi-people"></i> <span class="link-text">Tracked Sellers</span></a>
-    <a href="/signals/queries" title="Signal Queries" class="{{ 'active' if nav_path.startswith('/signals/queries') }}"><i class="bi bi-sliders"></i> <span class="link-text">Signal Queries</span></a>
+    <a href="/signals/queries" title="Keepa Searches" class="{{ 'active' if nav_path.startswith('/signals/queries') }}"><i class="bi bi-sliders"></i> <span class="link-text">Keepa Searches</span></a>
 </div>
 
 {% set sourcing_open = nav_path == '/exclusions' or nav_path == '/gated-opportunities' or nav_path.startswith('/criteria/review') %}
@@ -590,6 +650,88 @@ document.addEventListener('submit', function (event) {
 </script>
 
 {% block scripts %}{% endblock %}
+
+<script>
+(function() {
+    // Site-wide navigation spinner (2026-09-18) -- see the CSS comment
+    // on .atlas-loading-overlay for why. Deliberately placed AFTER
+    // {% raw %}{% block scripts %}{% endblock %}{% endraw %} above (not just
+    // after the other listeners in THIS file) so it registers, and
+    // therefore runs, LAST among every document-level click/submit
+    // listener on the page -- including each page's own template-
+    // specific scripts (e.g. _review_queue_scripts.html's fetch()-
+    // based quick actions). Real bug this fixes (2026-09-18, Tamara:
+    // "clicked avoid... spinner taking ages to get back to the queue"):
+    // when this was registered BEFORE the scripts block, it ran FIRST
+    // on every submit, showing the overlay before a page's own
+    // e.preventDefault() (used to intercept a form for an AJAX fetch()
+    // instead of a real navigation) had a chance to run -- so the
+    // overlay appeared, the fetch completed and updated the page
+    // quietly underneath it, and nothing ever told the overlay to
+    // hide, since no real navigation ever happened. Running last means
+    // event.defaultPrevented is always fully settled by the time this
+    // checks it.
+    //
+    // That alone turned out NOT to be enough (2026-09-18, second real
+    // bug in the same feature): _review_queue_scripts.html registers
+    // its own submit listener inside a DOMContentLoaded handler, not
+    // immediately -- so even with this script positioned AFTER it in
+    // the HTML, the page script's ACTUAL addEventListener('submit', ...)
+    // call happens later in real time (at DOMContentLoaded), while
+    // this script's own registration was running immediately during
+    // parse, i.e. earlier. Source order alone doesn't determine
+    // listener order when a script defers its own registration.
+    // Wrapping this in DOMContentLoaded too fixes it for real: DOMContent
+    // Loaded listeners fire in the order THEY were registered, and this
+    // one is always registered later (script position after the
+    // scripts block) than any page script's own DOMContentLoaded
+    // handler, so it always ends up running last either way -- whether
+    // the page script registers immediately or itself waits for
+    // DOMContentLoaded.
+    document.addEventListener('DOMContentLoaded', function() {
+        var overlay = document.getElementById('atlas-loading-overlay');
+        if (!overlay) return;
+
+        function show() {
+            overlay.classList.add('show');
+            // Safety net: if navigation never actually completes (a
+            // network error, or the browser silently blocks it), don't
+            // leave the user staring at a permanent spinner forever.
+            setTimeout(function() { overlay.classList.remove('show'); }, 30000);
+        }
+
+        document.addEventListener('click', function(e) {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            var link = e.target.closest('a');
+            if (!link) return;
+            var href = link.getAttribute('href');
+            if (!href || href === '#' || href.indexOf('javascript:') === 0) return;
+            if (link.target && link.target !== '_self') return;
+            if (link.hasAttribute('download')) return;
+            if (link.dataset.noSpinner !== undefined) return;
+            // A same-page #anchor jump (href differs only by hash) never
+            // triggers a real navigation/reload -- no spinner for those.
+            var dest = new URL(href, location.href);
+            if (dest.pathname === location.pathname && dest.search === location.search && dest.hash) return;
+            show();
+        });
+
+        document.addEventListener('submit', function(e) {
+            if (e.defaultPrevented) return;
+            var form = e.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            show();
+        });
+
+        // A page restored from the back/forward cache still has whatever
+        // DOM state it had when the user navigated away -- without this,
+        // clicking Back after triggering the spinner leaves it stuck on.
+        window.addEventListener('pageshow', function() {
+            overlay.classList.remove('show');
+        });
+    });
+})();
+</script>
 
 </body>
 

@@ -1,4 +1,5 @@
 import json
+import time
 
 from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
@@ -10,6 +11,18 @@ router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
 PAGE_SIZE = 25
+
+# 2026-09-17 (site-wide slowness investigation): list_latest() re-derives
+# ProductRepository.get_latest_per_asin() -- the most-recent-record-per-
+# ASIN dedup over the whole product_records table -- on every single
+# call, and this page never shared/cached that the way review_queue.py
+# and dashboard.py now do (both fixed the same day; see their own TTL
+# comments). Confirmed live: ~33s per load even with nothing else on
+# the system contending for it. Same TTL as those two (120s) -- pure DB
+# reads, no external API spend, so short-lived staleness is the only
+# real cost, same tradeoff already accepted there.
+_PRODUCTS_CACHE = {}
+_PRODUCTS_CACHE_TTL = 120
 
 
 def _render_products(request: Request, page: int, filter: str, brand: str, sort: str,
@@ -30,11 +43,18 @@ def _render_products(request: Request, page: int, filter: str, brand: str, sort:
 
     page = max(page, 1)
 
-    records, total_count = ProductRepository.list_latest(
-        page=page, page_size=PAGE_SIZE, profitable_only=filter_value,
-        brand=brand or None, sort=sort, today_only=today_only,
-        review_filter=review_filter,
-    )
+    cache_key = (page, filter, brand, sort, today_only)
+    now = time.monotonic()
+    cached = _PRODUCTS_CACHE.get(cache_key)
+    if cached and now - cached[0] < _PRODUCTS_CACHE_TTL:
+        records, total_count = cached[1]
+    else:
+        records, total_count = ProductRepository.list_latest(
+            page=page, page_size=PAGE_SIZE, profitable_only=filter_value,
+            brand=brand or None, sort=sort, today_only=today_only,
+            review_filter=review_filter,
+        )
+        _PRODUCTS_CACHE[cache_key] = (now, (records, total_count))
 
     # Parse the stored report JSON so the template can show the same
     # score/confidence breakdown that was computed at scan time,

@@ -608,6 +608,7 @@ class VerdictService:
                 "referral_rate_used": fees.referral_rate_used,
                 "fba_fee": fees.fba_fee,
                 "prep_fee": fees.prep_fee,
+                "digital_services_fee": fees.digital_services_fee,
                 "uk_vat_rate_used": fees.uk_vat_rate_used,
             }
 

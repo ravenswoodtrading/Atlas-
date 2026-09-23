@@ -1,14 +1,39 @@
 from datetime import datetime, timedelta, timezone
 import json
 
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 
 from app.database.database import SessionLocal
 from app.database.models import (
     ProductRecord, KnownProduct, WatchedProduct, ExcludedProduct, ExcludedCategory,
-    GatedBrand, ExcludedBrand, SignalQuery, SignalMatch, CeilingRejected,
+    GatedBrand, ExcludedBrand, SignalQuery, SignalMatch, SignalRun, CeilingRejected, ScanSkipMemory,
 )
 
+
+def migrate_schema(engine):
+    """
+    Small additive migration, same pattern as reporting_schema.py/
+    amazon_listing_upload_service.migrate_schema. get_latest_per_asin's
+    ROW_NUMBER()-over-partition query (the most-recent-record-per-ASIN
+    dedup every Review Queue/Command Centre/Products page load runs)
+    only had single-column indexes on asin and on scanned_at separately
+    -- confirmed live (2026-09-17 site-wide slowness investigation) that
+    this forces SQLite into a temp B-tree sort on every call: 3.2s for
+    17,941 ASINs. A composite index covering both the partition column
+    and the order-by column lets it satisfy the whole query as a single
+    covering-index scan instead -- same live test, same data: 0.028s,
+    ~115x faster. DESC on scanned_at/id matches the query's own
+    ORDER BY exactly (scanned_at DESC, id DESC) so SQLite doesn't have
+    to reverse-scan either.
+    """
+    if 'product_records' in inspect(engine).get_table_names():
+        existing = {ix['name'] for ix in inspect(engine).get_indexes('product_records')}
+        if 'ix_product_records_asin_scanned_at' not in existing:
+            with engine.begin() as connection:
+                connection.execute(text(
+                    'CREATE INDEX ix_product_records_asin_scanned_at '
+                    'ON product_records (asin, scanned_at DESC, id DESC)'
+                ))
 
 
 class ProductRepository:
@@ -503,59 +528,120 @@ class ProductRepository:
             db.close()
 
     @staticmethod
+    def remember_scan_skips(entries: list):
+        """
+        entries: [(asin, reason, revisit_after_days)] -- ASINs the Scan
+        Queue just paid to look up and dropped. Upserts by ASIN, so a
+        re-lookup after expiry just refreshes the same row. See
+        ScanSkipMemory.
+        """
+        if not entries:
+            return
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        db = SessionLocal()
+
+        try:
+            for asin, reason, days in entries:
+                row = db.get(ScanSkipMemory, asin)
+                revisit_after = now + timedelta(days=days)
+
+                if row:
+                    row.reason = reason
+                    row.remembered_at = now
+                    row.revisit_after = revisit_after
+                else:
+                    db.add(ScanSkipMemory(
+                        asin=asin, reason=reason, remembered_at=now, revisit_after=revisit_after,
+                    ))
+
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_scan_skip_asins(asins: list) -> set:
+        """Which of `asins` the Scan Queue should NOT look up again yet
+        (remembered and not past their revisit_after)."""
+        if not asins:
+            return set()
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        db = SessionLocal()
+
+        try:
+            remembered = set()
+
+            for i in range(0, len(asins), 500):
+                rows = (
+                    db.query(ScanSkipMemory.asin)
+                    .filter(ScanSkipMemory.asin.in_(asins[i:i + 500]),
+                            ScanSkipMemory.revisit_after > now)
+                    .all()
+                )
+                remembered.update(row[0] for row in rows)
+
+            return remembered
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def clear_scan_skips(reason: str):
+        """Forget every remembered ASIN for one reason -- used when the
+        rule that caused it changes (e.g. a category exclusion removed)."""
+        db = SessionLocal()
+
+        try:
+            db.query(ScanSkipMemory).filter(ScanSkipMemory.reason == reason).delete()
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
     def get_summary_stats():
         """
         Counts across the latest scan record per ASIN (not raw row
         count) -- so re-scanning the same ASIN over time doesn't
         inflate the numbers.
+
+        Done in one SQL statement (2026-09-21): this used to load EVERY
+        scan record in full just to count them, which cost 1-3s on each
+        Command Centre load and grows with every scan. Same numbers,
+        same "latest record per ASIN" rule (newest scanned_at, then
+        newest id).
+
+        "This week" = the product's MOST RECENT scan landed within the
+        last 7 days (added 2026-08-19 for the Dashboard redesign,
+        replacing the old all-time total_buy/total_consider tiles, which
+        are kept in case anything wants the full-catalog figure).
         """
         db = SessionLocal()
 
         try:
-            recent = (
-                db.query(ProductRecord)
-                .order_by(ProductRecord.scanned_at.desc())
-                .all()
-            )
-
-            seen = set()
-            latest = []
-
-            for record in recent:
-                if record.asin in seen:
-                    continue
-
-                seen.add(record.asin)
-                latest.append(record)
-
-            # "This week" = the product's MOST RECENT scan (still
-            # per-ASIN deduped via `latest` above) landed within the
-            # last 7 days -- added 2026-08-19 for the Dashboard
-            # redesign, replacing the old all-time total_buy/
-            # total_consider tiles. An all-time count only ever grows
-            # and stops being informative day to day (and blends
-            # already-reviewed items in with new ones, duplicating
-            # what the unreviewed-star-buys alert already answers
-            # better); "found this week" is a genuine, moving signal.
-            # total_buy/total_consider (all-time) are kept below too,
-            # in case anything else ever wants the full-catalog figure
-            # -- only the Dashboard's own display changed, not what's
-            # computed here.
             week_cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).replace(tzinfo=None)
+            row = db.execute(text("""
+                SELECT COUNT(*),
+                       COALESCE(SUM(profit > 0), 0),
+                       COALESCE(SUM(recommendation = 'BUY'), 0),
+                       COALESCE(SUM(recommendation = 'CONSIDER'), 0),
+                       COALESCE(SUM(recommendation = 'BUY' AND scanned_at IS NOT NULL AND scanned_at >= :cutoff), 0),
+                       COALESCE(SUM(recommendation = 'CONSIDER' AND scanned_at IS NOT NULL AND scanned_at >= :cutoff), 0)
+                FROM (SELECT profit, recommendation, scanned_at,
+                             ROW_NUMBER() OVER (PARTITION BY asin ORDER BY scanned_at DESC, id DESC) AS rn
+                      FROM product_records)
+                WHERE rn = 1
+            """), {"cutoff": week_cutoff}).fetchone()
 
             return {
-                "total_scanned": len(latest),
-                "total_profitable": sum(1 for r in latest if r.profit > 0),
-                "total_buy": sum(1 for r in latest if r.recommendation == "BUY"),
-                "total_consider": sum(1 for r in latest if r.recommendation == "CONSIDER"),
-                "buy_this_week": sum(
-                    1 for r in latest
-                    if r.recommendation == "BUY" and r.scanned_at and r.scanned_at >= week_cutoff
-                ),
-                "consider_this_week": sum(
-                    1 for r in latest
-                    if r.recommendation == "CONSIDER" and r.scanned_at and r.scanned_at >= week_cutoff
-                ),
+                "total_scanned": row[0],
+                "total_profitable": row[1],
+                "total_buy": row[2],
+                "total_consider": row[3],
+                "buy_this_week": row[4],
+                "consider_this_week": row[5],
             }
 
         finally:
@@ -831,6 +917,12 @@ class ProductRepository:
 
         finally:
             db.close()
+
+        # Anything the Scan Queue dropped BECAUSE of a category exclusion
+        # is no longer known to be dead -- forget it so it's looked at
+        # again on the next lap instead of waiting out ScanSkipMemory's
+        # revisit window.
+        ProductRepository.clear_scan_skips("excluded_category")
 
     @staticmethod
     def list_category_exclusions():
@@ -1382,7 +1474,7 @@ class ProductRepository:
             db.close()
 
     @staticmethod
-    def get_recheck_summary_since(asin: str, since) -> dict:
+    def get_recheck_summary_since(asin: str, since, today_only: bool = False) -> dict:
         """
         {"recheck_count": int, "ever_profitable": bool} across every
         ProductRecord for this ASIN scanned at/after `since` (a naive
@@ -1399,6 +1491,10 @@ class ProductRepository:
         have a dozen-plus rows), so counting rows in a date range is a
         genuine count of real, separate Keepa rechecks, not an
         artifact of one row being updated repeatedly.
+
+        today_only: judge "ever profitable" on TODAY's profit alone, ignoring the 90-day-price
+        profit -- for UK recovery watches, which are selected for being profitable at the 90-day
+        price (see WatchlistService.maybe_auto_watch_recovery).
         """
         db = SessionLocal()
 
@@ -1412,7 +1508,7 @@ class ProductRepository:
             return {
                 "recheck_count": len(rows),
                 "ever_profitable": any(
-                    (profit or 0) > 0 or (profit_90d or 0) > 0
+                    (profit or 0) > 0 or (not today_only and (profit_90d or 0) > 0)
                     for profit, profit_90d in rows
                 ),
             }
@@ -1449,11 +1545,17 @@ class ProductRepository:
             db.close()
 
     @staticmethod
-    def create_signal_query(name: str, signal_type: str, category_ids: str = "") -> int:
+    def create_signal_query(name: str, signal_type: str, category_ids: str = "", marketplace: str = "UK",
+                             min_price: int = 20, max_price: int = 150, drop30_pct: int = 20,
+                             drop90_pct: int = 15, min_rank_drops30: int = 10, per_run_cap: int = 60) -> int:
         db = SessionLocal()
 
         try:
-            row = SignalQuery(name=name, signal_type=signal_type, category_ids=category_ids)
+            row = SignalQuery(
+                name=name, signal_type=signal_type, category_ids=category_ids, marketplace=marketplace,
+                min_price=min_price, max_price=max_price, drop30_pct=drop30_pct, drop90_pct=drop90_pct,
+                min_rank_drops30=min_rank_drops30, per_run_cap=per_run_cap,
+            )
             db.add(row)
             db.commit()
             db.refresh(row)
@@ -1474,6 +1576,7 @@ class ProductRepository:
 
         try:
             db.query(SignalMatch).filter(SignalMatch.signal_query_id == query_id).delete()
+            db.query(SignalRun).filter(SignalRun.signal_query_id == query_id).delete()
 
             existing = db.get(SignalQuery, query_id)
             if existing:
@@ -1493,6 +1596,95 @@ class ProductRepository:
             if existing:
                 existing.enabled = enabled
                 db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def create_signal_run(signal_query_id: int) -> int:
+        db = SessionLocal()
+
+        try:
+            run = SignalRun(signal_query_id=signal_query_id, status="running")
+            db.add(run)
+            db.commit()
+            db.refresh(run)
+            return run.id
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def finish_signal_run(run_id: int, status: str, **fields):
+        """fields: any SignalRun count/summary column (candidates_found,
+        tokens_spent, summary_json, ...)."""
+        db = SessionLocal()
+
+        try:
+            run = db.get(SignalRun, run_id)
+            if run:
+                run.status = status
+                run.finished_at = datetime.now(timezone.utc)
+                run.stage = ""  # only meaningful while running
+                for name, value in fields.items():
+                    setattr(run, name, value)
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def set_signal_run_stage(run_id: int, stage: str):
+        db = SessionLocal()
+
+        try:
+            run = db.get(SignalRun, run_id)
+            if run and run.status == "running":
+                run.stage = stage[:200]
+                db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def fail_stale_signal_runs(minutes: int):
+        """A run still "running" long after it started belongs to a server
+        that restarted mid-run -- mark it failed so it stops looking live
+        and stops blocking a new run."""
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=minutes)
+        db = SessionLocal()
+
+        try:
+            stale = db.query(SignalRun).filter(SignalRun.status == "running", SignalRun.started_at < cutoff).all()
+            for run in stale:
+                run.status = "failed"
+                run.finished_at = datetime.now(timezone.utc)
+                run.summary_json = '{"error": "Run was interrupted (the server restarted while it was running)."}'
+            db.commit()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def list_signal_runs(limit: int = 15) -> list:
+        db = SessionLocal()
+
+        try:
+            return db.query(SignalRun).order_by(SignalRun.started_at.desc()).limit(limit).all()
+
+        finally:
+            db.close()
+
+    @staticmethod
+    def latest_signal_run_by_query() -> dict:
+        """{signal_query_id: its most recent SignalRun}."""
+        db = SessionLocal()
+
+        try:
+            latest = {}
+            for run in db.query(SignalRun).order_by(SignalRun.started_at.asc()).all():
+                latest[run.signal_query_id] = run
+            return latest
 
         finally:
             db.close()

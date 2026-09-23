@@ -7,6 +7,7 @@ from app.config.fees import (
     REFERRAL_FEE_TIERS_BY_CATEGORY_NAME,
     MINIMUM_REFERRAL_FEE_GBP,
     PREP_FEE_GBP,
+    DIGITAL_SERVICES_FEE_RATE,
     UK_VAT_STANDARD_RATE,
     UK_VAT_ZERO_RATED_CATEGORY_NAMES,
     EU_VAT_RATE_BY_MARKETPLACE,
@@ -60,12 +61,21 @@ class FeeResult:
     uk_vat_rate_used: float
     eu_vat_rate_used: float
 
+    # Today's Digital Services Fee (2% of referral + FBA fee) -- already inside profit/roi above, shown so the
+    # breakdown on the Verdict page adds up. See app/config/fees.py DIGITAL_SERVICES_FEE_RATE.
+    digital_services_fee: float = 0.0
+
 
 class FeeEngine:
 
     # Fallback only -- used when Keepa hasn't returned real FBA fee
     # data for this ASIN (see KeepaParser.fba_fee).
     DEFAULT_FBA_FEE = 3.48
+
+    @staticmethod
+    def _digital_services_fee(referral_fee: float, fba_fee: float) -> float:
+        """Amazon UK's Digital Services Fee for one unit: 2% of the referral and FBA fees (see app/config/fees.py)."""
+        return round(DIGITAL_SERVICES_FEE_RATE * (referral_fee + fba_fee), 2)
 
     # "Worth the extra manual effort" ROI bar for an OA lead --
     # deliberately mirrors ProductRepository.is_notable's own >25% ROI
@@ -110,7 +120,7 @@ class FeeEngine:
 
     @staticmethod
     def roi_at_price(price: float, cost_gross: float, category_name: str, fba_fee: float,
-                      eu_vat_rate: float = UK_VAT_STANDARD_RATE) -> float:
+                      eu_vat_rate: float = UK_VAT_STANDARD_RATE, include_dsf: bool = True) -> float:
         """
         ROI at an arbitrary UK sale price, against a fixed cost --
         the single-price core that calculate() already runs three
@@ -140,7 +150,8 @@ class FeeEngine:
         net_revenue = price / (1 + uk_vat_rate)
         net_cost = cost_gross / (1 + eu_vat_rate)
 
-        profit = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP - net_cost
+        dsf = FeeEngine._digital_services_fee(referral_fee, effective_fba_fee) if include_dsf else 0.0
+        profit = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP - dsf - net_cost
 
         return round((profit / cost_gross) * 100, 2)
 
@@ -179,7 +190,8 @@ class FeeEngine:
         referral_fee = FeeEngine._referral_fee(buy_box_now, category_key)
 
         net_revenue = buy_box_now / (1 + uk_vat_rate)
-        headroom = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP
+        dsf = FeeEngine._digital_services_fee(referral_fee, effective_fba_fee)
+        headroom = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP - dsf
 
         if headroom <= 0:
             return 0.0
@@ -206,7 +218,8 @@ class FeeEngine:
         referral_fee = FeeEngine._referral_fee(buy_box_now, category_key)
 
         net_revenue = buy_box_now / (1 + uk_vat_rate)
-        headroom = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP
+        dsf = FeeEngine._digital_services_fee(referral_fee, effective_fba_fee)
+        headroom = net_revenue - effective_fba_fee - referral_fee - PREP_FEE_GBP - dsf
         net_cost_ceiling = headroom - target_profit_gbp
 
         if net_cost_ceiling <= 0:
@@ -266,6 +279,7 @@ class FeeEngine:
         # Today's price
         referral_fee = FeeEngine._referral_fee(product.buy_box_now, category_key)
         referral_rate_used = round(referral_fee / product.buy_box_now, 4) if product.buy_box_now else DEFAULT_REFERRAL_RATE
+        digital_services_fee = FeeEngine._digital_services_fee(referral_fee, fba_fee)
 
         profit = 0.0
         roi = 0.0
@@ -287,7 +301,7 @@ class FeeEngine:
             net_cost = product.best_source_cost_gbp / (1 + eu_vat_rate)
 
             profit = round(
-                net_revenue - fba_fee - referral_fee - PREP_FEE_GBP - net_cost,
+                net_revenue - fba_fee - referral_fee - PREP_FEE_GBP - digital_services_fee - net_cost,
                 2,
             )
             # ROI, unlike profit, is measured against the GROSS amount
@@ -327,6 +341,7 @@ class FeeEngine:
                 - fba_fee
                 - referral_fee_90d
                 - PREP_FEE_GBP
+                - FeeEngine._digital_services_fee(referral_fee_90d, fba_fee)
                 - net_cost,
                 2,
             )
@@ -359,6 +374,7 @@ class FeeEngine:
                 - fba_fee
                 - referral_fee_peak
                 - PREP_FEE_GBP
+                - FeeEngine._digital_services_fee(referral_fee_peak, fba_fee)
                 - net_cost,
                 2,
             )
@@ -385,4 +401,5 @@ class FeeEngine:
             referral_rate_used=referral_rate_used,
             uk_vat_rate_used=uk_vat_rate,
             eu_vat_rate_used=eu_vat_rate,
+            digital_services_fee=digital_services_fee,
         )

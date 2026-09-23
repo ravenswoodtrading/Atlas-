@@ -60,6 +60,33 @@ class TokenUsageService:
         TokenUsageService.record(category, call_type, spent, marketplace, asins_count)
 
     @staticmethod
+    def spent_since(category: str, hours: float = 24) -> float:
+        """
+        Real Keepa tokens `category` has spent in the last `hours` (rolling), excluding the
+        estimated "sp_api_saved" credits. Used to hold the Scan Queue to a daily ceiling. The
+        figure is net of refill during each call (tokens_before - tokens_after), so it can read
+        slightly low -- fine for a ceiling. Returns 0 on any error rather than blocking a scan.
+        """
+        db = None
+        try:
+            db = SessionLocal()
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
+            total = (
+                db.query(func.coalesce(func.sum(TokenUsageEvent.tokens), 0.0))
+                .filter(TokenUsageEvent.category == category,
+                        TokenUsageEvent.call_type != "sp_api_saved",
+                        TokenUsageEvent.occurred_at > cutoff)
+                .scalar()
+            )
+            return float(total or 0.0)
+        except Exception as exc:
+            print(f"TokenUsageService.spent_since failed ({category}): {exc}")
+            return 0.0
+        finally:
+            if db is not None:
+                db.close()
+
+    @staticmethod
     def record_sp_api_saved(category: str, marketplace: str, asins_count: int,
                              estimated_tokens: float):
         TokenUsageService.record(category, "sp_api_saved", estimated_tokens, marketplace, asins_count)
@@ -70,32 +97,29 @@ class TokenUsageService:
         [{date: "2026-08-21", category, call_type, tokens}] for the
         last `days` days, oldest first -- one row per (date, category,
         call_type) combination that had any activity. The Token Usage
-        page pivots this client-side into a day-by-day stacked view;
-        summing here in Python (not SQL date_trunc, which isn't
-        portable across SQLite/Postgres) keeps this DB-agnostic like
-        the rest of the app's queries.
+        page pivots this client-side into a day-by-day stacked view.
+        Grouped in SQL by func.date (plain date(), valid on SQLite and
+        Postgres alike), not date_trunc which isn't portable.
         """
         db = SessionLocal()
 
         try:
             cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
 
+            # Summed in SQL (2026-09-21): this used to load every event row in the window as an ORM object and add
+            # them up in Python -- 2s on the Token Usage page and growing with every Keepa call.
+            day = func.date(TokenUsageEvent.occurred_at)
             rows = (
-                db.query(TokenUsageEvent)
+                db.query(day, TokenUsageEvent.category, TokenUsageEvent.call_type, func.sum(TokenUsageEvent.tokens))
                 .filter(TokenUsageEvent.occurred_at >= cutoff)
+                .group_by(day, TokenUsageEvent.category, TokenUsageEvent.call_type)
+                .order_by(day, TokenUsageEvent.category, TokenUsageEvent.call_type)
                 .all()
             )
 
-            buckets = {}
-
-            for row in rows:
-                date_key = row.occurred_at.date().isoformat()
-                key = (date_key, row.category, row.call_type)
-                buckets[key] = buckets.get(key, 0.0) + row.tokens
-
             return [
-                {"date": date_key, "category": category, "call_type": call_type, "tokens": round(tokens, 1)}
-                for (date_key, category, call_type), tokens in sorted(buckets.items())
+                {"date": date_key, "category": category, "call_type": call_type, "tokens": round(tokens or 0.0, 1)}
+                for date_key, category, call_type, tokens in rows
             ]
         finally:
             db.close()
