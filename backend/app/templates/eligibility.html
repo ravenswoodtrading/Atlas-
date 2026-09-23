@@ -1,25 +1,33 @@
 {% extends 'base.html' %}
 {% block title %}Eligibility Check - Atlas{% endblock %}
+{% macro minutes(n) %}{% set m = (n * seconds_per_asin / 60) | round(0, 'ceil') | int %}{{ 'under a minute' if m <= 1 else 'about ' ~ m ~ ' minutes' }}{% endmacro %}
 {% block content %}
-<div class="container-fluid p-4" style="max-width:1300px">
+<div class="container-fluid p-4" style="max-width:1000px">
 <h1 class="h2">Eligibility Check</h1>
-<p class="text-muted">Can this account list these products on Amazon UK? Uses the same SP-API restriction check and cache as the Scan Queue and Review Queue, so answers here always match the rest of Atlas. Cached answers are reused (restricted for 7 days, sellable for 14); only new or expired ASINs call Amazon, at about 2 a second.</p>
+<p class="text-muted">Find out which products in a Keepa export you can sell on Amazon UK, before spending time on them.</p>
 
 {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-{% if job_missing %}<div class="alert alert-warning" role="status">That check is no longer available. Results are kept in memory until Atlas restarts. The answers themselves are still cached, so running it again will be quick.</div>{% endif %}
+{% if job_missing %}
+  {% if missing_saved %}
+  <div class="alert alert-info" role="status">Atlas has restarted since this check finished, but the file was saved. <a href="/tools/eligibility/saved/{{ missing_saved.name }}">Download {{ missing_saved.label }}</a></div>
+  {% else %}
+  <div class="alert alert-warning" role="status">That check is no longer available. Atlas probably restarted before it finished. Upload the file again: anything already checked is remembered, so it'll be quicker.</div>
+  {% endif %}
+{% endif %}
 
 {% if job %}
-<div class="card mb-4" id="job"><div class="card-body">
-  <h2 class="h5 mb-1">{{ 'Keepa export' if job.kind == 'keepa' else 'Barcode lookup' }}: {{ job.label }}</h2>
+<div class="card mb-4 border-primary" id="job"><div class="card-body">
+  <h2 class="h5 mb-1">{{ job.label }}</h2>
   <p class="small text-muted">Started {{ job.created_at.strftime('%d %b %Y %H:%M') }} UTC</p>
 
   {% if job.status in ('queued', 'running') %}
-  <div data-job-id="{{ job.id }}" id="job-progress">
+  <div data-job-id="{{ job.id }}" data-seconds="{{ seconds_per_asin }}" id="job-progress">
     <p class="mb-1"><span id="job-stage">{{ job.stage }}</span>: <span id="job-count">{{ job.done }} of {{ job.total }}</span></p>
     <div class="progress" role="progressbar" aria-label="Check progress" style="height:1.25rem">
       <div class="progress-bar" id="job-bar" style="width:{{ (100 * job.done / job.total) | round if job.total else 0 }}%"></div>
     </div>
-    <p class="small text-muted mt-2 mb-0">You can leave this page. The check keeps running, and you can come back to this link.</p>
+    <p class="small mt-2 mb-1" id="job-estimate">{% if job.to_ask is not none %}{{ job.total - job.to_ask }} already known, {{ job.to_ask }} to ask Amazon: {{ minutes(job.to_ask) }} in total.{% endif %}</p>
+    <p class="small text-muted mb-0">You can leave this page. The check keeps running, and the finished file is saved under <em>Recent results</em> below.</p>
   </div>
 
   {% elif job.status == 'error' %}
@@ -27,18 +35,16 @@
 
   {% else %}
   {% set s = job.summary %}
-  <div class="d-flex flex-wrap gap-3 align-items-center mb-3">
-    <a class="btn btn-primary" href="/tools/eligibility/download/{{ job.id }}"><i class="bi bi-download"></i> Download {{ job.out_name }}</a>
-    <span><strong>{{ s.asins }}</strong> ASIN{{ '' if s.asins == 1 else 's' }}:</span>
-    <span class="badge text-bg-success fs-6">{{ s.counts.Y }} eligible</span>
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+    <a class="btn btn-primary" href="/tools/eligibility/download/{{ job.id }}"><i class="bi bi-download"></i> Download results</a>
+    <span class="badge text-bg-success fs-6">{{ s.counts.Y }} can sell</span>
     <span class="badge text-bg-danger fs-6">{{ s.counts.N }} restricted</span>
-    <span class="badge text-bg-secondary fs-6">{{ s.counts.Unknown }} unknown</span>
+    {% if s.counts.Unknown %}<span class="badge text-bg-secondary fs-6">{{ s.counts.Unknown }} unknown</span>{% endif %}
   </div>
-  {% if s.counts.Unknown %}<p class="small text-muted">Unknown means Amazon couldn't be asked (rate limit, network or configuration). Those ASINs are not assumed either way. Run the file again later to fill them in.</p>{% endif %}
+  {% if s.counts.Unknown %}<p class="small text-muted">Unknown means Amazon didn't answer this time, so those products aren't marked either way. Upload the file again later to fill them in. Everything else is remembered, so a re-run is quick.</p>{% endif %}
 
   {% if job.kind == 'keepa' %}
-    <p class="small text-muted">{{ s.rows }} row{{ '' if s.rows == 1 else 's' }} in the file.{% if s.invalid_rows %} {{ s.invalid_rows }} row(s) had something in the ASIN column that isn't an ASIN; they're marked Unknown.{% endif %}
-    {% if not s.brand_column %} The file has no Brand column, so brands below come only from products Atlas has already scanned.{% endif %}</p>
+    <p class="small text-muted">{{ s.asins }} product{{ '' if s.asins == 1 else 's' }} from {{ s.rows }} row{{ '' if s.rows == 1 else 's' }}.{% if s.invalid_rows %} {{ s.invalid_rows }} row(s) didn't have a valid ASIN and are marked Unknown.{% endif %}</p>
   {% else %}
     <p class="small text-muted">{{ s.barcodes }} barcode{{ '' if s.barcodes == 1 else 's' }}:
     {% for status, n in s.statuses.items() %}{{ n }} {{ status | lower }}{{ ', ' if not loop.last }}{% endfor %}.
@@ -52,14 +58,14 @@
     {% endif %}
   {% endif %}
 
-  <h3 class="h6 mt-3">Brands with {{ notable_min }} or more restricted ASINs</h3>
   {% if s.notable_brands %}
-  <p class="small text-muted">Restrictions are per ASIN, so a brand with some restricted listings isn't necessarily gated for every product. Adding a brand to the gated list stops brand scans spending Keepa tokens on it.</p>
+  <h3 class="h6 mt-3">Brands with {{ notable_min }}+ restricted products</h3>
+  <p class="small text-muted">Worth adding to the gated list so brand scans stop spending Keepa tokens on them. A brand can be restricted on some products and not others, so check before adding.</p>
   <div class="table-responsive"><table class="table table-sm align-middle">
     <thead><tr><th>Brand</th><th>Restricted</th><th>Checked</th><th></th></tr></thead><tbody>
     {% for b in s.notable_brands %}<tr>
       <td>{{ b.brand }}</td><td>{{ b.restricted }}</td><td>{{ b.checked }}</td>
-      <td>{% if b.already_gated %}<span class="text-muted small">Already on the gated list</span>{% else %}
+      <td>{% if b.already_gated %}<span class="text-muted small">Already gated</span>{% else %}
         <form method="post" action="/gate/add" class="m-0">
           <input type="hidden" name="brand" value="{{ b.brand }}">
           <input type="hidden" name="reason" value="Eligibility Check {{ job.created_at.strftime('%Y-%m-%d') }}: {{ b.restricted }} of {{ b.checked }} ASINs restricted">
@@ -68,42 +74,51 @@
         </form>{% endif %}</td>
     </tr>{% endfor %}
   </tbody></table></div>
-  {% else %}<p class="small text-muted mb-0">None.</p>{% endif %}
+  {% endif %}
   {% endif %}
 </div></div>
 {% endif %}
 
-<div class="row g-4 mb-4">
-<div class="col-lg-6"><div class="card h-100"><div class="card-body">
-  <h2 class="h5">Keepa export</h2>
-  <p>Upload a Keepa Product Finder export (CSV or XLSX) that has an <strong>ASIN</strong> column. You get the same file back, with every original column and row kept and three columns added:</p>
-  <ul class="small">
-    <li><strong>Eligible</strong>: <code>Y</code>, <code>N</code> or <code>Unknown</code> (couldn't check)</li>
-    <li><strong>Restriction reason</strong>: e.g. <code>APPROVAL_REQUIRED</code>. Blank unless restricted.</li>
-    <li><strong>Checked at</strong>: when Amazon answered (UTC). Older for cached answers.</li>
+<div class="card mb-3"><div class="card-body">
+  <h2 class="h5">Check a Keepa export</h2>
+  <form action="/tools/eligibility/keepa" method="post" enctype="multipart/form-data">
+    <label class="form-label" for="keepa-file">Keepa Product Finder export (CSV or Excel)</label>
+    <div class="d-flex flex-wrap gap-2">
+      <input id="keepa-file" class="form-control" style="flex:1 1 16rem" type="file" name="keepa_file" accept=".csv,.xlsx,.xlsm,.txt,.tsv" required>
+      <button class="btn btn-primary text-nowrap">Check eligibility</button>
+    </div>
+  </form>
+  <p class="small mt-3 mb-1">You get the same file back with three columns added at the end:</p>
+  <ul class="small mb-2">
+    <li><strong>Eligible</strong>: <strong>Y</strong> (you can sell it), <strong>N</strong> (restricted) or <strong>Unknown</strong> (Amazon didn't answer)</li>
+    <li><strong>Restriction reason</strong>: e.g. APPROVAL_REQUIRED, when it's restricted</li>
+    <li><strong>Checked at</strong>: when Amazon last answered</li>
   </ul>
-  <form action="/tools/eligibility/keepa" method="post" enctype="multipart/form-data" class="row g-2 align-items-end">
-    <div class="col-md-8"><label class="form-label" for="keepa-file">Keepa export</label><input id="keepa-file" class="form-control" type="file" name="keepa_file" accept=".csv,.xlsx,.xlsm,.txt,.tsv" required></div>
-    <div class="col-md-4"><button class="btn btn-primary w-100">Check eligibility</button></div>
-  </form>
-</div></div></div>
+  <p class="small text-muted mb-0"><i class="bi bi-clock"></i> Products checked in the last week or two are instant. New ones take about half a second each, so a big fresh export can take 30–40 minutes. The page shows an estimate once it starts.</p>
+</div></div>
 
-<div class="col-lg-6"><div class="card h-100"><div class="card-body">
-  <h2 class="h5">Barcodes (EAN / UPC)</h2>
-  <p>For retailer-first sourcing: paste barcodes, or upload a CSV/XLSX with an EAN, UPC, GTIN or Barcode column. Atlas finds the Amazon UK ASIN(s) for each one and checks those. A barcode that matches no ASIN, or more than one, is flagged for you to check.</p>
-  <form action="/tools/eligibility/barcodes" method="post" enctype="multipart/form-data" class="row g-2">
-    <div class="col-12"><label class="form-label" for="barcodes">Barcodes (one per line)</label><textarea id="barcodes" name="barcodes" class="form-control font-monospace" rows="4" placeholder="5012345678900&#10;012345678905"></textarea></div>
-    <div class="col-md-8"><label class="form-label" for="barcode-file">…or a file</label><input id="barcode-file" class="form-control" type="file" name="barcode_file" accept=".csv,.xlsx,.xlsm,.txt,.tsv"></div>
-    <div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary w-100">Look up &amp; check</button></div>
-  </form>
-</div></div></div>
-</div>
+<details class="card mb-4"{% if job and job.kind == 'barcodes' %} open{% endif %}>
+  <summary class="card-body py-3" style="cursor:pointer"><span class="h6">Starting from barcodes instead?</span> <span class="small text-muted">Look up EAN/UPC codes on Amazon, then check them the same way.</span></summary>
+  <div class="card-body pt-0">
+    <form action="/tools/eligibility/barcodes" method="post" enctype="multipart/form-data">
+      <label class="form-label" for="barcodes">Paste barcodes, one per line</label>
+      <textarea id="barcodes" name="barcodes" class="form-control font-monospace mb-2" rows="4" placeholder="5012345678900&#10;012345678905"></textarea>
+      <label class="form-label" for="barcode-file">…or upload a file with an EAN, UPC or Barcode column</label>
+      <div class="d-flex flex-wrap gap-2">
+        <input id="barcode-file" class="form-control" style="flex:1 1 16rem" type="file" name="barcode_file" accept=".csv,.xlsx,.xlsm,.txt,.tsv">
+        <button class="btn btn-outline-primary text-nowrap">Look up &amp; check</button>
+      </div>
+    </form>
+    <p class="small text-muted mt-2 mb-0">A barcode that matches no product, or more than one, is flagged for you to check by hand.</p>
+  </div>
+</details>
 
-{% if recent %}
+{% if running or saved %}
 <div class="card"><div class="card-body">
-  <h2 class="h6">Recent checks (since Atlas last started)</h2>
+  <h2 class="h6">Recent results</h2>
   <ul class="list-unstyled small mb-0">
-  {% for j in recent %}<li><a href="/tools/eligibility?job={{ j.id }}">{{ j.created_at.strftime('%d %b %H:%M') }}: {{ j.label }}</a> <span class="text-muted">{{ j.status }}</span></li>{% endfor %}
+  {% for j in running %}<li class="mb-1"><a href="/tools/eligibility?job={{ j.id }}">{{ j.label }}</a> <span class="text-muted">still running…</span></li>{% endfor %}
+  {% for f in saved %}<li class="mb-1"><i class="bi bi-file-earmark-spreadsheet"></i> <a href="/tools/eligibility/saved/{{ f.name }}">{{ f.label }}</a> <span class="text-muted">{{ f.saved_at.strftime('%d %b %H:%M') }} UTC</span>{% if job and job.id == f.job_id %} · <a href="/tools/eligibility?job={{ f.job_id }}">summary</a>{% endif %}</li>{% endfor %}
   </ul>
 </div></div>
 {% endif %}
@@ -115,7 +130,8 @@
 (function () {
   const box = document.getElementById('job-progress');
   if (!box) return;
-  const id = box.dataset.jobId;
+  const id = box.dataset.jobId, perAsin = parseFloat(box.dataset.seconds);
+  const minutes = n => { const m = Math.ceil(n * perAsin / 60); return m <= 1 ? 'under a minute' : 'about ' + m + ' minutes'; };
   const poll = async () => {
     try {
       const r = await fetch('/tools/eligibility/status/' + id);
@@ -124,6 +140,12 @@
       document.getElementById('job-stage').textContent = s.stage;
       document.getElementById('job-count').textContent = s.done + ' of ' + s.total;
       document.getElementById('job-bar').style.width = (s.total ? Math.round(100 * s.done / s.total) : 0) + '%';
+      if (s.to_ask !== null && s.total) {
+        // Uncached ASINs are spread through the file, so the share still to go is a fair guide.
+        const left = Math.round(s.to_ask * (1 - s.done / s.total));
+        document.getElementById('job-estimate').textContent = (s.total - s.to_ask) + ' already known, ' + s.to_ask +
+          ' to ask Amazon' + (left > 0 ? ': ' + minutes(left) + ' left.' : '.');
+      }
     } catch (e) { /* transient -- try again next tick */ }
     setTimeout(poll, 3000);
   };

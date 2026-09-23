@@ -139,10 +139,11 @@ body{
     transition:max-height .18s ease;
 }
 .subnav.open{
-    /* Generous enough for the longest group (3 items) without a
-       janky mid-animation clip -- see the JS toggle below, which
-       doesn't need to compute a real height because of this. */
-    max-height:220px;
+    /* Must be taller than the longest group or its last items are cut
+       off (Tools grew to 6 items and hid Eligibility Check at 220px) --
+       room for ~12 items. The JS toggle below relies on this instead
+       of computing a real height. */
+    max-height:480px;
 }
 .subnav a{
     padding-left:60px;
@@ -394,7 +395,7 @@ ATLAS
 
 <a href="/products/today" title="Products" class="{{ 'active' if nav_path.startswith('/products') }}"><i class="bi bi-boxes"></i> <span class="link-text">Products</span></a>
 
-{% set tools_open = nav_path.startswith('/verdict') or nav_path == '/categories' or nav_path == '/oa-lookup' or nav_path == '/oa-discovery' or nav_path == '/shortlist' %}
+{% set tools_open = nav_path.startswith('/verdict') or nav_path == '/categories' or nav_path == '/oa-lookup' or nav_path == '/oa-discovery' or nav_path == '/shortlist' or nav_path == '/tools/eligibility' %}
 <div class="subgroup-toggle {{ 'open' if tools_open }}" data-subnav-toggle title="Tools"><i class="bi bi-tools"></i> <span class="link-text">Tools</span> <i class="bi bi-chevron-right chev"></i></div>
 <div class="subnav {{ 'open' if tools_open }}">
     <a href="/verdict" title="Verdict Checker" class="{{ 'active' if nav_path.startswith('/verdict') }}"><i class="bi bi-clipboard-check"></i> <span class="link-text">Verdict Checker</span></a>

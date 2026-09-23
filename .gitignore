@@ -24,3 +24,6 @@ CODEX_REVIEW_NOTES.md
 CODEX_REVIEW_RESPONSE.md
 _preview_sourcing_ledger.html
 backend/atlas.db.backup-*
+
+# Eligibility Check result files (backend/app/services/eligibility_service.py)
+exports/eligibility/

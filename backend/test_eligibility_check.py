@@ -129,6 +129,35 @@ class KeepaExportTests(_EligibilityCase):
         self.assertTrue(text.startswith("Title;ASIN;Eligible;Restriction reason;Checked at"))
 
 
+class ProgressAndSavedFileTests(_EligibilityCase):
+    def test_progress_reports_how_many_need_a_real_call(self):
+        self.store(OK, False)
+        self.use_sp({GATED: True, FAILS: None})
+        calls = []
+        es.check_asins([OK, GATED, FAILS], progress=lambda done, total, to_ask=None: calls.append((done, total, to_ask)))
+        self.assertEqual(calls[0], (0, 3, 2))
+        self.assertEqual(calls[-1], (3, None, None))
+
+    def test_finished_files_are_saved_listed_pruned_and_served_by_exact_name_only(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp, patch.object(es, "EXPORT_DIR", Path(tmp) / "elig"), \
+                patch.object(es, "MAX_SAVED_FILES", 2):
+            for i, job_id in enumerate(("aaa", "bbb", "ccc")):
+                es._save_output(dict(id=job_id, out_name=f"export{i}_eligibility.csv", content=b"x"))
+                path = es.EXPORT_DIR / f"{job_id}__export{i}_eligibility.csv"
+                import os
+                os.utime(path, (1000 + i, 1000 + i))
+            es._save_output(dict(id="ddd", out_name="new.csv", content=b"y"))
+            names = [f["name"] for f in es.saved_files()]
+            self.assertEqual(len(names), 2)
+            self.assertEqual(names[0], "ddd__new.csv")
+            self.assertEqual(es.saved_files()[0]["label"], "new.csv")
+            self.assertIsNotNone(es.saved_file_path("ddd__new.csv"))
+            self.assertIsNone(es.saved_file_path("../ddd__new.csv"))
+            self.assertIsNone(es.saved_file_path("aaa__export0_eligibility.csv"))   # pruned
+
+
 class NotableBrandTests(_EligibilityCase):
     def test_brands_with_several_restricted_asins_are_listed_with_gated_flag(self):
         pairs = [(f"A{i}", "Acme", "N") for i in range(3)] + [("A9", "acme", "Y")]

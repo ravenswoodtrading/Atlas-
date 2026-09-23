@@ -30,6 +30,7 @@ import threading
 import uuid
 from collections import Counter
 from datetime import datetime, timezone
+from pathlib import Path
 
 from openpyxl import load_workbook
 
@@ -56,6 +57,13 @@ CHECK_CHUNK_SIZE = 25
 
 MAX_JOBS_KEPT = 20
 MAX_BARCODES = 5000
+
+# Finished files are also written here (repo-level exports/, gitignored).
+EXPORT_DIR = Path(__file__).resolve().parents[3] / "exports" / "eligibility"
+MAX_SAVED_FILES = 50
+
+# For the time estimate: ~0.5s per uncached restriction call plus pacing.
+SECONDS_PER_NEW_ASIN = 0.6
 
 _ASIN_RE = re.compile(r"^[A-Z0-9]{10}$")
 _ASIN_HEADERS = ("asin",)
@@ -100,15 +108,18 @@ def eligibility_columns(asin: str, results: dict, details: dict) -> tuple:
 
 
 def check_asins(asins: list, marketplace: str = "UK", progress=None) -> tuple:
-    """Returns (results, details) for every valid ASIN. `progress(done)` is
-    called after each chunk."""
+    """Returns (results, details) for every valid ASIN. `progress(0, total,
+    to_ask=n)` is called once up front -- n is how many aren't cached and
+    will cost a real call -- then `progress(done, None)` after each chunk."""
     unique = list(dict.fromkeys(a for a in asins if a))
     results = {}
+    if progress:
+        progress(0, len(unique), to_ask=len(unique) - len(RestrictionService.cached(unique, marketplace)))
 
     for i in range(0, len(unique), CHECK_CHUNK_SIZE):
         results.update(RestrictionService.check(unique[i:i + CHECK_CHUNK_SIZE], marketplace))
         if progress:
-            progress(min(i + CHECK_CHUNK_SIZE, len(unique)))
+            progress(min(i + CHECK_CHUNK_SIZE, len(unique)), None)
 
     return results, RestrictionService.details(unique, marketplace)
 
@@ -257,10 +268,7 @@ def enrich_keepa_export(filename: str, data: bytes, marketplace: str = "UK", pro
 
     row_asins = [_clean_asin(r[asin_col]) if asin_col < len(r) else "" for r in rows]
     valid = [a for a in row_asins if _ASIN_RE.match(a)]
-    if progress:
-        progress(0, len(set(valid)))
-
-    results, details = check_asins(valid, marketplace, progress=(lambda done: progress(done, None)) if progress else None)
+    results, details = check_asins(valid, marketplace, progress=progress)
 
     values = []
     for asin in row_asins:
@@ -366,9 +374,7 @@ def resolve_barcodes(codes: list, marketplace: str = "UK", sp_client=None, progr
             progress(i // batch + 1, None)
 
     asins = list(dict.fromkeys(m["asin"] for found in matches.values() if found for m in found))
-    if progress:
-        progress(0, len(asins))
-    results, details = check_asins(asins, marketplace, progress=(lambda done: progress(done, None)) if progress else None)
+    results, details = check_asins(asins, marketplace, progress=progress)
 
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
@@ -416,9 +422,40 @@ _jobs_lock = threading.Lock()
 _run_lock = threading.Lock()
 
 
+def _save_output(job: dict):
+    """Finished files also go to disk, so an Atlas restart (the self-healing
+    loop can restart it at any time) can't lose a 40-minute run."""
+    try:
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        (EXPORT_DIR / f"{job['id']}__{job['out_name']}").write_bytes(job["content"])
+        for old in saved_files()[MAX_SAVED_FILES:]:
+            (EXPORT_DIR / old["name"]).unlink(missing_ok=True)
+    except Exception as exc:
+        print(f"[eligibility] couldn't save job {job['id']} to disk (non-fatal): {exc}")
+
+
+def saved_files() -> list:
+    """Saved results, newest first: [{"name", "job_id", "label", "saved_at"}]."""
+    if not EXPORT_DIR.is_dir():
+        return []
+    files = []
+    for path in EXPORT_DIR.iterdir():
+        if path.is_file() and "__" in path.name:
+            job_id, label = path.name.split("__", 1)
+            files.append(dict(name=path.name, job_id=job_id, label=label,
+                              saved_at=datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)))
+    return sorted(files, key=lambda f: f["saved_at"], reverse=True)
+
+
+def saved_file_path(name: str):
+    """Path of a saved result by its exact listed name, else None -- only
+    names actually in the folder are served (no path tricks)."""
+    return EXPORT_DIR / name if any(f["name"] == name for f in saved_files()) else None
+
+
 def _new_job(kind: str, label: str, out_name: str, media_type: str) -> dict:
     job = dict(id=uuid.uuid4().hex[:12], kind=kind, label=label, out_name=out_name, media_type=media_type,
-               status="queued", stage="Waiting for another check to finish", done=0, total=0,
+               status="queued", stage="Waiting for another check to finish", done=0, total=0, to_ask=None,
                created_at=datetime.now(timezone.utc), finished_at=None, error="", summary=None, content=None)
     with _jobs_lock:
         _jobs[job["id"]] = job
@@ -428,10 +465,12 @@ def _new_job(kind: str, label: str, out_name: str, media_type: str) -> dict:
 
 
 def _run(job: dict, work, stages: list):
-    def progress(done, total):
+    def progress(done, total, to_ask=None):
         if total is not None:
             job["stage"] = stages.pop(0) if stages else job["stage"]
             job["total"], job["done"] = total, 0
+            if to_ask is not None:
+                job["to_ask"] = to_ask
         else:
             job["done"] = done
 
@@ -441,6 +480,7 @@ def _run(job: dict, work, stages: list):
             try:
                 result = work(progress)
                 job["content"], job["summary"], job["status"] = result["content"], result["summary"], "done"
+                _save_output(job)
             except ValueError as exc:
                 job["status"], job["error"] = "error", str(exc)
             except Exception as exc:
