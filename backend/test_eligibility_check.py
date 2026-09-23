@@ -84,43 +84,65 @@ class KeepaExportTests(_EligibilityCase):
                 ["uk", "Bad asin", "nonsense", "", "", "", ""],
                 ["uk", "Blank row", "", "", "", "", ""]]
 
-    def test_csv_keeps_every_original_column_and_row_and_appends_three(self):
+    def test_csv_drops_restricted_rows_and_keeps_everything_else_untouched(self):
         sp = self.use_sp({OK: False, GATED: True, FAILS: None})
         result = es.enrich_keepa_export("export.csv", _csv(self.rows()))
         out = _read_csv(result["content"])
         self.assertEqual(out[0], self.HEADERS + ["Eligible", "Restriction reason", "Checked at"])
-        self.assertEqual([r[:7] for r in out[1:]], self.rows()[1:])      # untouched, same order
-        self.assertEqual([r[7] for r in out[1:]], ["Y", "N", "Unknown", "Y", "Unknown", ""])
-        self.assertEqual([r[8] for r in out[1:]], ["", "X", "", "", "", ""])
-        self.assertTrue(out[1][9].endswith("Z") and out[3][9] == "")
+        kept = [r for r in self.rows()[1:] if r[2] != GATED]
+        self.assertEqual([r[:7] for r in out[1:]], kept)                 # untouched, same order, GATED gone
+        self.assertEqual([r[7] for r in out[1:]], ["Y", "Unknown", "Y", "Unknown", ""])
+        self.assertEqual([r[8] for r in out[1:]], ["", "", "", "", ""])
+        self.assertTrue(out[1][9].endswith("Z") and out[2][9] == "")
         self.assertEqual(sorted(c.args[0] for c in sp.get_listing_restrictions.call_args_list), sorted([OK, GATED, FAILS]))
-        self.assertEqual(result["summary"]["counts"], {"Y": 1, "N": 1, "Unknown": 1})
+        self.assertEqual(result["summary"]["counts"], {"Y": 1, "N": 1, "Unknown": 1})   # removed rows still counted
+        self.assertEqual(result["summary"]["removed_rows"], 1)
         self.assertEqual(result["summary"]["invalid_rows"], 1)
 
+    def test_every_row_of_a_restricted_asin_is_dropped(self):
+        self.use_sp({OK: False, GATED: True})
+        rows = [["ASIN"], [GATED], [OK], [GATED.lower()]]
+        result = es.enrich_keepa_export("x.csv", _csv(rows))
+        self.assertEqual([r[0] for r in _read_csv(result["content"])[1:]], [OK])
+        self.assertEqual(result["summary"]["removed_rows"], 2)
+
     def test_reuploading_an_enriched_file_overwrites_instead_of_duplicating(self):
-        self.use_sp({OK: True})
-        first = [["ASIN", "Eligible", "restriction reason", "Checked at", "Notes"], [OK, "Y", "", "old", "keep"]]
+        self.use_sp({OK: False})
+        first = [["ASIN", "Eligible", "restriction reason", "Checked at", "Notes"], [OK, "N", "OLD", "old", "keep"]]
         out = _read_csv(es.enrich_keepa_export("x.csv", _csv(first))["content"])
         self.assertEqual(out[0], ["ASIN", "Eligible", "Restriction reason", "Checked at", "Notes"])  # contract casing
-        self.assertEqual(out[1][:3] + out[1][4:], [OK, "N", "X", "keep"])
+        self.assertEqual(out[1][:3] + out[1][4:], [OK, "Y", "", "keep"])
+        self.assertTrue(out[1][3].endswith("Z"))
 
     def test_no_asin_column_is_a_clear_error(self):
         with self.assertRaisesRegex(ValueError, "No ASIN column"):
             es.enrich_keepa_export("x.csv", _csv([["Parent ASIN", "Title"], ["B0PARENT01", "x"]]))
 
-    def test_xlsx_round_trip(self):
-        self.use_sp({OK: False, GATED: True})
+    def test_xlsx_drops_restricted_rows_and_slides_the_rest_up_with_formatting(self):
+        from openpyxl.styles import Font
+        ok2 = "B000000OK2"
+        self.use_sp({OK: False, GATED: True, ok2: None})
         wb = Workbook()
-        wb.active.append(["Title", "ASIN", "Price"])
-        wb.active.append(["a", OK, 1.5])
-        wb.active.append(["b", GATED, 2.5])
+        ws = wb.active
+        ws.append(["Title", "ASIN", "Price"])
+        ws.append(["a", OK, 1.5])
+        ws.append(["b", GATED, 2.5])
+        ws.append(["c", ok2, 3.5])
+        ws["C4"].number_format = '"£"#,##0.00'
+        ws["A4"].font = Font(bold=True)
+        ws["A4"].hyperlink = "https://www.amazon.co.uk/dp/B000000OK2"
         buf = io.BytesIO()
         wb.save(buf)
-        out = es.enrich_keepa_export("export.xlsx", buf.getvalue())["content"]
-        rows = list(load_workbook(io.BytesIO(out)).active.iter_rows(values_only=True))
+        out_ws = load_workbook(io.BytesIO(es.enrich_keepa_export("export.xlsx", buf.getvalue())["content"])).active
+        rows = list(out_ws.iter_rows(values_only=True))
         self.assertEqual(rows[0], ("Title", "ASIN", "Price", "Eligible", "Restriction reason", "Checked at"))
         self.assertEqual(rows[1][:5], ("a", OK, 1.5, "Y", None))
-        self.assertEqual(rows[2][:5], ("b", GATED, 2.5, "N", "X"))
+        self.assertEqual(rows[2][:5], ("c", ok2, 3.5, "Unknown", None))    # moved up from row 4
+        self.assertEqual(len(rows), 3)                                     # nothing left behind
+        self.assertEqual(out_ws["C3"].number_format, '"£"#,##0.00')
+        self.assertTrue(out_ws["A3"].font.bold)
+        self.assertEqual(out_ws["A3"].hyperlink.target, "https://www.amazon.co.uk/dp/B000000OK2")
+        self.assertIsNone(out_ws["A2"].hyperlink)
 
     def test_quote_marks_after_the_sniffed_sample_still_read_and_write(self):
         # Real Keepa export (2026-09-23): no "" in the first 4KB made the Sniffer
@@ -234,17 +256,18 @@ class ResolveBarcodeTests(_EligibilityCase):
         body = [(r[0], r[1], r[2], r[3], r[6], r[7]) for r in rows[1:]]
         self.assertEqual(body, [
             ("5000000000001", "1", "", "B0ONE00001", "Y", ""),
-            ("5000000000002", "2", "Y", "B0MULTI001", "N", "X"),
+            # B0MULTI001 is restricted, so its row is left out of the file
             ("5000000000002", "2", "Y", "B0MULTI002", "Unknown", ""),
             ("5000000000003", "0", "Y", "", "", ""),
             ("5000000000004", "", "Y", "", "", ""),    # lookup failed: not "no match"
             ("123", "", "Y", "", "", ""),
         ])
-        self.assertEqual([r[4] for r in rows[4:]], ["No match", "Lookup failed", "Invalid barcode"])
+        self.assertEqual([r[4] for r in rows[3:]], ["No match", "Lookup failed", "Invalid barcode"])
         summary = result["summary"]
         self.assertEqual(summary["statuses"], {"OK": 1, "Multiple matches": 1, "No match": 1,
                                                "Lookup failed": 1, "Invalid barcode": 1})
         self.assertEqual(summary["counts"], {"Y": 1, "N": 1, "Unknown": 1})
+        self.assertEqual(summary["removed_rows"], 1)
         self.assertEqual(len(summary["flags"]), 4)
 
     def test_no_sp_client_is_a_clear_error(self):

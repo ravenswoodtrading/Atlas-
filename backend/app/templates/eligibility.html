@@ -41,6 +41,7 @@
     <span class="badge text-bg-danger fs-6">{{ s.counts.N }} restricted</span>
     {% if s.counts.Unknown %}<span class="badge text-bg-secondary fs-6">{{ s.counts.Unknown }} unknown</span>{% endif %}
   </div>
+  {% if s.removed_rows %}<p class="small">{{ s.removed_rows }} restricted row{{ '' if s.removed_rows == 1 else 's' }} removed from the file, so it only lists products you can sell (or couldn't check).</p>{% endif %}
   {% if s.counts.Unknown %}<p class="small text-muted">Unknown means Amazon didn't answer this time, so those products aren't marked either way. Upload the file again later to fill them in. Everything else is remembered, so a re-run is quick.</p>{% endif %}
 
   {% if job.kind == 'keepa' %}
@@ -88,10 +89,9 @@
       <button class="btn btn-primary text-nowrap">Check eligibility</button>
     </div>
   </form>
-  <p class="small mt-3 mb-1">You get the same file back with three columns added at the end:</p>
+  <p class="small mt-3 mb-1">You get the same file back with <strong>restricted products removed</strong> and these columns added at the end:</p>
   <ul class="small mb-2">
-    <li><strong>Eligible</strong>: <strong>Y</strong> (you can sell it), <strong>N</strong> (restricted) or <strong>Unknown</strong> (Amazon didn't answer)</li>
-    <li><strong>Restriction reason</strong>: e.g. APPROVAL_REQUIRED, when it's restricted</li>
+    <li><strong>Eligible</strong>: <strong>Y</strong> (you can sell it) or <strong>Unknown</strong> (Amazon didn't answer, so it's kept for you to check)</li>
     <li><strong>Checked at</strong>: when Amazon last answered</li>
   </ul>
   <p class="small text-muted mb-0"><i class="bi bi-clock"></i> Products checked in the last week or two are instant. New ones take about half a second each, so a big fresh export can take 30–40 minutes. The page shows an estimate once it starts.</p>

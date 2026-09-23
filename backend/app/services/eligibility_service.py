@@ -18,13 +18,21 @@ them or change the values without checking that side:
   Checked at          ISO-8601 UTC of the answer ("2026-09-23T10:15:00Z") -- a
                       cache hit shows when it was really checked, not now.
 
+Restricted (N) rows are REMOVED from the output file (2026-09-23, Tamara:
+"remove gated asins from the output file") -- the file is a buy list, and a
+product this account can't list has no place on it. So the file itself only
+ever holds Y and Unknown (Unknown stays: unchecked isn't restricted), and
+Restriction reason is blank in it; the column is kept for the contract. What
+was removed is still counted in the summary and the notable-brands table.
+
 Checks run as a background job (a cold 5,000-row Keepa export is ~40
 minutes of 0.5s calls, far past any HTTP timeout); the page polls
-job_status(). Jobs live in memory only -- a restart drops them, and the
-answers themselves are already in ListingRestriction.
+job_status(). Finished files are also saved to EXPORT_DIR so an Atlas
+restart can't lose them; the answers themselves are in ListingRestriction.
 """
 import csv
 import io
+from copy import copy
 import re
 import threading
 import uuid
@@ -241,6 +249,8 @@ def _enrich_csv(data: bytes, values: list) -> bytes:
         header_row[idx] = name
     writer.writerow(header_row)
     for row, triple in zip(rows[1:], values):
+        if triple[0] == RESTRICTED:
+            continue
         row = row + [""] * (width - len(row))
         for idx, value in zip(indexes, triple):
             row[idx] = value
@@ -258,6 +268,24 @@ def _enrich_xlsx(data: bytes, values: list) -> bytes:
     for row_idx, triple in enumerate(values, start=2):
         for idx, value in zip(indexes, triple):
             ws.cell(row=row_idx, column=idx + 1, value=value or None)
+
+    # Restricted rows are dropped by sliding each kept row up into place
+    # (value, style, link, height) and trimming the tail once -- a
+    # delete_rows() per restricted row re-shifts the whole sheet every time.
+    kept = [row_idx for row_idx, triple in enumerate(values, start=2) if triple[0] != RESTRICTED]
+    width = ws.max_column
+    for target, source in enumerate(kept, start=2):
+        if target == source:
+            continue
+        for col in range(1, width + 1):
+            src, dst = ws.cell(row=source, column=col), ws.cell(row=target, column=col)
+            dst.value, dst._style = src.value, copy(src._style)
+            dst.hyperlink = copy(src.hyperlink) if src.hyperlink else None
+        ws.row_dimensions[target].height = ws.row_dimensions[source].height
+    first_unused = len(kept) + 2
+    if first_unused <= ws.max_row:
+        ws.delete_rows(first_unused, ws.max_row - first_unused + 1)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -301,6 +329,7 @@ def enrich_keepa_export(filename: str, data: bytes, marketplace: str = "UK", pro
 
     return dict(content=content, summary=dict(
         rows=len(rows), asins=len(pairs), counts=_tally([p[2] for p in pairs]),
+        removed_rows=sum(1 for t in values if t[0] == RESTRICTED),
         invalid_rows=sum(1 for a in row_asins if a and not _ASIN_RE.match(a)),
         brand_column=headers[brand_col] if brand_col is not None else None,
         notable_brands=notable_brands(pairs),
@@ -391,6 +420,7 @@ def resolve_barcodes(codes: list, marketplace: str = "UK", sp_client=None, progr
     writer.writerow(BARCODE_HEADERS_OUT)
     flags, pairs, seen = [], [], set()
     status_counts = Counter()
+    removed_rows = 0
 
     for entered, query in entries:
         found = matches.get(query) if query else None
@@ -410,15 +440,18 @@ def resolve_barcodes(codes: list, marketplace: str = "UK", sp_client=None, progr
             continue
         for m in found:
             triple = eligibility_columns(m["asin"], results, details)
-            writer.writerow([entered, len(found), "Y" if len(found) != 1 else "", m["asin"],
-                             m["title"], m["brand"], *triple])
+            if triple[0] == RESTRICTED:
+                removed_rows += 1          # restricted ASINs are left out of the file
+            else:
+                writer.writerow([entered, len(found), "Y" if len(found) != 1 else "", m["asin"],
+                                 m["title"], m["brand"], *triple])
             if m["asin"] not in seen:
                 seen.add(m["asin"])
                 pairs.append((m["asin"], m["brand"], triple[0]))
 
     return dict(content=out.getvalue().encode("utf-8-sig"), summary=dict(
         barcodes=len(entries), truncated=max(0, len(codes) - MAX_BARCODES), asins=len(pairs),
-        counts=_tally([p[2] for p in pairs]), statuses=dict(status_counts), flags=flags,
+        counts=_tally([p[2] for p in pairs]), statuses=dict(status_counts), flags=flags, removed_rows=removed_rows,
         notable_brands=notable_brands(pairs),
     ))
 
