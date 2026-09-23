@@ -185,13 +185,23 @@ def _is_xlsx(filename: str) -> bool:
 
 
 def _csv_rows(data: bytes) -> tuple:
-    """(rows, dialect) -- the dialect is reused to write the file back."""
+    """(rows, dialect) -- the dialect is reused to write the file back.
+
+    Only the DELIMITER is sniffed; everything else is standard Excel CSV
+    (doubled "" quotes). The Sniffer's other guesses come from the first
+    4KB alone -- on a real Keepa export it saw no "" there and chose
+    doublequote=False, which mis-reads any later title like 12"" Pan and
+    makes writing it back fail ("need to escape, but no escapechar set")."""
     text = _decode(data)
     try:
-        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+        delimiter = csv.Sniffer().sniff(text[:4096], delimiters=",;\t").delimiter
     except csv.Error:
-        dialect = csv.excel
-    return list(csv.reader(io.StringIO(text), dialect)), dialect
+        delimiter = ","
+
+    class Dialect(csv.excel):
+        pass
+    Dialect.delimiter = delimiter
+    return list(csv.reader(io.StringIO(text), Dialect)), Dialect
 
 
 def read_table(filename: str, data: bytes) -> tuple:

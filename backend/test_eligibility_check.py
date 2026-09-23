@@ -122,6 +122,16 @@ class KeepaExportTests(_EligibilityCase):
         self.assertEqual(rows[1][:5], ("a", OK, 1.5, "Y", None))
         self.assertEqual(rows[2][:5], ("b", GATED, 2.5, "N", "X"))
 
+    def test_quote_marks_after_the_sniffed_sample_still_read_and_write(self):
+        # Real Keepa export (2026-09-23): no "" in the first 4KB made the Sniffer
+        # pick doublequote=False, then a later 24" title failed to write back.
+        self.use_sp({OK: False})
+        rows = [["Title", "ASIN"]] + [[f"Plain title number {i} " * 3, OK] for i in range(80)]
+        rows += [['PHILIPS 24" FHD Monitor, "White"', OK]]
+        out = _read_csv(es.enrich_keepa_export("x.csv", _csv(rows))["content"])
+        self.assertEqual(out[-1][:3], ['PHILIPS 24" FHD Monitor, "White"', OK, "Y"])
+        self.assertEqual(len(out), len(rows))
+
     def test_semicolon_csv_is_read_and_written_back_the_same_way(self):
         self.use_sp({OK: False})
         data = f"Title;ASIN\r\nx;{OK}\r\n".encode("utf-8")
